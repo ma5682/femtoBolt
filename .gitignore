@@ -26,6 +26,8 @@ Log/
 *.spz
 
 # ==== 本机私有配置 ====
+# git/ 保存 Gitee 账号与明文私人令牌（见 git/README.md），绝不提交
+git/
 .claude/settings.local.json
 .claude/worktrees/
 

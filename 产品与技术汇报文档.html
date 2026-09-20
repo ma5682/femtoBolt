@@ -45,7 +45,7 @@ footer{padding:24px 6px 0;text-align:center;color:#71808c;font-size:13px}
 <div class="card"><h4>真实采集 <span class="tag ok">已实现</span></h4><ul><li>同步保存完整 RGB、uint16 毫米 Depth、标定、时间戳和原始会话</li><li>局部跟踪在固定 W0 中输出可信位姿</li></ul></div>
 <div class="card"><h4>方形涂抹 <span class="tag ok">已实现</span></h4><ul><li>工作区域与禁止区域可随时切换</li><li>支持方块尺寸、连续拖动、擦除和逐笔撤销</li></ul></div>
 <div class="card"><h4>区域交付 <span class="tag ok">已实现</span></h4><ul><li>自动按工作区/禁止区组合最终范围</li><li>导出 GLB、网格 PLY、顶点 PLY、边界 CSV 和来源 JSON</li></ul></div>
-<div class="card"><h4>隔离查看 <span class="tag ok">已实现</span></h4><ul><li>单选只显示当前区域</li><li>多选显示所选区域并集，清除选择后隐藏叠加</li></ul></div>
+<div class="card"><h4>单次结果 <span class="tag ok">已实现</span></h4><ul><li>产品页只保留一个当前区域</li><li>新区域成功后替换旧结果，失败时旧结果保留</li></ul></div>
 <div class="card"><h4>历史区域导出 <span class="tag ok">已收口</span></h4><ul><li>只展示实际导出的区域结果</li><li>支持预览、打开导出目录和刷新</li></ul></div>
 <div class="card"><h4>高级研发能力 <span class="tag hide">产品界面隐藏</span></h4><ul><li>测距、几何诊断、精度报告、规划和方案恢复不进入当前产品演示</li><li>底层实现仍保留，便于研发继续验证</li></ul></div>
 </div>
@@ -57,8 +57,8 @@ footer{padding:24px 6px 0;text-align:center;color:#71808c;font-size:13px}
 <div class="step"><em>1</em><strong>采集与建模</strong>建立初始相机坐标 W0，采集可信局部视角并生成完整场景 TSDF 网格。</div>
 <div class="step"><em>2</em><strong>打开固定 RGB</strong>使用初始彩色画面作为稳定参考，画面缩放和平移不改变涂抹坐标。</div>
 <div class="step"><em>3</em><strong>方形涂抹</strong>选择工作区域或禁止区域，按住左键连续涂抹；可调整方块大小、擦除和撤销。</div>
-<div class="step"><em>4</em><strong>完成区域选择</strong>系统把二维涂抹映射到有真实三维支持的可见网格表面，并自动计算最终保留范围。</div>
-<div class="step"><em>5</em><strong>导出当前结果</strong>导出区域 GLB / PLY / CSV / JSON；历史窗口仅显示实际导出结果。</div>
+<div class="step"><em>4</em><strong>提交单次结果</strong>系统把二维涂抹映射到有真实三维支持的表面；计算成功后替换上一条区域。</div>
+<div class="step"><em>5</em><strong>保存并导出</strong>自动应用名称备注并导出 GLB / PLY / CSV / JSON；历史窗口只显示实际导出结果。</div>
 </div>
 <div class="callout good"><strong>操作原则：</strong>用户只需要决定“哪里要保留”和“哪里要排除”。系统根据已有标记自动判断保存方式，不再要求用户额外选择“保留涂抹区域”或“排除涂抹区域”。</div>
 </section>
@@ -88,7 +88,7 @@ footer{padding:24px 6px 0;text-align:center;color:#71808c;font-size:13px}
 <div class="grid c2" style="margin-top:16px">
 <div class="card"><h4>方形笔刷</h4><ul><li>默认边长 40 屏幕像素，范围 8–160</li><li>连续鼠标事件之间扫掠方形，避免快速拖动产生断点</li><li>每次松开鼠标形成一笔，草稿最多保留 100 笔撤销</li><li>超过轮廓复杂度预算时拒绝当前笔，不用凸包填掉孔洞</li></ul></div>
 <div class="card"><h4>性能优化</h4><ul><li>预览刷新合并到最多 30 FPS</li><li>拖动时只更新当前涂抹层，背景和已完成区域复用</li><li>区域掩码按画面尺寸和轮廓缓存，轮廓变化自动失效</li><li>像素判定和轮廓追踪限制在选区包围盒</li></ul></div>
-<div class="card"><h4>隔离显示</h4><ul><li>列表单选时只绘制该区域的填充、边界和禁区</li><li>多选显示所选区域并集</li><li>查看已完成区域时暂时隐藏未完成草稿，但草稿数据仍保留</li><li>显示隔离不改变导出内容和区域数据</li></ul></div>
+<div class="card"><h4>单次提交与保存</h4><ul><li>产品页最多保留一个已提交区域</li><li>新区域计算成功后原子替换旧区域，计算失败不清空旧结果</li><li>名称和备注在继续操作或保存导出时自动应用</li><li>区域格式仍兼容研发侧多区域数据</li></ul></div>
 <div class="card"><h4>坐标与来源</h4><ul><li>内部统一 W0 / RDF：+X 右、+Y 下、+Z 前，单位米</li><li>初始相机光心是局部模型坐标原点</li><li>GLB 使用场景节点完成 RDF 到图形坐标变换</li><li>每份区域 JSON 记录源几何哈希和导出文件哈希</li></ul></div>
 </div>
 </section>
@@ -126,7 +126,7 @@ footer{padding:24px 6px 0;text-align:center;color:#71808c;font-size:13px}
 <section id="s7">
 <h2><span class="num">7</span>质量边界、风险与待验证项</h2>
 <div class="grid c2">
-<div class="card"><h4>当前已经确认</h4><ul><li>原始 RGB-D 与派生结果分层保存，区域操作不改源数据</li><li>工作区、禁止区及二者组合的自动导出语义已实现</li><li>方形笔刷支持尺寸、擦除、撤销、孔洞和分离区域</li><li>已完成区域支持单选隔离和多选并集显示</li><li>区域导出保留来源、坐标、单位和文件哈希</li></ul></div>
+<div class="card"><h4>当前已经确认</h4><ul><li>原始 RGB-D 与派生结果分层保存，区域操作不改源数据</li><li>工作区、禁止区及二者组合的自动导出语义已实现</li><li>方形笔刷支持尺寸、擦除、撤销、孔洞和分离区域</li><li>单次提交只保留一个区域，保存时自动应用名称备注</li><li>区域导出保留来源、坐标、单位和文件哈希</li></ul></div>
 <div class="card"><h4>仍需现场验证</h4><ul><li>真实移动补采在不同材质、遮挡和人体体动下的稳定性</li><li>已知尺寸、重复采集和不同操作者条件下的物理误差</li><li>长时间连续运行的帧率、内存和交互延迟</li><li>区域边界与真实目标边界的可重复性</li><li>产品打包、隐私、许可证和医疗用途分类门禁</li></ul></div>
 </div>
 <div class="callout warning"><strong>对外口径：</strong>当前是研发产品演示，可展示采集、选区、三维映射和文件导出能力；不得把软件分辨率、内部残差或单次目测吻合描述为临床精度、接触安全或机械臂执行能力。</div>
@@ -135,7 +135,7 @@ footer{padding:24px 6px 0;text-align:center;color:#71808c;font-size:13px}
 <section id="s8">
 <h2><span class="num">8</span>产品汇报建议与常用入口</h2>
 <div class="grid c2">
-<div class="card"><h4>建议演示顺序</h4><ol><li>展示最新采集结果和固定初始 RGB。</li><li>调整方块大小，涂一个工作区域。</li><li>切换禁止区域，在工作区内扣除一部分。</li><li>在区域列表中单选，确认画面只显示当前区域。</li><li>展示粉色最终保留结果并导出。</li><li>打开导出文件夹，说明 GLB / PLY / CSV / JSON 的用途。</li></ol></div>
+<div class="card"><h4>建议演示顺序</h4><ol><li>展示最新采集结果和固定初始 RGB。</li><li>调整方块大小，涂一个工作区域。</li><li>切换禁止区域，在工作区内扣除一部分。</li><li>点击完成，展示粉色单次结果。</li><li>点击“保存并导出当前结果 GLB / PLY”。</li><li>打开导出文件夹，说明 GLB / PLY / CSV / JSON 的用途。</li></ol></div>
 <div class="card"><h4>当前不进入产品演示</h4><ul><li>标记回读、实测距离、同位置几何诊断</li><li>精度测试报告和研发验证记录</li><li>区域方案保存、另存、草稿恢复和规划工作台</li><li>路径生成、机械臂或治疗执行表述</li><li>3DGS 训练与旧验证数据</li></ul></div>
 <div class="card"><h4>程序与文档入口</h4><pre>start_femto_app.cmd
 README.md

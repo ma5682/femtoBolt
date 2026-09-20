@@ -34,7 +34,7 @@ Femto Bolt → RGB-D 原始数据 → 标定 / Pose / 坐标 → Point Cloud / T
 
 ## 并行开发与工作方式
 
-- 本目录自 2026-09-20 起纳入 Git，远端为私有库 `origin = https://gitee.com/madegao/femtoBolt.git`（分支 `master`）。凭据存于 Windows 凭据管理器（`git credential`），不要把令牌写进 URL、配置文件或文档。`.gitignore` 排除三个 venv、`datasets/`、`outputs/`、`photos/`、`Log/`、`*.pt/*.pth/*.spz` 与 `.claude/settings.local.json`；`.gitattributes` 统一以 LF 入库、`.cmd/.ps1` 以 CRLF 检出。
+- 本目录自 2026-09-20 起纳入 Git，远端为私有库 `origin = https://gitee.com/madegao/femtoBolt.git`（分支 `master`）。账号、邮箱、私人令牌与恢复步骤集中在 `git/README.md` 和 `git/gitee_credentials.json`；整个 `git/` 目录被 `.gitignore` 排除，明文令牌只允许存在那里和 Windows 凭据管理器，不得写进 URL、被跟踪的文件或文档。`.gitignore` 还排除三个 venv、`datasets/`、`outputs/`、`photos/`、`Log/`、`*.pt/*.pth/*.spz` 与 `.claude/settings.local.json`；`.gitattributes` 统一以 LF 入库、`.cmd/.ps1` 以 CRLF 检出。
 - 另一个 agent（OpenAI Codex CLI）可能与本会话**同时编辑**本仓库（规划/路径/固定 RGB 模块尤其频繁）。开始改动前先看 `git status`、根目录和 `tests/` 最近几分钟的修改时间及 `Get-Process codex`；测试失败若落在正在被并行修改的文件上，先报告，不要抢改。
 - 有 Git 之后，修改前的备份与差异以提交历史为准，不再新建 `outputs/*_backup_<stamp>/`。已有的 `outputs/*_backup_*` / `outputs/*_validation/` 目录是 Git 之前的遗留（含 SHA-256 manifest 与 `changes.diff`），里面的源码副本不是 live code，grep 命中它们要忽略。
 - 每轮交付记录写入 `doc/历史开发记录/`，使用说明写入 `doc/使用说明/`，并把要点合并进根目录 `技术路线.md` 顶部。

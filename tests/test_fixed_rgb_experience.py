@@ -501,7 +501,7 @@ class FixedViewerExperienceTests(unittest.TestCase):
         self.assertNotEqual(self.model.store.regions[0]['annotation_id'],first_id)
         self.assertEqual(self.model.store.regions[0]['name'],'最终区域')
         v.name.set('导出名称');v.note.set('保存时自动应用')
-        with mock.patch.object(self.model.store,'save',return_value=self.folder/'annotations.json') as save:
+        with mock.patch.object(self.model.store,'save',return_value=Path(self.temp.name)/'annotations.json') as save:
             v.save();self.wait_idle()
         save.assert_called_once()
         self.assertEqual(self.model.store.regions[0]['name'],'导出名称')

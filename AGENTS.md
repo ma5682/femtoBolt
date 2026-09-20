@@ -7,3 +7,4 @@
 - 相机移动时禁止继续使用单位外参。必须接入同步的相机位姿；eye-in-hand 使用 `T_BC = T_BF · T_FC`。
 - 新增 3DGS、SPZ 或 Web 显示时，必须记录训练输入、相机坐标到渲染坐标的轴转换和模型血缘。
 - 关键区域坐标当前只用于研发可视化，不得声称为临床治疗靶点或直接驱动机械臂。
+- 本仓库使用 Git，远端为 Gitee 私有库 `madegao/femtoBolt`（`master`）。账号、邮箱与私人令牌见 `git/README.md` 和 `git/gitee_credentials.json`；`git/` 目录已被 `.gitignore` 排除，令牌不得提交、不得复制到仓库内其他文件或远端 URL。提交前先 `git status` 区分并行 agent 的改动。
