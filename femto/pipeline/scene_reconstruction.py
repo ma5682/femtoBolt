@@ -90,6 +90,123 @@ def _cloud_mesh_consistency(cloud,mesh):
         interpretation='Internal consistency of multi-view observation union versus supported TSDF mesh; not physical error.')
 
 
+def _prepare_single_frame_evidence(dataset,output,frame,T_WC,color,depth,filled_depth,
+                                   depth_confidence,temporal_input):
+    from femto.geometry.depth_cloud import depth_cloud
+
+    evidence_manifest(dataset, frame, output / "source_evidence.json")
+    intr = SimpleNamespace(**load_json(dataset / "calibration" / "color_intrinsic.json"))
+    distortion = load_json(dataset / "calibration" / "distortion.json")["rgb"]
+    raw_evidence_depth=_read_image(dataset/frame['reference_raw_depth'],cv2.IMREAD_UNCHANGED) if temporal_input else depth
+    raw_cloud = depth_cloud(raw_evidence_depth, color, intr, distortion, 250, 2210)
+    raw_cloud.transform(T_WC)
+    depth, cleaning_report = clean_depth(depth)
+    cleaned_cloud = depth_cloud(depth, color, intr, distortion, 250, 2210)
+    cleaned_cloud.transform(T_WC)
+    if not len(cleaned_cloud.points):
+        raise ValueError("No valid depth survived single-frame cleanup")
+    imwrite_unicode(output / "cleaned_depth_mm.png", depth)
+    raw_cloud_path = output / "scene_raw_points_m.ply"
+    if not write_point_cloud_safe(raw_cloud_path, raw_cloud):
+        raise RuntimeError("Failed to save uncleaned single-frame point cloud")
+    from femto.geometry.depth_confidence_cloud import build_confident_depth_cloud, write_confident_point_cloud
+    if temporal_input:
+        repaired_cloud,point_confidence=depth_cloud(filled_depth,color,intr,distortion,250,2210,
+                                        confidence=depth_confidence,temporal_confidence=True)
+    else:
+        repaired_cloud, point_confidence = build_confident_depth_cloud(
+            _read_image(dataset / frame['depth'], cv2.IMREAD_UNCHANGED),
+            filled_depth, depth_confidence, color, intr, distortion, 250, 2210)
+    repaired_cloud.transform(T_WC)
+    repaired_cloud_path = output / "derived" / "scene_hole_filled_points_m.ply"
+    repaired_cloud_path.parent.mkdir(parents=True, exist_ok=True)
+    write_confident_point_cloud(repaired_cloud_path, repaired_cloud, point_confidence,temporal_confidence=temporal_input)
+    mesh, vertex_uv, pixel_mesh_report = build_pixel_mesh(depth, color, intr, distortion, T_WC)
+    return (depth,cleaning_report,cleaned_cloud,intr,distortion,raw_cloud,raw_cloud_path,
+            repaired_cloud_path,mesh,vertex_uv,pixel_mesh_report)
+
+
+def _frame_metrics(frame,T_WC,depth,filtered_depth,camera_point_count,accumulated,
+                   accumulated_before,voxel_m,single_frame_quality,per_frame_metrics):
+    accumulated_before_downsample=None;accumulated_downsampled=False
+    # Bound RAM for long 1080p captures while keeping raw RGB-D immutable.
+    if not single_frame_quality and len(accumulated.points) > 1_000_000:
+        accumulated_before_downsample=int(len(accumulated.points));accumulated_downsampled=True
+        accumulated = accumulated.voxel_down_sample(voxel_m)
+    edge=np.zeros(filtered_depth.shape,bool)
+    valid_h=(filtered_depth[:,1:]>0)&(filtered_depth[:,:-1]>0)
+    valid_v=(filtered_depth[1:]>0)&(filtered_depth[:-1]>0)
+    horizontal_jump=valid_h&(np.abs(filtered_depth[:,1:].astype(np.int32)-filtered_depth[:,:-1].astype(np.int32))>30)
+    vertical_jump=valid_v&(np.abs(filtered_depth[1:].astype(np.int32)-filtered_depth[:-1].astype(np.int32))>30)
+    edge[:,1:] |= horizontal_jump
+    edge[:,:-1] |= horizontal_jump
+    edge[1:] |= vertical_jump
+    edge[:-1] |= vertical_jump
+    per_frame_metrics.append({
+        "frame": int(frame["frame"]),
+        "valid_depth_ratio": float(np.count_nonzero(filtered_depth) / filtered_depth.size),
+        "camera_center_m": T_WC[:3, 3].tolist(),
+        "remapped_valid_minus_raw_valid": int(np.count_nonzero(filtered_depth)-np.count_nonzero(depth)),
+        "depth_jump_edge_pixels_over_30mm": int(edge.sum()),
+        "camera_point_count": camera_point_count,
+        "accumulated_point_count_before_add": accumulated_before,
+        "accumulated_point_count_before_downsample": accumulated_before_downsample,
+        "accumulated_voxel_downsample_applied": accumulated_downsampled,
+        "accumulated_point_count_after_frame": int(len(accumulated.points)) if not single_frame_quality else None,
+    })
+    return accumulated
+
+
+def _integrate_frame(dataset,output,frame,T_WC,color,depth,filled_depth,depth_confidence,
+                     map_x,map_y,K,image_scale,depth_min_m,depth_max_m,local_measured,
+                     local_prepared_depths,integrations_per_frame,volume,point_stride,
+                     ordinal,accumulated,initial_display_subset):
+    integration_depth=depth
+    if local_measured:
+        from femto.local.local_temporal_support import filtered_depth
+        integration_depth=filtered_depth(dataset,frame,depth)
+    rgbd, intrinsic, _, filtered_depth = _prepare_rgbd(
+        color, integration_depth, map_x, map_y, K, image_scale, depth_min_m, depth_max_m
+    )
+    if local_prepared_depths is not None:
+        local_prepared_depths.append(filtered_depth)
+    repaired_only = np.where(
+        depth_confidence == np.float32(0.3), filled_depth, 0).astype(np.uint16)
+    # Legacy Open3D accepts unit observations only. Integer 10:3
+    # repetitions implement the exact relative 1.0:0.3 confidence;
+    # sampling 30% would still give each accepted repair full weight.
+    repetitions=10 if np.any(repaired_only) else 1
+    integrations_per_frame.append(repetitions)
+    for _ in range(repetitions):
+        volume.integrate(rgbd, intrinsic, np.linalg.inv(T_WC))
+    camera_cloud = o3d.geometry.PointCloud.create_from_rgbd_image(
+        rgbd, intrinsic, project_valid_depth_only=True
+    )
+    if point_stride > 1 and len(camera_cloud.points):
+        camera_cloud = camera_cloud.select_by_index(list(range(0, len(camera_cloud.points), point_stride)))
+    camera_cloud.transform(T_WC)
+    camera_point_count=int(len(camera_cloud.points))
+    if local_measured and ordinal == 0:
+        initial_cloud=camera_cloud
+        if frame.get('local_temporal_support'):
+            initial_rgbd,initial_intrinsic,_,_=_prepare_rgbd(color,depth,map_x,map_y,K,image_scale,depth_min_m,depth_max_m)
+            initial_cloud=o3d.geometry.PointCloud.create_from_rgbd_image(initial_rgbd,initial_intrinsic).transform(T_WC)
+        # A row-major valid-pixel cloud has gaps where depth is invalid.  A
+        # linear stride of 16 is the bounded display equivalent of an
+        # approximate 4x4 image stride and is never used for measurement.
+        initial_display_subset=initial_cloud.select_by_index(list(range(0,len(initial_cloud.points),16)))
+        if not write_point_cloud_safe(output / 'initial_observed_points_m.ply', initial_display_subset):
+            raise RuntimeError('Initial observed cloud write failed')
+    accumulated_before=int(len(accumulated.points));accumulated += camera_cloud
+    if not local_measured and np.any(repaired_only):
+        repaired_rgbd, repaired_intrinsic, _, _ = _prepare_rgbd(
+            color, repaired_only, map_x, map_y, K, image_scale, depth_min_m, depth_max_m
+        )
+        for _ in range(3):
+            volume.integrate(repaired_rgbd, repaired_intrinsic, np.linalg.inv(T_WC))
+    return filtered_depth,accumulated,initial_display_subset,camera_point_count,accumulated_before
+
+
 def reconstruct_scene(
     dataset: Path,
     output: Path,
@@ -194,130 +311,75 @@ def reconstruct_scene(
                                 confidence=input_conf,rgb=np.asarray(input_rgbd.color),
                                 intrinsic=input_intrinsic.intrinsic_matrix,T_CW=np.linalg.inv(T_WC))
         if single_frame_quality:
-            from femto.geometry.depth_cloud import depth_cloud
-
-            evidence_manifest(dataset, frame, output / "source_evidence.json")
-            intr = SimpleNamespace(**load_json(dataset / "calibration" / "color_intrinsic.json"))
-            distortion = load_json(dataset / "calibration" / "distortion.json")["rgb"]
-            raw_evidence_depth=_read_image(dataset/frame['reference_raw_depth'],cv2.IMREAD_UNCHANGED) if temporal_input else depth
-            raw_cloud = depth_cloud(raw_evidence_depth, color, intr, distortion, 250, 2210)
-            raw_cloud.transform(T_WC)
-            depth, cleaning_report = clean_depth(depth)
-            cleaned_cloud = depth_cloud(depth, color, intr, distortion, 250, 2210)
-            cleaned_cloud.transform(T_WC)
-            if not len(cleaned_cloud.points):
-                raise ValueError("No valid depth survived single-frame cleanup")
-            imwrite_unicode(output / "cleaned_depth_mm.png", depth)
-            raw_cloud_path = output / "scene_raw_points_m.ply"
-            if not write_point_cloud_safe(raw_cloud_path, raw_cloud):
-                raise RuntimeError("Failed to save uncleaned single-frame point cloud")
-            from femto.geometry.depth_confidence_cloud import build_confident_depth_cloud, write_confident_point_cloud
-            if temporal_input:
-                repaired_cloud,point_confidence=depth_cloud(filled_depth,color,intr,distortion,250,2210,
-                                                confidence=depth_confidence,temporal_confidence=True)
-            else:
-                repaired_cloud, point_confidence = build_confident_depth_cloud(
-                    _read_image(dataset / frame['depth'], cv2.IMREAD_UNCHANGED),
-                    filled_depth, depth_confidence, color, intr, distortion, 250, 2210)
-            repaired_cloud.transform(T_WC)
-            repaired_cloud_path = output / "derived" / "scene_hole_filled_points_m.ply"
-            repaired_cloud_path.parent.mkdir(parents=True, exist_ok=True)
-            write_confident_point_cloud(repaired_cloud_path, repaired_cloud, point_confidence,temporal_confidence=temporal_input)
-        if single_frame_quality:
+            (depth,cleaning_report,cleaned_cloud,intr,distortion,raw_cloud,raw_cloud_path,
+             repaired_cloud_path,mesh,vertex_uv,pixel_mesh_report) = _prepare_single_frame_evidence(
+                dataset,output,frame,T_WC,color,depth,filled_depth,depth_confidence,temporal_input)
             filtered_depth = depth
-            mesh, vertex_uv, pixel_mesh_report = build_pixel_mesh(depth, color, intr, distortion, T_WC)
         else:
-            integration_depth=depth
-            if local_measured:
-                from femto.local.local_temporal_support import filtered_depth
-                integration_depth=filtered_depth(dataset,frame,depth)
-            rgbd, intrinsic, _, filtered_depth = _prepare_rgbd(
-                color, integration_depth, map_x, map_y, K, image_scale, depth_min_m, depth_max_m
-            )
-            if local_prepared_depths is not None:
-                local_prepared_depths.append(filtered_depth)
-            repaired_only = np.where(
-                depth_confidence == np.float32(0.3), filled_depth, 0).astype(np.uint16)
-            # Legacy Open3D accepts unit observations only. Integer 10:3
-            # repetitions implement the exact relative 1.0:0.3 confidence;
-            # sampling 30% would still give each accepted repair full weight.
-            repetitions=10 if np.any(repaired_only) else 1
-            integrations_per_frame.append(repetitions)
-            for _ in range(repetitions):
-                volume.integrate(rgbd, intrinsic, np.linalg.inv(T_WC))
-            camera_cloud = o3d.geometry.PointCloud.create_from_rgbd_image(
-                rgbd, intrinsic, project_valid_depth_only=True
-            )
-            if point_stride > 1 and len(camera_cloud.points):
-                camera_cloud = camera_cloud.select_by_index(list(range(0, len(camera_cloud.points), point_stride)))
-            camera_cloud.transform(T_WC)
-            camera_point_count=int(len(camera_cloud.points))
-            if local_measured and ordinal == 0:
-                initial_cloud=camera_cloud
-                if frame.get('local_temporal_support'):
-                    initial_rgbd,initial_intrinsic,_,_=_prepare_rgbd(color,depth,map_x,map_y,K,image_scale,depth_min_m,depth_max_m)
-                    initial_cloud=o3d.geometry.PointCloud.create_from_rgbd_image(initial_rgbd,initial_intrinsic).transform(T_WC)
-                # A row-major valid-pixel cloud has gaps where depth is invalid.  A
-                # linear stride of 16 is the bounded display equivalent of an
-                # approximate 4x4 image stride and is never used for measurement.
-                initial_display_subset=initial_cloud.select_by_index(list(range(0,len(initial_cloud.points),16)))
-                if not write_point_cloud_safe(output / 'initial_observed_points_m.ply', initial_display_subset):
-                    raise RuntimeError('Initial observed cloud write failed')
-            accumulated_before=int(len(accumulated.points));accumulated += camera_cloud
-            if not local_measured and np.any(repaired_only):
-                repaired_rgbd, repaired_intrinsic, _, _ = _prepare_rgbd(
-                    color, repaired_only, map_x, map_y, K, image_scale, depth_min_m, depth_max_m
-                )
-                for _ in range(3):
-                    volume.integrate(repaired_rgbd, repaired_intrinsic, np.linalg.inv(T_WC))
-        # Bound RAM for long 1080p captures while keeping raw RGB-D immutable.
-        if not single_frame_quality and len(accumulated.points) > 1_000_000:
-            accumulated_before_downsample=int(len(accumulated.points));accumulated_downsampled=True
-            accumulated = accumulated.voxel_down_sample(voxel_m)
-        edge=np.zeros(filtered_depth.shape,bool)
-        valid_h=(filtered_depth[:,1:]>0)&(filtered_depth[:,:-1]>0)
-        valid_v=(filtered_depth[1:]>0)&(filtered_depth[:-1]>0)
-        horizontal_jump=valid_h&(np.abs(filtered_depth[:,1:].astype(np.int32)-filtered_depth[:,:-1].astype(np.int32))>30)
-        vertical_jump=valid_v&(np.abs(filtered_depth[1:].astype(np.int32)-filtered_depth[:-1].astype(np.int32))>30)
-        edge[:,1:] |= horizontal_jump
-        edge[:,:-1] |= horizontal_jump
-        edge[1:] |= vertical_jump
-        edge[:-1] |= vertical_jump
-        per_frame_metrics.append(
-            {
-                "frame": int(frame["frame"]),
-                "valid_depth_ratio": float(np.count_nonzero(filtered_depth) / filtered_depth.size),
-                "camera_center_m": T_WC[:3, 3].tolist(),
-                "remapped_valid_minus_raw_valid": int(np.count_nonzero(filtered_depth)-np.count_nonzero(depth)),
-                "depth_jump_edge_pixels_over_30mm": int(edge.sum()),
-                "camera_point_count": camera_point_count,
-                "accumulated_point_count_before_add": accumulated_before,
-                "accumulated_point_count_before_downsample": accumulated_before_downsample,
-                "accumulated_voxel_downsample_applied": accumulated_downsampled,
-                "accumulated_point_count_after_frame": int(len(accumulated.points)) if not single_frame_quality else None,
-            }
-        )
+            (filtered_depth,accumulated,initial_display_subset,camera_point_count,
+             accumulated_before) = _integrate_frame(dataset,output,frame,T_WC,color,depth,
+                filled_depth,depth_confidence,map_x,map_y,K,image_scale,depth_min_m,depth_max_m,
+                local_measured,local_prepared_depths,integrations_per_frame,volume,point_stride,
+                ordinal,accumulated,initial_display_subset)
+        accumulated = _frame_metrics(frame,T_WC,depth,filtered_depth,camera_point_count,
+            accumulated,accumulated_before,voxel_m,single_frame_quality,per_frame_metrics)
 
-    cloud = cleaned_cloud if single_frame_quality else accumulated.voxel_down_sample(voxel_m)
-    if not single_frame_quality and len(cloud.points) >= 100:
+    geometry = _finalize_geometry(SimpleNamespace(
+        dataset=dataset,output=output,frames=frames,poses=poses,voxel_m=voxel_m,
+        single_frame_quality=single_frame_quality,accumulated=accumulated,
+        cleaned_cloud=cleaned_cloud if single_frame_quality else None,temporal_input=temporal_input,
+        depth=depth,color=color,intr=intr if single_frame_quality else None,
+        distortion=distortion if single_frame_quality else None,depth_confidence=depth_confidence,
+        volume=volume,mesh=mesh if single_frame_quality else None,local_measured=local_measured,
+        map_x=map_x,map_y=map_y,K=K,expected_width=expected_width,
+        expected_height=expected_height,depth_min_m=depth_min_m,depth_max_m=depth_max_m,
+        local_prepared_depths=local_prepared_depths,
+        local_post_component_filter=local_post_component_filter,manifest=manifest,
+        initial_display_subset=initial_display_subset,vertex_uv=vertex_uv if single_frame_quality else None,
+        pixel_mesh_report=pixel_mesh_report if single_frame_quality else None,
+        raw_cloud=raw_cloud if single_frame_quality else None,
+        cleaning_report=cleaning_report if single_frame_quality else None))
+    cloud,mesh,cloud_path=geometry.cloud,geometry.mesh,geometry.cloud_path
+    local_support,mesh_exports=geometry.local_support,geometry.mesh_exports
+    quality_path,trajectory_path,gaussian=geometry.quality_path,geometry.trajectory_path,geometry.gaussian
+    return _write_reconstruction_report(SimpleNamespace(
+        dataset=dataset,output=output,frames=frames,image_scale=image_scale,voxel_m=voxel_m,
+        sdf_trunc_m=sdf_trunc_m,depth_min_m=depth_min_m,depth_max_m=depth_max_m,
+        point_stride=point_stride,single_frame_quality=single_frame_quality,
+        distortion_diagnostics=distortion_diagnostics,cloud_path=cloud_path,
+        mesh_exports=mesh_exports,trajectory_path=trajectory_path,gaussian=gaussian,
+        cloud=cloud,mesh=mesh,per_frame_metrics=per_frame_metrics,
+        depth_quality_frames=depth_quality_frames,integrations_per_frame=integrations_per_frame,
+        local_measured=local_measured,manifest=manifest,local_support=local_support,
+        initial_display_subset=initial_display_subset,temporal_input=temporal_input,
+        raw_cloud_path=raw_cloud_path if single_frame_quality else None,
+        quality_path=quality_path,repaired_cloud_path=repaired_cloud_path if single_frame_quality else None,
+        cleaning_report=cleaning_report if single_frame_quality else None,
+        raw_cloud=raw_cloud if single_frame_quality else None))
+
+
+def _finalize_geometry(s):
+    cloud = s.cleaned_cloud if s.single_frame_quality else s.accumulated.voxel_down_sample(s.voxel_m)
+    if not s.single_frame_quality and len(cloud.points) >= 100:
         cloud, _ = cloud.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.5)
     if not len(cloud.points):
-        shutil.rmtree(output)
+        shutil.rmtree(s.output)
         raise ValueError("No valid point survived reconstruction")
-    cloud.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel_m * 4.0, max_nn=30))
-    cloud.orient_normals_towards_camera_location(poses[0][:3, 3])
-    cloud_path = output / "scene_fused_points_m.ply"
-    if temporal_input and single_frame_quality:
+    cloud.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=s.voxel_m * 4.0, max_nn=30))
+    cloud.orient_normals_towards_camera_location(s.poses[0][:3, 3])
+    cloud_path = s.output / "scene_fused_points_m.ply"
+    if s.temporal_input and s.single_frame_quality:
+        from femto.geometry.depth_cloud import depth_cloud
         from femto.geometry.depth_confidence_cloud import write_confident_point_cloud
-        _,clean_conf=depth_cloud(depth,color,intr,distortion,250,2210,
-                                confidence=np.where(depth>0,depth_confidence,0),temporal_confidence=True)
+        _,clean_conf=depth_cloud(s.depth,s.color,s.intr,s.distortion,250,2210,
+                                confidence=np.where(s.depth>0,s.depth_confidence,0),temporal_confidence=True)
         write_confident_point_cloud(cloud_path,cloud,clean_conf,temporal_confidence=True)
     elif not write_point_cloud_safe(cloud_path, cloud):
-        shutil.rmtree(output)
+        shutil.rmtree(s.output)
         raise RuntimeError("Open3D failed to write the fused point cloud")
-
-    if not single_frame_quality:
-        mesh = volume.extract_triangle_mesh()
+    mesh = s.mesh
+    if not s.single_frame_quality:
+        mesh = s.volume.extract_triangle_mesh()
         mesh.remove_degenerate_triangles()
         mesh.remove_duplicated_triangles()
         mesh.remove_duplicated_vertices()
@@ -333,15 +395,15 @@ def reconstruct_scene(
                 mesh.remove_unreferenced_vertices()
             mesh.compute_vertex_normals()
     if not len(mesh.triangles):
-        shutil.rmtree(output)
+        shutil.rmtree(s.output)
         raise ValueError("TSDF extraction produced an empty mesh")
     local_support = None
-    if local_measured:
+    if s.local_measured:
         from femto.local.local_geometry import retain_observed_triangles
-        local_support = retain_observed_triangles(mesh, dataset, frames, poses,
-            (map_x, map_y, K, expected_width, expected_height), depth_min_m, depth_max_m,
-            prepared_depths=local_prepared_depths)
-        if local_post_component_filter:
+        local_support = retain_observed_triangles(mesh, s.dataset, s.frames, s.poses,
+            (s.map_x, s.map_y, s.K, s.expected_width, s.expected_height), s.depth_min_m, s.depth_max_m,
+            prepared_depths=s.local_prepared_depths)
+        if s.local_post_component_filter:
             from femto.local.local_geometry import filter_small_components
             local_support['post_retain_component_filter']=filter_small_components(mesh)
             local_support['post_retain_component_filter']['applied']=True
@@ -350,36 +412,44 @@ def reconstruct_scene(
                 reason='candidate_requires_same-source_comparison_before_default_adoption')
         if not len(mesh.triangles):
             raise ValueError('No measured-supported annotation surface remains')
-        (output / 'local_geometry.json').write_text(json.dumps(dict(
-            **manifest['local_capture'], support=local_support, coordinate_frame='world_rdf',
+        (s.output / 'local_geometry.json').write_text(json.dumps(dict(
+            **s.manifest['local_capture'], support=local_support, coordinate_frame='world_rdf',
             unit='metre', transform_direction='T_W0_Ct', inferred_repairs_integrated=False,
             display_artifacts=dict(initial_observed_point_cloud='initial_observed_points_m.ply',
                 role='display_subset_not_measurement',linear_point_stride=16,
-                approximate_pixel_stride=4,point_count=int(len(initial_display_subset.points)))),
+                approximate_pixel_stride=4,point_count=int(len(s.initial_display_subset.points)))),
             ensure_ascii=False, indent=2), encoding='utf-8')
     surface_note = (
         "Single-view measured TSDF surface; small observed gaps may remain and unobserved regions are not invented."
-        if len(poses) == 1
+        if len(s.poses) == 1
         else "Multi-view measured TSDF surface; unobserved large regions are intentionally not invented."
     )
-    if single_frame_quality:
-        mesh_exports = export_pixel_mesh(mesh, vertex_uv, dataset / frames[0]["rgb"], output, pixel_mesh_report)
+    if s.single_frame_quality:
+        mesh_exports = export_pixel_mesh(mesh, s.vertex_uv, s.dataset / s.frames[0]["rgb"], s.output, s.pixel_mesh_report)
     else:
         mesh_exports = export_mesh_formats(
-            mesh, output, stem="scene_tsdf_mesh_m", report_name="mesh_report.json", note=surface_note,
-            write_obj_glb=len(frames)<=1,
+            mesh, s.output, stem="scene_tsdf_mesh_m", report_name="mesh_report.json", note=surface_note,
+            write_obj_glb=len(s.frames)<=1,
         )
-        if len(frames) > 1:
-            mesh_exports = export_multiview_texture(mesh, dataset, frames, poses, output, mesh_exports)
-    quality_path = output / "single_frame_quality.json"
-    if single_frame_quality:
-        compare_geometry(raw_cloud, cloud, mesh, cleaning_report, quality_path)
-    trajectory = _camera_trajectory(poses)
-    trajectory_path = output / "camera_trajectory.ply"
+        if len(s.frames) > 1:
+            mesh_exports = export_multiview_texture(mesh, s.dataset, s.frames, s.poses, s.output, mesh_exports)
+    quality_path = s.output / "single_frame_quality.json"
+    if s.single_frame_quality:
+        compare_geometry(s.raw_cloud, cloud, mesh, s.cleaning_report, quality_path)
+    trajectory = _camera_trajectory(s.poses)
+    trajectory_path = s.output / "camera_trajectory.ply"
     _write_line_set_ascii(trajectory_path, trajectory)
     gaussian = export_gaussian_initialization(
-        cloud, output / "gaussian", voxel_m=max(voxel_m * 1.5, 0.008), source_dataset=str(dataset)
+        cloud, s.output / "gaussian", voxel_m=max(s.voxel_m * 1.5, 0.008), source_dataset=str(s.dataset)
     )
+    return SimpleNamespace(cloud=cloud,mesh=mesh,cloud_path=cloud_path,local_support=local_support,
+        mesh_exports=mesh_exports,quality_path=quality_path,trajectory_path=trajectory_path,gaussian=gaussian)
+
+
+def _write_reconstruction_report(s):
+    dataset,output,frames=s.dataset,s.output,s.frames
+    single_frame_quality,local_measured,temporal_input=s.single_frame_quality,s.local_measured,s.temporal_input
+    cloud,mesh,manifest=s.cloud,s.mesh,s.manifest
     report = {
         "schema": "femto-scene-reconstruction-v1",
         "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
@@ -387,34 +457,34 @@ def reconstruct_scene(
         "source_dataset": str(dataset),
         "frame_count": len(frames),
         "parameters": {
-            "image_scale": image_scale,
-            "voxel_m": None if single_frame_quality else voxel_m,
-            "sdf_trunc_m": None if single_frame_quality else sdf_trunc_m,
-            "depth_min_m": depth_min_m,
-            "depth_max_m": depth_max_m,
-            "point_stride": point_stride,
+            "image_scale": s.image_scale,
+            "voxel_m": None if single_frame_quality else s.voxel_m,
+            "sdf_trunc_m": None if single_frame_quality else s.sdf_trunc_m,
+            "depth_min_m": s.depth_min_m,
+            "depth_max_m": s.depth_max_m,
+            "point_stride": s.point_stride,
             "single_frame_quality": single_frame_quality,
             "mesh_method": "single_frame_pixel_adjacency" if single_frame_quality else "tsdf",
-            "distortion_remap": distortion_diagnostics,
+            "distortion_remap": s.distortion_diagnostics,
         },
         "outputs": {
-            "point_cloud": str(cloud_path),
-            "mesh": mesh_exports,
-            "camera_trajectory": str(trajectory_path),
-            "gaussian_initialization": gaussian,
+            "point_cloud": str(s.cloud_path),
+            "mesh": s.mesh_exports,
+            "camera_trajectory": str(s.trajectory_path),
+            "gaussian_initialization": s.gaussian,
         },
         "metrics": {
             "fused_point_count": int(len(cloud.points)),
             "mesh_vertices": int(len(mesh.vertices)),
             "mesh_triangles": int(len(mesh.triangles)),
-            "valid_depth_ratio_mean": float(np.mean([item["valid_depth_ratio"] for item in per_frame_metrics])),
+            "valid_depth_ratio_mean": float(np.mean([item["valid_depth_ratio"] for item in s.per_frame_metrics])),
         },
-        "frames": per_frame_metrics,
+        "frames": s.per_frame_metrics,
         "depth_quality": {
             "enabled": True,
-            "frames": depth_quality_frames,
-            "integrations_per_frame": integrations_per_frame,
-            "filled_depth_used": bool(not local_measured and any(value==10 for value in integrations_per_frame)),
+            "frames": s.depth_quality_frames,
+            "integrations_per_frame": s.integrations_per_frame,
+            "filled_depth_used": bool(not local_measured and any(value==10 for value in s.integrations_per_frame)),
             "tsdf_confidence_policy": (
                 "Exact relative weights 1.0:0.3 via 10 original and 3 repaired unit integrations per frame; increased TSDF runtime."
                 if not single_frame_quality else
@@ -428,22 +498,22 @@ def reconstruct_scene(
     }
     if single_frame_quality:
         report["outputs"].update({
-            "raw_point_cloud": str(raw_cloud_path), "cleaned_point_cloud": str(cloud_path),
+            "raw_point_cloud": str(s.raw_cloud_path), "cleaned_point_cloud": str(s.cloud_path),
             "cleaned_depth": str(output / "cleaned_depth_mm.png"),
             "source_evidence": str(output / "source_evidence.json"),
-            "quality_report": str(quality_path),
-            "hole_filled_point_cloud": str(repaired_cloud_path),
+            "quality_report": str(s.quality_path),
+            "hole_filled_point_cloud": str(s.repaired_cloud_path),
         })
-        report["cleaning"] = cleaning_report
+        report["cleaning"] = s.cleaning_report
         report["coordinate_system"] = "World RDF; T_WC maps camera to world; metres"
-        report["metrics"]["raw_point_count"] = len(raw_cloud.points)
+        report["metrics"]["raw_point_count"] = len(s.raw_cloud.points)
         report["metrics"]["cleaned_point_count"] = len(cloud.points)
     report_path = output / "reconstruction_report.json"
     if local_measured:
         report['metrics'].update(_cloud_mesh_consistency(cloud,mesh))
         report['metrics']['fused_point_cloud_role']='multi_view_observation_union_display_and_diagnostics'
         report['metrics']['measurement_geometry_default']='tsdf_mesh'
-        report['local_capture'] = dict(**manifest['local_capture'], support=local_support)
+        report['local_capture'] = dict(**manifest['local_capture'], support=s.local_support)
         report['outputs']['initial_observed_point_cloud'] = str(output/'initial_observed_points_m.ply')
         report['outputs']['local_geometry'] = str(output/'local_geometry.json')
         report['depth_quality']['tsdf_confidence_policy'] = (
@@ -453,7 +523,7 @@ def reconstruct_scene(
         report['outputs']['initial_observed_point_cloud_role']='display_subset_not_measurement'
         report['outputs']['initial_observed_point_cloud_linear_stride']=16
         report['outputs']['initial_observed_point_cloud_approximate_pixel_stride']=4
-        report['metrics']['initial_display_point_count']=int(len(initial_display_subset.points))
+        report['metrics']['initial_display_point_count']=int(len(s.initial_display_subset.points))
         first=frames[0]
         report['outputs']['initial_observed_source_sha256']={key:hashlib.sha256((dataset/first[key]).read_bytes()).hexdigest()
             for key in ('rgb','depth','pose')}

@@ -131,6 +131,73 @@ def _ransac_plane(boundary_yx: np.ndarray, boundary_depth: np.ndarray, targets_y
     return target_design @ plane
 
 
+def _check_and_report(depth_input,filled,invalid,confidence,labels,component_details,
+                      min_range_mm,max_range_mm,config,started,total,valid,invalid_pixels,
+                      invalid_rate,policy,count,ransac_checked,repaired_pixels,rejected_large,
+                      rejected_reflection,rejected_low_support,rejected_global,method_pixels):
+    from femto.depth.depth_error_check import depth_error_check
+    error_mask, error_report = depth_error_check(depth_input, filled, min_range_mm, max_range_mm,
+                                                max_error_mm=config.maximum_repair_error_mm)
+    if not error_report['original_integrity_passed']:
+        raise RuntimeError("Depth filling changed original valid observations")
+    # All-or-none rollback also applies to the new error gate.
+    rejected_error_regions = 0
+    for detail in component_details:
+        if detail['decision'] != 'repaired':
+            continue
+        x, y, w, h = (detail[k] for k in ('x','y','width','height'))
+        region = labels[y:y+h,x:x+w] == detail['label']
+        if np.any(error_mask[y:y+h,x:x+w] & region):
+            filled[y:y+h,x:x+w][region] = 0
+            confidence[y:y+h,x:x+w][region] = 0
+            repaired_pixels -= detail['repaired_pixels']
+            for method, amount in detail['methods'].items():
+                method_pixels[method] -= amount
+            detail.update(decision='rejected_depth_error', repaired_pixels=0,
+                          classification='C_depth_error_over_limit_or_unsupported')
+            rejected_error_regions += 1
+    error_report['rejected_regions'] = rejected_error_regions
+    _, final_check = depth_error_check(depth_input, filled, min_range_mm, max_range_mm,
+                                      max_error_mm=config.maximum_repair_error_mm)
+    error_report['after_rejection'] = final_check
+    final_invalid = invalid_depth_mask(filled, min_range_mm, max_range_mm)
+    report: dict[str, Any] = {
+        "schema": "femto-depth-quality-v1",
+        "total_pixels": total,
+        "valid_depth_pixels": int(valid.sum()),
+        "invalid_depth_pixels": invalid_pixels,
+        "original_invalid_rate": invalid_rate,
+        "invalid_rate": invalid_rate,
+        "neighbor_policy": f"Every repaired pixel requires original 8-neighbor support >= {config.minimum_surrounding_valid_ratio}; std < {config.maximum_depth_std_mm} mm; boundary span <= {config.maximum_depth_span_mm} mm; all-or-none per component",
+        "policy": policy,
+        "processing_mode": config.mode,
+        "component_analysis_scope": "isolated_single_pixel_candidates_only" if config.mode == "fast" else "all_invalid_components",
+        "unanalysed_invalid_pixels": invalid_pixels-(count-1) if config.mode == "fast" else 0,
+        "ransac_checked_regions": ransac_checked,
+        "depth_error_check": error_report,
+        "rejected_depth_error_regions": rejected_error_regions,
+        "repaired_pixels": repaired_pixels,
+        "repair_rate": repaired_pixels/max(invalid_pixels, 1),
+        "repair_rate_denominator": "original invalid_depth_pixels (rates are fractions, not percentages)",
+        "active_range_mm": [float(min_range_mm), float(max_range_mm)],
+        "remaining_invalid_pixels": int(final_invalid.sum()),
+        "filled_invalid_rate": float(final_invalid.mean()),
+        "rejected_large_holes": rejected_large,
+        "rejected_reflection_regions": rejected_reflection,
+        "rejected_low_support_regions": rejected_low_support,
+        "rejected_global_policy_regions": rejected_global,
+        "material_identification": "not performed; depth discontinuity is a risk indicator, not a material diagnosis",
+        "component_count": count-1,
+        "method_pixels": method_pixels,
+        "thresholds": asdict(config),
+        "confidence": {"original_depth": 1.0, "repaired_depth": config.repaired_confidence, "unknown": 0.0},
+        "geometry_policy": "Original observations remain authoritative; only A-class holes are estimated.",
+        "components": component_details,
+        "processing_ms": (perf_counter()-started)*1000.0,
+    }
+    return filled, invalid, confidence, report
+
+
 def assess_and_fill_depth(
     depth_mm: np.ndarray,
     min_range_mm: float,
@@ -271,67 +338,10 @@ def assess_and_fill_depth(
                 rejected_low_support += 1
         component_details.append(detail)
 
-    from femto.depth.depth_error_check import depth_error_check
-    error_mask, error_report = depth_error_check(depth_input, filled, min_range_mm, max_range_mm,
-                                                max_error_mm=config.maximum_repair_error_mm)
-    if not error_report['original_integrity_passed']:
-        raise RuntimeError("Depth filling changed original valid observations")
-    # All-or-none rollback also applies to the new error gate.
-    rejected_error_regions = 0
-    for detail in component_details:
-        if detail['decision'] != 'repaired':
-            continue
-        x, y, w, h = (detail[k] for k in ('x','y','width','height'))
-        region = labels[y:y+h,x:x+w] == detail['label']
-        if np.any(error_mask[y:y+h,x:x+w] & region):
-            filled[y:y+h,x:x+w][region] = 0
-            confidence[y:y+h,x:x+w][region] = 0
-            repaired_pixels -= detail['repaired_pixels']
-            for method, amount in detail['methods'].items():
-                method_pixels[method] -= amount
-            detail.update(decision='rejected_depth_error', repaired_pixels=0,
-                          classification='C_depth_error_over_limit_or_unsupported')
-            rejected_error_regions += 1
-    error_report['rejected_regions'] = rejected_error_regions
-    _, final_check = depth_error_check(depth_input, filled, min_range_mm, max_range_mm,
-                                      max_error_mm=config.maximum_repair_error_mm)
-    error_report['after_rejection'] = final_check
-    final_invalid = invalid_depth_mask(filled, min_range_mm, max_range_mm)
-    report: dict[str, Any] = {
-        "schema": "femto-depth-quality-v1",
-        "total_pixels": total,
-        "valid_depth_pixels": int(valid.sum()),
-        "invalid_depth_pixels": invalid_pixels,
-        "original_invalid_rate": invalid_rate,
-        "invalid_rate": invalid_rate,
-        "neighbor_policy": f"Every repaired pixel requires original 8-neighbor support >= {config.minimum_surrounding_valid_ratio}; std < {config.maximum_depth_std_mm} mm; boundary span <= {config.maximum_depth_span_mm} mm; all-or-none per component",
-        "policy": policy,
-        "processing_mode": config.mode,
-        "component_analysis_scope": "isolated_single_pixel_candidates_only" if config.mode == "fast" else "all_invalid_components",
-        "unanalysed_invalid_pixels": invalid_pixels-(count-1) if config.mode == "fast" else 0,
-        "ransac_checked_regions": ransac_checked,
-        "depth_error_check": error_report,
-        "rejected_depth_error_regions": rejected_error_regions,
-        "repaired_pixels": repaired_pixels,
-        "repair_rate": repaired_pixels/max(invalid_pixels, 1),
-        "repair_rate_denominator": "original invalid_depth_pixels (rates are fractions, not percentages)",
-        "active_range_mm": [float(min_range_mm), float(max_range_mm)],
-        "remaining_invalid_pixels": int(final_invalid.sum()),
-        "filled_invalid_rate": float(final_invalid.mean()),
-        "rejected_large_holes": rejected_large,
-        "rejected_reflection_regions": rejected_reflection,
-        "rejected_low_support_regions": rejected_low_support,
-        "rejected_global_policy_regions": rejected_global,
-        "material_identification": "not performed; depth discontinuity is a risk indicator, not a material diagnosis",
-        "component_count": count-1,
-        "method_pixels": method_pixels,
-        "thresholds": asdict(config),
-        "confidence": {"original_depth": 1.0, "repaired_depth": config.repaired_confidence, "unknown": 0.0},
-        "geometry_policy": "Original observations remain authoritative; only A-class holes are estimated.",
-        "components": component_details,
-        "processing_ms": (perf_counter()-started)*1000.0,
-    }
-    return filled, invalid, confidence, report
+    return _check_and_report(depth_input,filled,invalid,confidence,labels,component_details,
+        min_range_mm,max_range_mm,config,started,total,valid,invalid_pixels,invalid_rate,
+        policy,count,ransac_checked,repaired_pixels,rejected_large,rejected_reflection,
+        rejected_low_support,rejected_global,method_pixels)
 
 
 def save_depth_quality(

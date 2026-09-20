@@ -360,41 +360,7 @@ class LocalCapture:
                 self.successful_model_published = True
             self.emit('finished', result=str(result), summary=summary, quality=self.processing_job.report)
         except Exception as error:
-            # A frame write may be in flight if pose preprocessing itself threw.
-            # Finish that owned write before finalizing its raw frame index.
-            if raw_writer is not None:
-                raw_writer.close()
-            self.finished_at = self.finished_at or time.monotonic()
-            status = 'cancelled' if getattr(error, 'status', None) == 'cancelled' else 'failed'
-            reporting_errors = []
-            if self.processing_job is not None:
-                try:
-                    reporting_errors = self.processing_job.terminal(status, str(error))
-                except Exception as report_error:
-                    reporting_errors = [str(report_error)]
-            publication = getattr(error, 'details', {})
-            failure = dict(schema='femto-local-failure-v1', error=str(error), session_id=self.session_id,
-                source=str(self.session), reference_frame_id=tracker.reference_id if tracker else None,
-                accepted_frames=[r['frame_id'] for r in self.accepted],
-                termination=tracker.loss_context if tracker else None,
-                last_rejection=tracker.last_rejection if tracker else None,
-                device_error=self.abort_detail, status=status,
-                successful_model_published=bool(self.successful_model_published or publication.get('successful_model_published')),
-                publication=publication, processing_reporting_errors=reporting_errors,
-                processing_report=str(self.processing_job.path) if self.processing_job is not None else None)
-            try:
-                if not finalized:
-                    finalize_scan(self.scan, self.camera)
-                if tracker is not None and not report_written:
-                    self._write_tracking_report(tracker, error=str(error))
-            except Exception as report_error:
-                failure['report_error'] = str(report_error)
-            try:
-                json_dump(self.session/'derived'/'local_failure.json', failure)
-            except Exception as report_error:
-                failure['failure_report_error'] = str(report_error)
-            self.emit('cancelled' if status == 'cancelled' else 'error', error=str(error), failure=failure,
-                      quality=self.processing_job.report if self.processing_job is not None else None)
+            self._handle_run_failure(error,tracker,raw_writer,finalized,report_written,finalize_scan)
         finally:
             self.closing.set()
             if raw_writer is not None:
@@ -402,6 +368,43 @@ class LocalCapture:
             if self.preview_worker is not None:
                 self.preview_worker.close()
                 self.preview_worker.thread.join(timeout=5.)
+
+    def _handle_run_failure(self,error,tracker,raw_writer,finalized,report_written,finalize_scan):
+        # A frame write may be in flight if pose preprocessing itself threw.
+        # Finish that owned write before finalizing its raw frame index.
+        if raw_writer is not None:
+            raw_writer.close()
+        self.finished_at = self.finished_at or time.monotonic()
+        status = 'cancelled' if getattr(error, 'status', None) == 'cancelled' else 'failed'
+        reporting_errors = []
+        if self.processing_job is not None:
+            try:
+                reporting_errors = self.processing_job.terminal(status, str(error))
+            except Exception as report_error:
+                reporting_errors = [str(report_error)]
+        publication = getattr(error, 'details', {})
+        failure = dict(schema='femto-local-failure-v1', error=str(error), session_id=self.session_id,
+            source=str(self.session), reference_frame_id=tracker.reference_id if tracker else None,
+            accepted_frames=[r['frame_id'] for r in self.accepted],
+            termination=tracker.loss_context if tracker else None,
+            last_rejection=tracker.last_rejection if tracker else None,
+            device_error=self.abort_detail, status=status,
+            successful_model_published=bool(self.successful_model_published or publication.get('successful_model_published')),
+            publication=publication, processing_reporting_errors=reporting_errors,
+            processing_report=str(self.processing_job.path) if self.processing_job is not None else None)
+        try:
+            if not finalized:
+                finalize_scan(self.scan, self.camera)
+            if tracker is not None and not report_written:
+                self._write_tracking_report(tracker, error=str(error))
+        except Exception as report_error:
+            failure['report_error'] = str(report_error)
+        try:
+            json_dump(self.session/'derived'/'local_failure.json', failure)
+        except Exception as report_error:
+            failure['failure_report_error'] = str(report_error)
+        self.emit('cancelled' if status == 'cancelled' else 'error', error=str(error), failure=failure,
+                  quality=self.processing_job.report if self.processing_job is not None else None)
 
     def _write_tracking_report(self, tracker, *, error=None):
         elapsed = max(0., (self.finished_at or time.monotonic()) - self.scan.started)

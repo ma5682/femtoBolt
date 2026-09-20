@@ -192,6 +192,40 @@ main{{max-width:1180px;margin:auto;padding:38px}} h1{{font-size:32px;margin:0 0 
     (output / "demo_report.html").write_text(report, encoding="utf-8")
 
 
+def _add_synthetic_ground_truth_error(summary: dict[str, Any], reconstruction_dir: Path,
+                                      posed_dataset: Path) -> None:
+    cloud = read_geometry_safe(reconstruction_dir / "scene_fused_points_m.ply", mesh=False)
+    ground_truth = read_geometry_safe(
+        posed_dataset / "ground_truth" / "synthetic_scene_ground_truth_m.ply", mesh=True
+    )
+    ray_scene = o3d.t.geometry.RaycastingScene()
+    ray_scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(ground_truth))
+    distances = ray_scene.compute_distance(
+        o3d.core.Tensor(np.asarray(cloud.points), dtype=o3d.core.Dtype.Float32)
+    ).numpy()
+    summary["synthetic_ground_truth_error"] = {
+        "median_m": float(np.median(distances)),
+        "p95_m": float(np.quantile(distances, 0.95)),
+        "max_m": float(np.max(distances)),
+    }
+
+
+def _complete_local_processing(processing_path: Path, posed_dataset: Path, result_root: Path,
+                               reconstruction: dict[str, Any], summary: dict[str, Any]) -> None:
+    from femto.io_utils import load_json_object as read_json, write_json_strict as write_json
+    from femto.local.local_processing import write_html
+    processing = read_json(processing_path)
+    if Path(processing['actual_dataset']).resolve() != posed_dataset.resolve():
+        raise ValueError('Processing report does not match reconstruction input')
+    processing['state'] = 'complete'
+    processing['reconstruction'] = dict(status='complete', error=None,
+        depth_quality=reconstruction.get('depth_quality'),metrics=reconstruction.get('metrics'))
+    processing['result'] = str(result_root)
+    write_json(result_root / 'processing_report.json', processing)
+    write_html(result_root / 'processing_report.html', processing)
+    summary['local_processing_report'] = str(result_root / 'processing_report.json')
+
+
 def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     if args.mode == "synthetic":
         dataset = generate_dataset(args.datasets_root, frames=args.synthetic_frames)
@@ -300,36 +334,13 @@ def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
                        capture_label='中断前数据建模 / Interrupted-prefix reconstruction',
                        interrupted_prefix=posed_manifest['local_capture']['interrupted_prefix'])
     if args.mode == "synthetic":
-        cloud = read_geometry_safe(reconstruction_dir / "scene_fused_points_m.ply", mesh=False)
-        ground_truth = read_geometry_safe(
-            posed_dataset / "ground_truth" / "synthetic_scene_ground_truth_m.ply", mesh=True
-        )
-        ray_scene = o3d.t.geometry.RaycastingScene()
-        ray_scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(ground_truth))
-        distances = ray_scene.compute_distance(
-            o3d.core.Tensor(np.asarray(cloud.points), dtype=o3d.core.Dtype.Float32)
-        ).numpy()
-        summary["synthetic_ground_truth_error"] = {
-            "median_m": float(np.median(distances)),
-            "p95_m": float(np.quantile(distances, 0.95)),
-            "max_m": float(np.max(distances)),
-        }
+        _add_synthetic_ground_truth_error(summary, reconstruction_dir, posed_dataset)
     if reconstruction.get("outputs", {}).get("quality_report"):
         summary["single_frame_quality"] = load_json(Path(reconstruction["outputs"]["quality_report"]))
     processing_path = getattr(args, 'local_processing_report', None)
     if processing_path:
-        from femto.io_utils import load_json_object as read_json, write_json_strict as write_json
-        from femto.local.local_processing import write_html
-        processing = read_json(processing_path)
-        if Path(processing['actual_dataset']).resolve() != posed_dataset.resolve():
-            raise ValueError('Processing report does not match reconstruction input')
-        processing['state'] = 'complete'
-        processing['reconstruction'] = dict(status='complete', error=None,
-            depth_quality=reconstruction.get('depth_quality'),metrics=reconstruction.get('metrics'))
-        processing['result'] = str(result_root)
-        write_json(result_root / 'processing_report.json', processing)
-        write_html(result_root / 'processing_report.html', processing)
-        summary['local_processing_report'] = str(result_root / 'processing_report.json')
+        _complete_local_processing(Path(processing_path), posed_dataset, result_root,
+                                   reconstruction, summary)
     (result_root / "demo_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )

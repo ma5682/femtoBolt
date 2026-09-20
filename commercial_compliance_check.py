@@ -191,11 +191,8 @@ def imported_modules(path: Path) -> list[str]:
     return modules
 
 
-def main() -> int:
-    errors: list[dict[str, Any]] = []
-    warnings: list[dict[str, Any]] = []
+def _check_environment(errors, warnings):
     package_versions: dict[str, str | None] = {}
-
     for package, expected in EXPECTED_PACKAGES.items():
         try:
             actual = importlib.metadata.version(package)
@@ -262,6 +259,34 @@ def main() -> int:
                     f"Restricted distribution installed in the product 3DGS runtime: {blocked} {runtime_versions[blocked]}",
                     package=blocked,
                 )
+    return package_versions, license_hashes, model_sha256, runtime_versions
+
+
+def _check_spz_extension(errors, runtime_versions):
+    spz_extension = GSPLAT_RUNTIME_SITE_PACKAGES / "spz" / "spz.cp310-win_amd64.pyd"
+    spz_extension_sha256 = hashlib.sha256(spz_extension.read_bytes()).hexdigest() if spz_extension.is_file() else None
+    spz_extension_sha256_verified = spz_extension_sha256 == EXPECTED_SPZ_EXTENSION_SHA256
+    if runtime_versions is not None:
+        if not spz_extension.is_file():
+            issue(errors, "spz_extension_missing", "The pinned SPZ Python extension is missing", path=str(spz_extension))
+        elif not spz_extension_sha256_verified:
+            issue(
+                errors,
+                "spz_extension_hash_mismatch",
+                "The installed SPZ Python extension differs from the audited build artifact",
+                path=str(spz_extension),
+                expected=EXPECTED_SPZ_EXTENSION_SHA256,
+                actual=spz_extension_sha256,
+            )
+    return spz_extension, spz_extension_sha256, spz_extension_sha256_verified
+
+
+def main() -> int:
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    package_versions, license_hashes, model_sha256, runtime_versions = _check_environment(
+        errors, warnings
+    )
 
     spz_static_components = json.loads(json.dumps(SPZ_STATIC_COMPONENTS))
     for component_name in ("spz-source", "zlib", "zstd"):
@@ -387,28 +412,23 @@ def main() -> int:
             path=str(nanobind_artifact),
         )
 
-    spz_extension = GSPLAT_RUNTIME_SITE_PACKAGES / "spz" / "spz.cp310-win_amd64.pyd"
-    spz_extension_sha256 = hashlib.sha256(spz_extension.read_bytes()).hexdigest() if spz_extension.is_file() else None
-    spz_extension_sha256_verified = spz_extension_sha256 == EXPECTED_SPZ_EXTENSION_SHA256
-    if runtime_versions is not None:
-        if not spz_extension.is_file():
-            issue(errors, "spz_extension_missing", "The pinned SPZ Python extension is missing", path=str(spz_extension))
-        elif not spz_extension_sha256_verified:
-            issue(
-                errors,
-                "spz_extension_hash_mismatch",
-                "The installed SPZ Python extension differs from the audited build artifact",
-                path=str(spz_extension),
-                expected=EXPECTED_SPZ_EXTENSION_SHA256,
-                actual=spz_extension_sha256,
-            )
+    spz_extension, spz_extension_sha256, spz_extension_sha256_verified = (
+        _check_spz_extension(errors, runtime_versions)
+    )
 
+    return _finish_report(errors,warnings,package_versions,license_hashes,model_sha256,
+        runtime_versions,spz_static_components,spz_extension,spz_extension_sha256,
+        spz_extension_sha256_verified)
+
+
+def _finish_report(errors,warnings,package_versions,license_hashes,model_sha256,runtime_versions,
+                   spz_static_components,spz_extension,spz_extension_sha256,
+                   spz_extension_sha256_verified):
     lpips_backbone = lpips_backbone_status()
     if not lpips_backbone["present"]:
         issue(warnings, "lpips_backbone_missing", "LPIPS AlexNet backbone is not provisioned; run install_lpips_weights.cmd")
     elif not lpips_backbone["ready"]:
         issue(errors, "lpips_backbone_hash_mismatch", lpips_backbone["error"], path=lpips_backbone["path"])
-
     for path in python_files():
         try:
             modules = imported_modules(path)
@@ -417,13 +437,8 @@ def main() -> int:
             continue
         for module in modules:
             if module.startswith(BLOCKED_IMPORT_PREFIXES):
-                issue(
-                    errors,
-                    "restricted_import",
-                    f"Restricted product dependency import: {module}",
-                    file=str(path.relative_to(ROOT)),
-                )
-
+                issue(errors,"restricted_import",f"Restricted product dependency import: {module}",
+                      file=str(path.relative_to(ROOT)))
     manual_release_blockers = [
         "Register the actual copyright owner and contributor assignments.",
         "Include license bundle and notices in the real installer/customer delivery.",
@@ -435,32 +450,19 @@ def main() -> int:
     ]
     for blocker in manual_release_blockers:
         issue(warnings, "manual_release_gate", blocker)
-
     report = {
-        "schema": "commercial-clean-room-check-v1",
-        "development_baseline_passed": not errors,
-        "release_ready": False,
-        "package_versions": package_versions,
-        "gsplat_runtime_versions": (
-            {name: runtime_versions.get(name) for name in EXPECTED_GSPLAT_PACKAGES} if runtime_versions else None
-        ),
+        "schema": "commercial-clean-room-check-v1", "development_baseline_passed": not errors,
+        "release_ready": False, "package_versions": package_versions,
+        "gsplat_runtime_versions": ({name: runtime_versions.get(name) for name in EXPECTED_GSPLAT_PACKAGES}
+                                    if runtime_versions else None),
         "spz_static_components": spz_static_components,
-        "spz_extension": {
-            "file": str(spz_extension),
-            "present": spz_extension.is_file(),
-            "sha256": spz_extension_sha256,
-            "expected_sha256": EXPECTED_SPZ_EXTENSION_SHA256,
-            "sha256_verified": spz_extension_sha256_verified,
-        },
-        "lpips_backbone": {
-            "file": lpips_backbone["file"],
-            "present": lpips_backbone["present"],
-            "sha256_verified": lpips_backbone["sha256_verified"],
-        },
-        "model_sha256": model_sha256,
-        "license_sha256": license_hashes,
-        "errors": errors,
-        "warnings": warnings,
+        "spz_extension": {"file": str(spz_extension), "present": spz_extension.is_file(),
+            "sha256": spz_extension_sha256, "expected_sha256": EXPECTED_SPZ_EXTENSION_SHA256,
+            "sha256_verified": spz_extension_sha256_verified},
+        "lpips_backbone": {"file": lpips_backbone["file"], "present": lpips_backbone["present"],
+                           "sha256_verified": lpips_backbone["sha256_verified"]},
+        "model_sha256": model_sha256, "license_sha256": license_hashes,
+        "errors": errors, "warnings": warnings,
     }
     report_dir = ROOT / "compliance"
     report_dir.mkdir(parents=True, exist_ok=True)

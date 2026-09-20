@@ -296,11 +296,7 @@ def estimate_poses(
         raise
 
 
-def _estimate_poses(
-    dataset: Path, output: Path, *, image_scale: float, min_fitness: float,
-    max_rmse_m: float, max_step_m: float, max_step_deg: float,
-    failure_evidence: dict[str, Any],
-) -> tuple[Path, dict[str, Any]]:
+def _prepare_pose_estimation(dataset,output,image_scale,failure_evidence):
     dataset = dataset.resolve()
     output = output.resolve()
     if output.exists():
@@ -317,11 +313,8 @@ def _estimate_poses(
     appears_fixed = motion.get("appears_fixed")
     if appears_fixed is None and motion.get("reliable", False):
         # Backward-compatible path for callers/tests returning the v1 summary.
-        appears_fixed = (
-            motion["homography_inlier_ratio"] >= BACKGROUND_HOMOGRAPHY_INLIER_MIN
-            and motion["median_background_displacement_px"]
-            < FIXED_BACKGROUND_DISPLACEMENT_MAX_PX
-        )
+        appears_fixed = (motion["homography_inlier_ratio"] >= BACKGROUND_HOMOGRAPHY_INLIER_MIN
+                         and motion["median_background_displacement_px"] < FIXED_BACKGROUND_DISPLACEMENT_MAX_PX)
     if appears_fixed:
         raise ValueError(
             "Camera appears fixed: background displacement is only "
@@ -335,13 +328,143 @@ def _estimate_poses(
     depth_min_m = float(parameters.get("depth_min_mm", 1000.0 * range_m[0] if range_m else 500.0)) / 1000.0
     depth_max_m = float(parameters.get("depth_max_mm", 1000.0 * range_m[1] if range_m else 3860.0)) / 1000.0
     map_x, map_y, K, width, height = _distortion_maps(dataset)
-
     option = o3d.pipelines.odometry.OdometryOption()
     option.iteration_number_per_pyramid_level = o3d.utility.IntVector([30, 20, 10])
     option.depth_diff_max = 0.07
     option.depth_min = depth_min_m
     option.depth_max = depth_max_m
     jacobian = o3d.pipelines.odometry.RGBDOdometryJacobianFromHybridTerm()
+    return (dataset,output,source_manifest,frames,motion,depth_min_m,depth_max_m,
+            map_x,map_y,K,width,height,option,jacobian)
+
+
+def _select_pose_keyframes(frames,poses,accepted_frames,accepted_ordinals,failure_evidence):
+    if accepted_ordinals and len(frames) - 1 - accepted_ordinals[-1] >= POLICY["max_tracking_gap_frames"]:
+        raise ValueError("Tracking lost at end of capture; five consecutive frames rejected")
+    tracked_ordinals = list(accepted_ordinals)
+    selected = select_keyframes(poses)
+    keyframe_selection = dict(tracked_frame_ordinals=tracked_ordinals,
+        selected_frame_ordinals=[accepted_ordinals[i] for i in selected],
+        redundant_frame_ordinals=[value for i, value in enumerate(accepted_ordinals) if i not in selected],
+        policy=dict(POLICY), selection_basis="pose diversity after continuous tracking")
+    failure_evidence["keyframe_selection"] = keyframe_selection
+    accepted_frames = [accepted_frames[i] for i in selected]
+    poses = [poses[i] for i in selected]
+    accepted_ordinals = [accepted_ordinals[i] for i in selected]
+    failure_evidence["accepted_frame_ordinals"] = accepted_ordinals
+    if len(accepted_frames) < 3:
+        raise ValueError(
+            f"Only {len(accepted_frames)}/{len(frames)} frames passed RGB-D pose gates; "
+            "move more slowly, keep about 70% overlap, and avoid moving people/objects"
+        )
+    translation_span_m, rotation_span_deg = pose_diversity(poses)
+    failure_evidence.update(translation_span_m=translation_span_m, rotation_span_deg=rotation_span_deg)
+    if translation_span_m < 0.02 and rotation_span_deg < 2.0:
+        raise ValueError(
+            "Estimated trajectory has no useful viewpoint diversity; move the camera slowly around the scene"
+        )
+    return (poses,accepted_frames,accepted_ordinals,keyframe_selection,
+            translation_span_m,rotation_span_deg)
+
+
+def _write_pose_outputs(dataset,output,source_manifest,frames,accepted_frames,poses,
+                        accepted_ordinals,rejected_frames,motion,translation_span_m,
+                        rotation_span_deg,image_scale,min_fitness,max_rmse_m,max_step_m,
+                        max_step_deg,option,pair_metrics,frame_quality_metrics,keyframe_selection):
+    (output / "pose").mkdir(parents=True, exist_ok=False)
+    shutil.copytree(dataset / "calibration", output / "calibration")
+    derived_frames: list[dict[str, Any]] = []
+    for ordinal, (frame, pose) in enumerate(zip(accepted_frames, poses)):
+        pose_path = output / "pose" / f"{ordinal:06d}.json"
+        pose_record = {
+            "schema": "femto-scene-frame-pose-v1",
+            "frame": int(frame["frame"]),
+            "pose_valid": True,
+            "T_WC": pose.tolist(),
+            "pose_source": "open3d_sequential_hybrid_rgbd_odometry",
+            "coordinate_system": "+X right, +Y down, +Z forward; metres",
+            "source_dataset": str(dataset),
+            "warning": "Research-grade sequential odometry; no loop closure or relocalization.",
+        }
+        pose_path.write_text(json.dumps(pose_record, ensure_ascii=False, indent=2), encoding="utf-8")
+        derived = dict(frame)
+        derived["rgb"] = _relative_path((dataset / frame["rgb"]).resolve(), output)
+        derived["depth"] = _relative_path((dataset / frame["depth"]).resolve(), output)
+        derived["pose"] = pose_path.relative_to(output).as_posix()
+        derived["pose_valid"] = True
+        derived_frames.append(derived)
+    (output / "frames.jsonl").write_text(
+        "".join(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n" for item in derived_frames),
+        encoding="utf-8",
+    )
+    derived_manifest = dict(source_manifest)
+    derived_manifest.update(
+        {
+            "status": "derived_pose_estimated",
+            "frame_count": len(accepted_frames),
+            "source_dataset": str(dataset),
+            "pose": {
+                "valid": True,
+                "source": "open3d_sequential_hybrid_rgbd_odometry",
+                "warning": "No loop closure/relocalization; use quality report and geometric target before production.",
+            },
+            "files": {
+                **dict(source_manifest.get("files", {})),
+                "rgb": "references source dataset through frames.jsonl",
+                "depth": "references source dataset through frames.jsonl",
+                "pose": "pose/*.json",
+            },
+        }
+    )
+    (output / "manifest.json").write_text(
+        json.dumps(derived_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    report = {
+        "schema": "femto-rgbd-odometry-report-v1",
+        "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
+        "status": "estimated_research_grade",
+        "source_dataset": str(dataset),
+        "output_dataset": str(output),
+        "source_frame_count": len(frames),
+        "frame_count": len(accepted_frames),
+        "accepted_frame_ordinals": accepted_ordinals,
+        "rejected_frame_count": len(rejected_frames),
+        "rejected_frames": rejected_frames,
+        "background_motion": motion,
+        "translation_span_m": translation_span_m,
+        "rotation_span_deg": rotation_span_deg,
+        "parameters": {
+            "image_scale": image_scale, "min_fitness": min_fitness,
+            "max_rmse_m": max_rmse_m, "max_step_m": max_step_m,
+            "max_step_deg": max_step_deg, "depth_diff_max_m": option.depth_diff_max,
+        },
+        "pairs": pair_metrics,
+        "frame_quality": frame_quality_metrics,
+        "keyframe_selection": keyframe_selection,
+        "moving_policy": dict(POLICY),
+        "limitations": [
+            "Sequential odometry accumulates drift.",
+            "There is no loop closure or relocalization in this first demo.",
+            "Robot T_BF + calibrated T_FC remains the preferred production pose source for eye-in-hand use.",
+        ],
+    }
+    (output / "pose_quality_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    marker = dataset / "derived" / "latest_posed_dataset.txt"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(str(output), encoding="utf-8")
+    return output, report
+
+
+def _estimate_poses(
+    dataset: Path, output: Path, *, image_scale: float, min_fitness: float,
+    max_rmse_m: float, max_step_m: float, max_step_deg: float,
+    failure_evidence: dict[str, Any],
+) -> tuple[Path, dict[str, Any]]:
+    (dataset,output,source_manifest,frames,motion,depth_min_m,depth_max_m,
+     map_x,map_y,K,width,height,option,jacobian) = _prepare_pose_estimation(
+        dataset,output,image_scale,failure_evidence)
 
     poses = []
     accepted_frames = []
@@ -458,118 +581,14 @@ def _estimate_poses(
         previous_rgbd = current_rgbd
         previous_cloud = current_cloud
 
-    if accepted_ordinals and len(frames) - 1 - accepted_ordinals[-1] >= POLICY["max_tracking_gap_frames"]:
-        raise ValueError("Tracking lost at end of capture; five consecutive frames rejected")
-    tracked_ordinals = list(accepted_ordinals)
-    selected = select_keyframes(poses)
-    keyframe_selection = dict(tracked_frame_ordinals=tracked_ordinals,
-        selected_frame_ordinals=[accepted_ordinals[i] for i in selected],
-        redundant_frame_ordinals=[value for i, value in enumerate(accepted_ordinals) if i not in selected],
-        policy=dict(POLICY), selection_basis="pose diversity after continuous tracking")
-    failure_evidence["keyframe_selection"] = keyframe_selection
-    accepted_frames = [accepted_frames[i] for i in selected]
-    poses = [poses[i] for i in selected]
-    accepted_ordinals = [accepted_ordinals[i] for i in selected]
-    failure_evidence["accepted_frame_ordinals"] = accepted_ordinals
-    if len(accepted_frames) < 3:
-        raise ValueError(
-            f"Only {len(accepted_frames)}/{len(frames)} frames passed RGB-D pose gates; "
-            "move more slowly, keep about 70% overlap, and avoid moving people/objects"
-        )
-    translation_span_m, rotation_span_deg = pose_diversity(poses)
-    failure_evidence.update(translation_span_m=translation_span_m, rotation_span_deg=rotation_span_deg)
-    if translation_span_m < 0.02 and rotation_span_deg < 2.0:
-        raise ValueError(
-            "Estimated trajectory has no useful viewpoint diversity; move the camera slowly around the scene"
-        )
+    (poses,accepted_frames,accepted_ordinals,keyframe_selection,
+     translation_span_m,rotation_span_deg) = _select_pose_keyframes(
+        frames,poses,accepted_frames,accepted_ordinals,failure_evidence)
 
-    (output / "pose").mkdir(parents=True, exist_ok=False)
-    shutil.copytree(dataset / "calibration", output / "calibration")
-    derived_frames: list[dict[str, Any]] = []
-    for ordinal, (frame, pose) in enumerate(zip(accepted_frames, poses)):
-        pose_path = output / "pose" / f"{ordinal:06d}.json"
-        pose_record = {
-            "schema": "femto-scene-frame-pose-v1",
-            "frame": int(frame["frame"]),
-            "pose_valid": True,
-            "T_WC": pose.tolist(),
-            "pose_source": "open3d_sequential_hybrid_rgbd_odometry",
-            "coordinate_system": "+X right, +Y down, +Z forward; metres",
-            "source_dataset": str(dataset),
-            "warning": "Research-grade sequential odometry; no loop closure or relocalization.",
-        }
-        pose_path.write_text(json.dumps(pose_record, ensure_ascii=False, indent=2), encoding="utf-8")
-        derived = dict(frame)
-        derived["rgb"] = _relative_path((dataset / frame["rgb"]).resolve(), output)
-        derived["depth"] = _relative_path((dataset / frame["depth"]).resolve(), output)
-        derived["pose"] = pose_path.relative_to(output).as_posix()
-        derived["pose_valid"] = True
-        derived_frames.append(derived)
-    (output / "frames.jsonl").write_text(
-        "".join(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n" for item in derived_frames),
-        encoding="utf-8",
-    )
-    derived_manifest = dict(source_manifest)
-    derived_manifest.update(
-        {
-            "status": "derived_pose_estimated",
-            "frame_count": len(accepted_frames),
-            "source_dataset": str(dataset),
-            "pose": {
-                "valid": True,
-                "source": "open3d_sequential_hybrid_rgbd_odometry",
-                "warning": "No loop closure/relocalization; use quality report and geometric target before production.",
-            },
-            "files": {
-                **dict(source_manifest.get("files", {})),
-                "rgb": "references source dataset through frames.jsonl",
-                "depth": "references source dataset through frames.jsonl",
-                "pose": "pose/*.json",
-            },
-        }
-    )
-    (output / "manifest.json").write_text(
-        json.dumps(derived_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    report = {
-        "schema": "femto-rgbd-odometry-report-v1",
-        "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
-        "status": "estimated_research_grade",
-        "source_dataset": str(dataset),
-        "output_dataset": str(output),
-        "source_frame_count": len(frames),
-        "frame_count": len(accepted_frames),
-        "accepted_frame_ordinals": accepted_ordinals,
-        "rejected_frame_count": len(rejected_frames),
-        "rejected_frames": rejected_frames,
-        "background_motion": motion,
-        "translation_span_m": translation_span_m,
-        "rotation_span_deg": rotation_span_deg,
-        "parameters": {
-            "image_scale": image_scale,
-            "min_fitness": min_fitness,
-            "max_rmse_m": max_rmse_m,
-            "max_step_m": max_step_m,
-            "max_step_deg": max_step_deg,
-            "depth_diff_max_m": option.depth_diff_max,
-        },
-        "pairs": pair_metrics,
-        "frame_quality": frame_quality_metrics,
-        "keyframe_selection": keyframe_selection,
-        "moving_policy": dict(POLICY),
-        "limitations": [
-            "Sequential odometry accumulates drift.",
-            "There is no loop closure or relocalization in this first demo.",
-            "Robot T_BF + calibrated T_FC remains the preferred production pose source for eye-in-hand use.",
-        ],
-    }
-    (output / "pose_quality_report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    marker = dataset / "derived" / "latest_posed_dataset.txt"
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(str(output), encoding="utf-8")
-    return output, report
+    return _write_pose_outputs(dataset,output,source_manifest,frames,accepted_frames,poses,
+        accepted_ordinals,rejected_frames,motion,translation_span_m,rotation_span_deg,
+        image_scale,min_fitness,max_rmse_m,max_step_m,max_step_deg,option,pair_metrics,
+        frame_quality_metrics,keyframe_selection)
 
 
 def main() -> int:

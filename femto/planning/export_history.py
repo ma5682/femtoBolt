@@ -102,6 +102,59 @@ def scan_exports(reconstruction, include_hidden=False, check=lambda:None):
     return sorted([r for r in rows if include_hidden or not r['hidden']],key=lambda row:row['stamp'],reverse=True)
 
 
+def _build_region_library_table(window):
+    import queue
+    import tkinter as tk
+    from tkinter import ttk
+    from femto.planning.planning_io import TaskControl
+
+    thumbnail=ttk.Label(window,text='无缩略图');thumbnail.pack(side='bottom')
+    frame=ttk.Frame(window);frame.pack(fill='both',expand=True,padx=12)
+    tree=ttk.Treeview(frame,columns=('time','kind','name','status'),show='tree headings',selectmode='extended')
+    for key,title,width in [('time','导出时间',170),('kind','类型',100),('name','区域名称 / ID',250),('status','文件状态',280)]:
+        tree.heading(key,text=title);tree.column(key,width=width)
+    tree.heading('#0',text='区域 / 方案版本');tree.column('#0',width=190)
+    scroll=ttk.Scrollbar(frame,command=tree.yview);tree.configure(yscrollcommand=scroll.set)
+    scroll.pack(side='right',fill='y');tree.pack(fill='both',expand=True)
+    detail=tk.StringVar(value='正在读取导出记录…')
+    ttk.Label(window,textvariable=detail,wraplength=1000).pack(fill='x',padx=12,pady=10)
+    actions=ttk.Frame(window);actions.pack(fill='x',padx=12,pady=10)
+    project_actions=ttk.Frame(window);project_actions.pack(fill='x',padx=12,pady=4)
+    return thumbnail,tree,detail,actions,project_actions,[],queue.Queue(),False,[''],TaskControl('读取区域方案库')
+
+
+def _update_library_thumbnail(row,thumbnail,window):
+    thumbnail.configure(image='',text='无缩略图');thumbnail.image=None
+    if row and (row.get('diagram') or row.get('project')):
+        try:
+            from PIL import Image,ImageTk
+            import io,zipfile
+            image_source=row.get('diagram')
+            if not image_source:
+                with zipfile.ZipFile(row['project']) as z:
+                    if z.getinfo('rgb.png').file_size>20*1024**2:raise ValueError('缩略图超过预算')
+                    image_source=io.BytesIO(z.read('rgb.png'))
+            with Image.open(image_source) as im:
+                if im.width*im.height>20_000_000:raise ValueError('缩略图尺寸超限')
+                im.thumbnail((280,140));picture=ImageTk.PhotoImage(im.copy(),master=window)
+            thumbnail.configure(image=picture,text='');thumbnail.image=picture
+        except Exception:thumbnail.configure(text='缩略图不可读取')
+
+
+def _render_library_rows(tree,rows,show_hidden,search,kind_filter):
+    tree.delete(*tree.get_children());groups=set();versions=set()
+    for i,row in enumerate(rows):
+        if row.get('hidden') and not show_hidden.get():continue
+        if search.get().casefold() not in row['name'].casefold():continue
+        if kind_filter.get()!='全部' and row['kind']!=kind_filter.get():continue
+        group='g'+row['region_key'];version=group+'v'+row['version_key']
+        if group not in groups:
+            tree.insert('','end',iid=group,text=row['name'],open=True);groups.add(group)
+        if version not in versions:
+            tree.insert(group,'end',iid=version,text='方案 '+row['version_key'][:12],open=True);versions.add(version)
+        tree.insert(version,'end',iid=str(i),text='已移除' if row.get('hidden') else '记录',values=[row[k] for k in ('time','kind','name','status')])
+
+
 def show_region_library(parent,reconstruction):
     import os
     import queue
@@ -120,21 +173,9 @@ def show_region_library(parent,reconstruction):
     ttk.Entry(filters,textvariable=search).pack(side='left')
     ttk.Combobox(filters,textvariable=kind_filter,values=['全部','区域','区域＋路径','区域工程 / 方案','标记'],state='readonly',width=20).pack(side='left')
     ttk.Checkbutton(filters,text='显示已移除索引',variable=show_hidden,command=lambda:render()).pack(side='left')
-    thumbnail=ttk.Label(window,text='无缩略图');thumbnail.pack(side='bottom')
-    frame=ttk.Frame(window);frame.pack(fill='both',expand=True,padx=12)
-    tree=ttk.Treeview(frame,columns=('time','kind','name','status'),show='tree headings',selectmode='extended')
-    for key,title,width in [('time','导出时间',170),('kind','类型',100),('name','区域名称 / ID',250),('status','文件状态',280)]:
-        tree.heading(key,text=title);tree.column(key,width=width)
-    tree.heading('#0',text='区域 / 方案版本');tree.column('#0',width=190)
-    scroll=ttk.Scrollbar(frame,command=tree.yview);tree.configure(yscrollcommand=scroll.set)
-    scroll.pack(side='right',fill='y');tree.pack(fill='both',expand=True)
-    detail=tk.StringVar(value='正在读取导出记录…')
-    ttk.Label(window,textvariable=detail,wraplength=1000).pack(fill='x',padx=12,pady=10)
-    actions=ttk.Frame(window);actions.pack(fill='x',padx=12,pady=10)
-    project_actions=ttk.Frame(window);project_actions.pack(fill='x',padx=12,pady=4)
-    from femto.planning.planning_io import TaskControl
     import time
-    rows=[];mailbox=queue.Queue();busy=False;outcome=[''];control=TaskControl('读取区域方案库')
+    thumbnail,tree,detail,actions,project_actions,rows,mailbox,busy,outcome,control=_build_region_library_table(window)
+    from femto.planning.planning_io import TaskControl
     def close():
         control.set();window.destroy()
     window.protocol('WM_DELETE_WINDOW',close)
@@ -150,21 +191,7 @@ def show_region_library(parent,reconstruction):
         if row:
             detail.set(str(row['folder'])+'\n'+row['status']+'\n版本备注：'+row.get('note',''))
             archive_button.configure(text='打开工程 ZIP' if row.get('project') else '打开分享包 ZIP')
-        thumbnail.configure(image='',text='无缩略图');thumbnail.image=None
-        if row and (row.get('diagram') or row.get('project')):
-            try:
-                from PIL import Image,ImageTk
-                import io,zipfile
-                image_source=row.get('diagram')
-                if not image_source:
-                    with zipfile.ZipFile(row['project']) as z:
-                        if z.getinfo('rgb.png').file_size>20*1024**2:raise ValueError('缩略图超过预算')
-                        image_source=io.BytesIO(z.read('rgb.png'))
-                with Image.open(image_source) as im:
-                    if im.width*im.height>20_000_000:raise ValueError('缩略图尺寸超限')
-                    im.thumbnail((280,140));picture=ImageTk.PhotoImage(im.copy(),master=window)
-                thumbnail.configure(image=picture,text='');thumbnail.image=picture
-            except Exception:thumbnail.configure(text='缩略图不可读取')
+        _update_library_thumbnail(row,thumbnail,window)
     def open_folder():
         row=selected()
         if row:
@@ -225,17 +252,7 @@ def show_region_library(parent,reconstruction):
         detail.set(error or f'共 {len(rows)} 条记录 · {time.monotonic()-control.started:.1f} 秒{outcome[0]}。双击区域/工程进入规划；路径导出只作预览。')
         update()
     def render(*_):
-        tree.delete(*tree.get_children());groups=set();versions=set()
-        for i,row in enumerate(rows):
-            if row.get('hidden') and not show_hidden.get():continue
-            if search.get().casefold() not in row['name'].casefold():continue
-            if kind_filter.get()!='全部' and row['kind']!=kind_filter.get():continue
-            group='g'+row['region_key'];version=group+'v'+row['version_key']
-            if group not in groups:
-                tree.insert('','end',iid=group,text=row['name'],open=True);groups.add(group)
-            if version not in versions:
-                tree.insert(group,'end',iid=version,text='方案 '+row['version_key'][:12],open=True);versions.add(version)
-            tree.insert(version,'end',iid=str(i),text='已移除' if row.get('hidden') else '记录',values=[row[k] for k in ('time','kind','name','status')])
+        _render_library_rows(tree,rows,show_hidden,search,kind_filter)
         update()
     search.trace_add('write',render);kind_filter.trace_add('write',render)
     def picked():return [rows[int(i)] for i in tree.selection() if i.isdigit()]

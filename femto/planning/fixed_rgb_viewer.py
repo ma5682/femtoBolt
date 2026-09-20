@@ -22,24 +22,7 @@ PRODUCT_SINGLE_REGION=True
 
 
 class FixedRGBViewer:
-    def __init__(self,root,result,language='zh'):
-        self.root,self.result,self.language=root,Path(result),language
-        self.project_path=self.result.resolve() if self.result.is_file() else None
-        self._plans={};self._requests={};self._plan_errors={};self._saved_plans={};self._saved_requests={};self._plan_buttons={}
-        self._project_region_id=None
-        from femto.planning.planning_drafts import Journal
-        self.draft_journal=Journal(self.result);self._draft_ready=False;self._draft_due=None;self._draft_signature=None
-        self.model=None;self.busy=False;self.closed=False;self.polygon=[];self.focus=None
-        self._brush_history=[];self._brush_mask=None;self._brush_last=None;self._brush_cursor=None
-        self._selection_polygons={'work':[],'forbidden':[]}
-        self.generation=0;self.task_cancel=threading.Event();self.operation='load_model'
-        self._task_lock=threading.Lock();self._task_local=threading.local()
-        self._annotations_dirty=False;self._syncing_fields=False;self.active_mode='region'
-        self.zoom=1.;self.pan=np.zeros(2);self.scale=1.;self.offset=np.zeros(2)
-        self.mailbox=queue.Queue(maxsize=1);self.widgets=[]
-        root.title(self.t('Femto · 固定 RGB 选区与三维坐标','Femto · Fixed RGB annotation'))
-        root.geometry('1280x820');root.minsize(1000,720);root.configure(bg='#101b26')
-        root.protocol('WM_DELETE_WINDOW',self.close)
+    def _build_main_area(self,root):
         main=tk.Frame(root,bg='#101b26');main.pack(side='left',fill='both',expand=True)
         tk.Label(main,text=self.t('固定初始相机视角 · 图像选区 / 三维映射','Locked initial camera · RGB selection / 3D mapping'),
             fg='#e5f1f8',bg='#101b26',font=('Microsoft YaHei UI',16,'bold'),pady=12).pack(fill='x')
@@ -58,6 +41,8 @@ class FixedRGBViewer:
         self.canvas.bind('<B3-Motion>',self.pan_move)
         tk.Label(main,text=self.t('按住左键涂抹 · 滚轮缩放 · 右键平移','Left drag: paint · Wheel: zoom · Right drag: pan'),
             bg='#101b26',fg='#b6c9d9',pady=8).pack(fill='x')
+
+    def _build_sidebar_shell(self,root):
         sidebar=tk.Frame(root,bg='#142330');sidebar.pack(side='right',fill='y')
         scroll=ttk.Scrollbar(sidebar,orient='vertical');scroll.pack(side='right',fill='y')
         self.side_canvas=tk.Canvas(sidebar,width=380 if self.result.is_file() else 320,bg='#142330',highlightthickness=0,yscrollcommand=scroll.set)
@@ -81,6 +66,28 @@ class FixedRGBViewer:
             for title in ('1 区域与禁区','2 路线演示','3 保存分享','高级'):
                 tab=tk.Frame(self.workspace_tabs,bg='#142330');self.workspace_tabs.add(tab,text=title);tabs.append(tab)
             side,plan_side,save_side,advanced_side=tabs
+        return side,plan_side,save_side,advanced_side
+
+    def __init__(self,root,result,language='zh'):
+        self.root,self.result,self.language=root,Path(result),language
+        self.project_path=self.result.resolve() if self.result.is_file() else None
+        self._plans={};self._requests={};self._plan_errors={};self._saved_plans={};self._saved_requests={};self._plan_buttons={}
+        self._project_region_id=None
+        from femto.planning.planning_drafts import Journal
+        self.draft_journal=Journal(self.result);self._draft_ready=False;self._draft_due=None;self._draft_signature=None
+        self.model=None;self.busy=False;self.closed=False;self.polygon=[];self.focus=None
+        self._brush_history=[];self._brush_mask=None;self._brush_last=None;self._brush_cursor=None
+        self._selection_polygons={'work':[],'forbidden':[]}
+        self.generation=0;self.task_cancel=threading.Event();self.operation='load_model'
+        self._task_lock=threading.Lock();self._task_local=threading.local()
+        self._annotations_dirty=False;self._syncing_fields=False;self.active_mode='region'
+        self.zoom=1.;self.pan=np.zeros(2);self.scale=1.;self.offset=np.zeros(2)
+        self.mailbox=queue.Queue(maxsize=1);self.widgets=[]
+        root.title(self.t('Femto · 固定 RGB 选区与三维坐标','Femto · Fixed RGB annotation'))
+        root.geometry('1280x820');root.minsize(1000,720);root.configure(bg='#101b26')
+        root.protocol('WM_DELETE_WINDOW',self.close)
+        self._build_main_area(root)
+        side,plan_side,save_side,advanced_side=self._build_sidebar_shell(root)
         self.info=tk.StringVar(value='—')
         tk.Label(advanced_side,textvariable=self.info,bg='#142330',fg='#e3eef6',wraplength=285,justify='left',anchor='w').pack(fill='x',pady=6)
         self.readout=tk.StringVar(value='X —  Y —  Z —')

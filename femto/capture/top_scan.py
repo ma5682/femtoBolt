@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import shutil
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import cv2
@@ -265,9 +266,234 @@ def create_session(output_root: Path) -> Path:
     return session
 
 
-def main() -> int:
-    enable_windows_dpi_awareness()
-    args = parse_args()
+def _evaluate_top_frame(args,session,event_log,frame,intrinsics,result,ctx,capture_active):
+    status = "Adjust camera/patient, then click START CAPTURE"
+    accepted = False
+    reject_reason = "preview"
+    mask = None
+    pixels = None
+    points_m = None
+    metrics: dict[str, Any] = {}
+    pose_landmarks = result.pose_landmarks[0] if result.pose_landmarks else None
+    segmentation = result.segmentation_masks[0] if result.segmentation_masks else None
+    if pose_landmarks is not None and segmentation is not None:
+        landmarks = mediapipe_landmarks(pose_landmarks)
+        mask = clean_person_mask(segmentation.numpy_view(), frame.depth_mm.shape, args.mask_threshold)
+        valid_depth = (np.isfinite(frame.depth_mm) & (frame.depth_mm >= MIN_DEPTH_MM)
+                       & (frame.depth_mm <= MAX_DEPTH_MM))
+        mask_depth_pixels = int((mask.astype(bool) & valid_depth).sum())
+        points_m, pixels, depth_samples = landmarks_to_3d(
+            landmarks,frame.depth_mm,intrinsics,min_depth_mm=MIN_DEPTH_MM,
+            max_depth_mm=MAX_DEPTH_MM,mask=mask,
+        )
+        valid_joints = int(np.isfinite(points_m).all(axis=1).sum())
+        pose_motion = (None if ctx.reference_joints is None
+                       else torso_motion_mm(points_m, ctx.reference_joints))
+        depth_residual = (None if ctx.reference_depth is None else masked_depth_residual_mm(
+            frame.depth_mm, ctx.reference_depth, mask, ctx.reference_mask))
+        metrics = {
+            "valid_3d_joints": valid_joints,
+            "mask_depth_pixels": mask_depth_pixels,
+            "torso_motion_mm": pose_motion,
+            "depth_residual_mm": depth_residual,
+        }
+        if not capture_active:
+            status = (f"READY | 3D joints {valid_joints}/33 | "
+                      f"masked depth {mask_depth_pixels:,} px | click START CAPTURE")
+        elif valid_joints < args.min_valid_joints:
+            reject_reason = "too_few_valid_joints"
+        elif mask_depth_pixels < args.min_mask_depth_pixels:
+            reject_reason = "insufficient_masked_depth"
+        elif ctx.reference_joints is not None and pose_motion is None and not args.allow_missing_stability:
+            reject_reason = "pose_motion_unavailable"
+        elif pose_motion is not None and pose_motion > args.max_pose_motion_mm:
+            reject_reason = "pose_motion"
+        elif ctx.reference_depth is not None and depth_residual is None and not args.allow_missing_stability:
+            reject_reason = "depth_residual_unavailable"
+        elif depth_residual is not None and depth_residual > args.max_depth_residual_mm:
+            reject_reason = "depth_residual"
+        else:
+            accepted = True
+            reject_reason = ""
+            accepted_index = len(ctx.accepted_depths)
+            visibility = [item.visibility for item in landmarks]
+            presence = [item.presence for item in landmarks]
+            pose_record = {
+                "schema": "femto-patient-pose-v1",
+                "selected_index": accepted_index,
+                "camera_timestamp_us": frame.timestamp_us,
+                "system_timestamp_us": frame.system_timestamp_us,
+                "frame_index": frame.frame_index,
+                "coordinate_system": "Orbbec color camera: +X right, +Y down, +Z forward",
+                "coordinate_unit": "metres",
+                "T_WC": np.eye(4).tolist(),
+                "pose_source": "fixed_camera_identity; invalid if the camera moved",
+                "joints": serialise_joints(points_m, pixels, visibility, presence),
+                "quality": metrics,
+            }
+            write_selected_frame(session, accepted_index, frame.color_bgr, frame.depth_mm, mask, pose_record)
+            ctx.accepted_colors.append(frame.color_bgr.copy())
+            ctx.accepted_depths.append(frame.depth_mm.copy())
+            ctx.accepted_masks.append(mask.copy())
+            ctx.accepted_joints.append(points_m.copy())
+            ctx.accepted_pixels.append(pixels.copy())
+            ctx.accepted_landmarks.append(landmarks)
+            ctx.accepted_meta.append(pose_record)
+            if ctx.reference_joints is None:
+                ctx.reference_joints = points_m.copy()
+                ctx.reference_depth = frame.depth_mm.copy()
+                ctx.reference_mask = mask.copy()
+            status = f"Accepted {len(ctx.accepted_depths)}/{args.accepted_frames}"
+            json_dump(session / "latest_joints.json", pose_record)
+    elif capture_active:
+        reject_reason = "no_pose"
+        status = "Rejected: no_pose"
+    if capture_active and not accepted:
+        ctx.rejected_counts[reject_reason] = ctx.rejected_counts.get(reject_reason, 0) + 1
+        status = f"Rejected: {reject_reason}"
+    if capture_active:
+        append_jsonl(event_log,{
+            "frame_seen": ctx.frames_seen,
+            "camera_timestamp_us": frame.timestamp_us,
+            "accepted": accepted,
+            "reason": reject_reason or "accepted",
+            "metrics": metrics,
+        })
+    return status,mask,pixels,points_m
+
+
+def _build_top_outputs(session,accepted_colors,accepted_depths,accepted_masks,accepted_joints,
+                       intrinsics,minimum_support):
+    accepted_count = len(accepted_depths)
+    fused_depth, fused_mask, support = temporal_median_depth(
+        accepted_depths, accepted_masks, minimum_support=minimum_support
+    )
+    fused_joints, joint_support = median_joints(accepted_joints, minimum_support)
+    regions = derive_patient_regions(fused_joints)
+    representative_color = accepted_colors[accepted_count // 2]
+    imwrite_unicode(session / "fused_depth_mm.png",
+        np.rint(np.clip(fused_depth, 0, 65535)).astype(np.uint16))
+    imwrite_unicode(session / "fused_human_mask.png", fused_mask)
+    imwrite_unicode(session / "fused_color.jpg",representative_color,[cv2.IMWRITE_JPEG_QUALITY, 94])
+    imwrite_unicode(session / "temporal_support.png", np.clip(support, 0, 255).astype(np.uint8))
+    surface_cloud = create_surface_cloud(fused_depth, fused_mask, representative_color, intrinsics)
+    surface_path = session / "patient_surface_points_m.ply"
+    if surface_cloud.is_empty() or not write_point_cloud_safe(surface_path, surface_cloud):
+        raise RuntimeError("Failed to export patient surface point cloud")
+    joints_record = {
+        "schema": "femto-patient-fused-pose-v1",
+        "coordinate_system": "Orbbec color camera: +X right, +Y down, +Z forward",
+        "coordinate_unit": "metres",
+        "fixed_camera_assumption": True,
+        "joints": serialise_joints(fused_joints),
+        "joint_temporal_support": [int(value) for value in joint_support],
+    }
+    json_dump(session / "joints_3d_m.json", joints_record)
+    json_dump(session / "patient_regions_3d_m.json", regions)
+    with (session / "joints_3d_m.csv").open("w", newline="", encoding="utf-8-sig") as output:
+        writer = csv.writer(output)
+        writer.writerow(["index", "name", "x_m", "y_m", "z_m", "support_frames"])
+        for index, name in enumerate(LANDMARK_NAMES):
+            point = fused_joints[index]
+            writer.writerow([
+                index,name,
+                "" if not np.isfinite(point[0]) else float(point[0]),
+                "" if not np.isfinite(point[1]) else float(point[1]),
+                "" if not np.isfinite(point[2]) else float(point[2]),
+                int(joint_support[index]),
+            ])
+    return fused_joints,surface_cloud,surface_path
+
+
+def _build_top_mesh(args,session,accepted_colors,accepted_depths,accepted_masks,intrinsics):
+    mesh_result = None
+    if not args.skip_tsdf:
+        mesh = build_fixed_camera_tsdf(
+            accepted_colors,accepted_depths,accepted_masks,intrinsics,
+            voxel_length_m=args.tsdf_voxel_mm / 1000.0,
+            sdf_trunc_m=args.tsdf_trunc_mm / 1000.0,
+            image_scale=args.tsdf_image_scale,
+            minimum_component_triangles=args.minimum_component_triangles,
+        )
+        if len(mesh.triangles):
+            observed = export_mesh_formats(mesh, session)
+            mesh_result = {"observed": observed, "filled": None}
+            if args.fill_holes_mm > 0:
+                filled = fill_small_mesh_holes(mesh, args.fill_holes_mm / 1000.0)
+                repaired = export_mesh_formats(
+                    filled,session,stem="patient_surface_tsdf_filled_m",
+                    report_name="mesh_filled_report.json",
+                    note=(f"Only bounded holes up to {args.fill_holes_mm:g} mm plus "
+                          "triangle/quad micro-holes were filled; silhouette and unobserved "
+                          "surfaces remain open."),
+                )
+                repaired["triangles_added"] = int(len(filled.triangles) - len(mesh.triangles))
+                repaired["maximum_hole_radius_mm"] = float(args.fill_holes_mm)
+                mesh_result["filled"] = repaired
+    return mesh_result
+
+
+def _write_top_delivery(args,session,camera_metadata,intrinsics,accepted_count,frames_seen,
+                        rejected_counts,minimum_support,fused_joints,surface_cloud,
+                        surface_path,mesh_result):
+    versions = {}
+    for distribution in ("pyorbbecsdk2", "mediapipe", "numpy", "open3d", "opencv-python", "trimesh"):
+        try:
+            versions[distribution] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    run_mode = "diagnostic" if args.allow_missing_stability else "standard"
+    report = {
+        "status": "complete_diagnostic" if run_mode == "diagnostic" else "complete",
+        "run_mode": run_mode,
+        "project_goal": "基于 Femto Bolt RGB-D 相机的仰卧人体三维表面重建与人体关键区域定位系统",
+        "capture_mode": "finite burst, fixed top camera",
+        "accepted_frames": accepted_count,
+        "target_frames": args.accepted_frames,
+        "frames_seen": frames_seen,
+        "rejected": rejected_counts,
+        "minimum_temporal_support": minimum_support,
+        "valid_fused_joints": int(np.isfinite(fused_joints).all(axis=1).sum()),
+        "surface_points": int(len(surface_cloud.points)),
+        "tsdf": mesh_result,
+        "limitations": [
+            "This run assumes the camera did not move; every T_WC is identity.",
+            "MediaPipe/Mask landmarks are navigation labels, not validated treatment targets.",
+            "The model is the top visible patient surface and is expected to remain open.",
+            "A moving eye-in-hand scan requires synchronized robot T_BF and calibrated T_FC.",
+        ],
+    }
+    json_dump(session / "quality_report.json", report)
+    manifest = {
+        "schema": "femto-patient-top-scan-v1",
+        "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
+        "session": session.name,
+        "model": {"path": str(args.model), "sha256": sha256(args.model)},
+        "camera": {**camera_metadata, "intrinsics": intrinsics.to_dict()},
+        "software": versions,
+        "parameters": vars(args) | {"model": str(args.model), "output_root": str(args.output_root)},
+        "outputs": {
+            "surface_point_cloud": surface_path.name,
+            "fused_depth": "fused_depth_mm.png", "fused_color": "fused_color.jpg",
+            "fused_human_mask": "fused_human_mask.png", "temporal_support": "temporal_support.png",
+            "joints": "joints_3d_m.json", "joints_csv": "joints_3d_m.csv",
+            "regions": "patient_regions_3d_m.json", "quality_report": "quality_report.json",
+            "selected_frames": "selected/", "frame_events": "frame_events.jsonl",
+            "tsdf": None if mesh_result is None else {
+                "observed": {key: Path(value).name for key, value in mesh_result["observed"].items() if key in {"ply", "obj", "glb"}},
+                "filled": None if mesh_result["filled"] is None else {key: Path(value).name for key, value in mesh_result["filled"].items() if key in {"ply", "obj", "glb"}},
+            },
+        },
+    }
+    json_dump(session / "manifest.json", manifest)
+    args.output_root.mkdir(parents=True, exist_ok=True)
+    (args.output_root / "latest_session.txt").write_text(str(session), encoding="utf-8")
+    print(f"[COMPLETE] {session}", flush=True)
+    print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
+    return 0
+
+
+def _prepare_top_scan(args):
     args.model = args.model.resolve()
     args.output_root = args.output_root.resolve()
     if not args.model.exists():
@@ -276,20 +502,50 @@ def main() -> int:
     session = create_session(args.output_root)
     event_log = session / "frame_events.jsonl"
     window_title = "Femto Bolt - Top Patient Surface + 3D Joints"
-
-    BaseOptions = mp.tasks.BaseOptions
-    PoseLandmarker = mp.tasks.vision.PoseLandmarker
-    PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
-    RunningMode = mp.tasks.vision.RunningMode
-    options = PoseLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=str(runtime_model)),
-        running_mode=RunningMode.VIDEO,
+    options = mp.tasks.vision.PoseLandmarkerOptions(
+        base_options=mp.tasks.BaseOptions(model_asset_path=str(runtime_model)),
+        running_mode=mp.tasks.vision.RunningMode.VIDEO,
         num_poses=1,
         min_pose_detection_confidence=0.5,
         min_pose_presence_confidence=0.5,
         min_tracking_confidence=0.5,
         output_segmentation_masks=True,
     )
+    return session,event_log,window_title,options
+
+
+def _validate_top_capture(args,session,last_display,capture_was_started,preview_frames_seen,
+                          accepted_count,frames_seen,rejected_counts):
+    if last_display is not None:
+        imwrite_unicode(session / "last_overlay.jpg", last_display, [cv2.IMWRITE_JPEG_QUALITY, 94])
+    if not capture_was_started:
+        report = {
+            "status": "closed_before_capture",
+            "preview_frames_seen": preview_frames_seen,
+            "message": "Preview was closed before START CAPTURE was pressed.",
+        }
+        json_dump(session / "quality_report.json", report)
+        print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
+        return 0
+    if accepted_count < args.minimum_frames:
+        report = {
+            "status": "insufficient_accepted_frames",
+            "accepted_frames": accepted_count,
+            "required_minimum": args.minimum_frames,
+            "frames_seen": frames_seen,
+            "rejected": rejected_counts,
+        }
+        json_dump(session / "quality_report.json", report)
+        print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
+        return 2
+    return None
+
+
+def main() -> int:
+    enable_windows_dpi_awareness()
+    args = parse_args()
+    session,event_log,window_title,options = _prepare_top_scan(args)
+    PoseLandmarker = mp.tasks.vision.PoseLandmarker
 
     accepted_colors: list[np.ndarray] = []
     accepted_depths: list[np.ndarray] = []
@@ -299,9 +555,11 @@ def main() -> int:
     accepted_landmarks: list[list[Landmark2D]] = []
     accepted_meta: list[dict] = []
     rejected_counts: dict[str, int] = {}
-    reference_joints = None
-    reference_depth = None
-    reference_mask = None
+    ctx=SimpleNamespace(accepted_colors=accepted_colors,accepted_depths=accepted_depths,
+        accepted_masks=accepted_masks,accepted_joints=accepted_joints,
+        accepted_pixels=accepted_pixels,accepted_landmarks=accepted_landmarks,
+        accepted_meta=accepted_meta,rejected_counts=rejected_counts,
+        reference_joints=None,reference_depth=None,reference_mask=None,frames_seen=0)
     last_timestamp_ms = -1
     last_display = None
     frames_seen = 0
@@ -343,9 +601,9 @@ def main() -> int:
                     capture_started_monotonic = time.monotonic()
                     frames_seen = 0
                     rejected_counts.clear()
-                    reference_joints = None
-                    reference_depth = None
-                    reference_mask = None
+                    ctx.reference_joints = None
+                    ctx.reference_depth = None
+                    ctx.reference_mask = None
                 if capture_active:
                     assert capture_started_monotonic is not None
                     elapsed = time.monotonic() - capture_started_monotonic
@@ -361,6 +619,7 @@ def main() -> int:
                 preview_frames_seen += 1
                 if capture_active:
                     frames_seen += 1
+                    ctx.frames_seen = frames_seen
                 height, width = frame.color_bgr.shape[:2]
                 infer_width = min(args.inference_width, width)
                 infer_height = max(1, int(round(height * infer_width / width)))
@@ -373,120 +632,8 @@ def main() -> int:
                 last_timestamp_ms = timestamp_ms
                 result = landmarker.detect_for_video(mp_image, timestamp_ms)
 
-                status = "Adjust camera/patient, then click START CAPTURE"
-                accepted = False
-                reject_reason = "preview"
-                mask = None
-                pixels = None
-                points_m = None
-                metrics: dict[str, Any] = {}
-                pose_landmarks = result.pose_landmarks[0] if result.pose_landmarks else None
-                segmentation = result.segmentation_masks[0] if result.segmentation_masks else None
-                if pose_landmarks is not None and segmentation is not None:
-                    landmarks = mediapipe_landmarks(pose_landmarks)
-                    mask = clean_person_mask(
-                        segmentation.numpy_view(), frame.depth_mm.shape, args.mask_threshold
-                    )
-                    valid_depth = (
-                        np.isfinite(frame.depth_mm)
-                        & (frame.depth_mm >= MIN_DEPTH_MM)
-                        & (frame.depth_mm <= MAX_DEPTH_MM)
-                    )
-                    mask_depth_pixels = int((mask.astype(bool) & valid_depth).sum())
-                    points_m, pixels, depth_samples = landmarks_to_3d(
-                        landmarks,
-                        frame.depth_mm,
-                        intrinsics,
-                        min_depth_mm=MIN_DEPTH_MM,
-                        max_depth_mm=MAX_DEPTH_MM,
-                        mask=mask,
-                    )
-                    valid_joints = int(np.isfinite(points_m).all(axis=1).sum())
-                    pose_motion = (
-                        None if reference_joints is None else torso_motion_mm(points_m, reference_joints)
-                    )
-                    depth_residual = (
-                        None
-                        if reference_depth is None
-                        else masked_depth_residual_mm(
-                            frame.depth_mm, reference_depth, mask, reference_mask
-                        )
-                    )
-                    metrics = {
-                        "valid_3d_joints": valid_joints,
-                        "mask_depth_pixels": mask_depth_pixels,
-                        "torso_motion_mm": pose_motion,
-                        "depth_residual_mm": depth_residual,
-                    }
-                    if not capture_active:
-                        status = (
-                            f"READY | 3D joints {valid_joints}/33 | "
-                            f"masked depth {mask_depth_pixels:,} px | click START CAPTURE"
-                        )
-                    elif valid_joints < args.min_valid_joints:
-                        reject_reason = "too_few_valid_joints"
-                    elif mask_depth_pixels < args.min_mask_depth_pixels:
-                        reject_reason = "insufficient_masked_depth"
-                    elif reference_joints is not None and pose_motion is None and not args.allow_missing_stability:
-                        reject_reason = "pose_motion_unavailable"
-                    elif pose_motion is not None and pose_motion > args.max_pose_motion_mm:
-                        reject_reason = "pose_motion"
-                    elif reference_depth is not None and depth_residual is None and not args.allow_missing_stability:
-                        reject_reason = "depth_residual_unavailable"
-                    elif depth_residual is not None and depth_residual > args.max_depth_residual_mm:
-                        reject_reason = "depth_residual"
-                    else:
-                        accepted = True
-                        reject_reason = ""
-                        accepted_index = len(accepted_depths)
-                        visibility = [item.visibility for item in landmarks]
-                        presence = [item.presence for item in landmarks]
-                        pose_record = {
-                            "schema": "femto-patient-pose-v1",
-                            "selected_index": accepted_index,
-                            "camera_timestamp_us": frame.timestamp_us,
-                            "system_timestamp_us": frame.system_timestamp_us,
-                            "frame_index": frame.frame_index,
-                            "coordinate_system": "Orbbec color camera: +X right, +Y down, +Z forward",
-                            "coordinate_unit": "metres",
-                            "T_WC": np.eye(4).tolist(),
-                            "pose_source": "fixed_camera_identity; invalid if the camera moved",
-                            "joints": serialise_joints(points_m, pixels, visibility, presence),
-                            "quality": metrics,
-                        }
-                        write_selected_frame(
-                            session, accepted_index, frame.color_bgr, frame.depth_mm, mask, pose_record
-                        )
-                        accepted_colors.append(frame.color_bgr.copy())
-                        accepted_depths.append(frame.depth_mm.copy())
-                        accepted_masks.append(mask.copy())
-                        accepted_joints.append(points_m.copy())
-                        accepted_pixels.append(pixels.copy())
-                        accepted_landmarks.append(landmarks)
-                        accepted_meta.append(pose_record)
-                        if reference_joints is None:
-                            reference_joints = points_m.copy()
-                            reference_depth = frame.depth_mm.copy()
-                            reference_mask = mask.copy()
-                        status = f"Accepted {len(accepted_depths)}/{args.accepted_frames}"
-                        json_dump(session / "latest_joints.json", pose_record)
-                elif capture_active:
-                    reject_reason = "no_pose"
-                    status = "Rejected: no_pose"
-                if capture_active and not accepted:
-                    rejected_counts[reject_reason] = rejected_counts.get(reject_reason, 0) + 1
-                    status = f"Rejected: {reject_reason}"
-                if capture_active:
-                    append_jsonl(
-                        event_log,
-                        {
-                            "frame_seen": frames_seen,
-                            "camera_timestamp_us": frame.timestamp_us,
-                            "accepted": accepted,
-                            "reason": reject_reason or "accepted",
-                            "metrics": metrics,
-                        },
-                    )
+                status,mask,pixels,points_m = _evaluate_top_frame(
+                    args,session,event_log,frame,intrinsics,result,ctx,capture_active)
                 fps = preview_frames_seen / max(
                     time.monotonic() - preview_fps_started, 1e-6
                 )
@@ -526,180 +673,21 @@ def main() -> int:
     finally:
         cv2.destroyAllWindows()
 
-    if last_display is not None:
-        imwrite_unicode(
-            session / "last_overlay.jpg", last_display, [cv2.IMWRITE_JPEG_QUALITY, 94]
-        )
-
     accepted_count = len(accepted_depths)
-    if not capture_was_started:
-        report = {
-            "status": "closed_before_capture",
-            "preview_frames_seen": preview_frames_seen,
-            "message": "Preview was closed before START CAPTURE was pressed.",
-        }
-        json_dump(session / "quality_report.json", report)
-        print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
-        return 0
-    if accepted_count < args.minimum_frames:
-        report = {
-            "status": "insufficient_accepted_frames",
-            "accepted_frames": accepted_count,
-            "required_minimum": args.minimum_frames,
-            "frames_seen": frames_seen,
-            "rejected": rejected_counts,
-        }
-        json_dump(session / "quality_report.json", report)
-        print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
-        return 2
+    early_status = _validate_top_capture(args,session,last_display,capture_was_started,
+        preview_frames_seen,accepted_count,frames_seen,rejected_counts)
+    if early_status is not None:
+        return early_status
 
     minimum_support = max(3, int(math.ceil(accepted_count * 0.30)))
-    fused_depth, fused_mask, support = temporal_median_depth(
-        accepted_depths, accepted_masks, minimum_support=minimum_support
-    )
-    fused_joints, joint_support = median_joints(accepted_joints, minimum_support)
-    regions = derive_patient_regions(fused_joints)
-    representative_color = accepted_colors[accepted_count // 2]
-    imwrite_unicode(
-        session / "fused_depth_mm.png",
-        np.rint(np.clip(fused_depth, 0, 65535)).astype(np.uint16),
-    )
-    imwrite_unicode(session / "fused_human_mask.png", fused_mask)
-    imwrite_unicode(
-        session / "fused_color.jpg",
-        representative_color,
-        [cv2.IMWRITE_JPEG_QUALITY, 94],
-    )
-    imwrite_unicode(
-        session / "temporal_support.png", np.clip(support, 0, 255).astype(np.uint8)
-    )
-
-    surface_cloud = create_surface_cloud(
-        fused_depth, fused_mask, representative_color, intrinsics
-    )
-    surface_path = session / "patient_surface_points_m.ply"
-    if surface_cloud.is_empty() or not write_point_cloud_safe(surface_path, surface_cloud):
-        raise RuntimeError("Failed to export patient surface point cloud")
-
-    joints_record = {
-        "schema": "femto-patient-fused-pose-v1",
-        "coordinate_system": "Orbbec color camera: +X right, +Y down, +Z forward",
-        "coordinate_unit": "metres",
-        "fixed_camera_assumption": True,
-        "joints": serialise_joints(fused_joints),
-        "joint_temporal_support": [int(value) for value in joint_support],
-    }
-    json_dump(session / "joints_3d_m.json", joints_record)
-    json_dump(session / "patient_regions_3d_m.json", regions)
-
-    with (session / "joints_3d_m.csv").open("w", newline="", encoding="utf-8-sig") as output:
-        writer = csv.writer(output)
-        writer.writerow(["index", "name", "x_m", "y_m", "z_m", "support_frames"])
-        for index, name in enumerate(LANDMARK_NAMES):
-            point = fused_joints[index]
-            writer.writerow(
-                [
-                    index,
-                    name,
-                    "" if not np.isfinite(point[0]) else float(point[0]),
-                    "" if not np.isfinite(point[1]) else float(point[1]),
-                    "" if not np.isfinite(point[2]) else float(point[2]),
-                    int(joint_support[index]),
-                ]
-            )
-
-    mesh_result = None
-    if not args.skip_tsdf:
-        mesh = build_fixed_camera_tsdf(
-            accepted_colors,
-            accepted_depths,
-            accepted_masks,
-            intrinsics,
-            voxel_length_m=args.tsdf_voxel_mm / 1000.0,
-            sdf_trunc_m=args.tsdf_trunc_mm / 1000.0,
-            image_scale=args.tsdf_image_scale,
-            minimum_component_triangles=args.minimum_component_triangles,
-        )
-        if len(mesh.triangles):
-            observed = export_mesh_formats(mesh, session)
-            mesh_result = {"observed": observed, "filled": None}
-            if args.fill_holes_mm > 0:
-                filled = fill_small_mesh_holes(mesh, args.fill_holes_mm / 1000.0)
-                repaired = export_mesh_formats(
-                    filled,
-                    session,
-                    stem="patient_surface_tsdf_filled_m",
-                    report_name="mesh_filled_report.json",
-                    note=(
-                        f"Only bounded holes up to {args.fill_holes_mm:g} mm plus "
-                        "triangle/quad micro-holes were filled; silhouette and unobserved "
-                        "surfaces remain open."
-                    ),
-                )
-                repaired["triangles_added"] = int(len(filled.triangles) - len(mesh.triangles))
-                repaired["maximum_hole_radius_mm"] = float(args.fill_holes_mm)
-                mesh_result["filled"] = repaired
-
-    versions = {}
-    for distribution in ("pyorbbecsdk2", "mediapipe", "numpy", "open3d", "opencv-python", "trimesh"):
-        try:
-            versions[distribution] = importlib.metadata.version(distribution)
-        except importlib.metadata.PackageNotFoundError:
-            pass
-    run_mode = "diagnostic" if args.allow_missing_stability else "standard"
-    report = {
-        "status": "complete_diagnostic" if run_mode == "diagnostic" else "complete",
-        "run_mode": run_mode,
-        "project_goal": "基于 Femto Bolt RGB-D 相机的仰卧人体三维表面重建与人体关键区域定位系统",
-        "capture_mode": "finite burst, fixed top camera",
-        "accepted_frames": accepted_count,
-        "target_frames": args.accepted_frames,
-        "frames_seen": frames_seen,
-        "rejected": rejected_counts,
-        "minimum_temporal_support": minimum_support,
-        "valid_fused_joints": int(np.isfinite(fused_joints).all(axis=1).sum()),
-        "surface_points": int(len(surface_cloud.points)),
-        "tsdf": mesh_result,
-        "limitations": [
-            "This run assumes the camera did not move; every T_WC is identity.",
-            "MediaPipe/Mask landmarks are navigation labels, not validated treatment targets.",
-            "The model is the top visible patient surface and is expected to remain open.",
-            "A moving eye-in-hand scan requires synchronized robot T_BF and calibrated T_FC.",
-        ],
-    }
-    json_dump(session / "quality_report.json", report)
-    manifest = {
-        "schema": "femto-patient-top-scan-v1",
-        "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
-        "session": session.name,
-        "model": {"path": str(args.model), "sha256": sha256(args.model)},
-        "camera": {**camera.metadata, "intrinsics": intrinsics.to_dict()},
-        "software": versions,
-        "parameters": vars(args) | {"model": str(args.model), "output_root": str(args.output_root)},
-        "outputs": {
-            "surface_point_cloud": surface_path.name,
-            "fused_depth": "fused_depth_mm.png",
-            "fused_color": "fused_color.jpg",
-            "fused_human_mask": "fused_human_mask.png",
-            "temporal_support": "temporal_support.png",
-            "joints": "joints_3d_m.json",
-            "joints_csv": "joints_3d_m.csv",
-            "regions": "patient_regions_3d_m.json",
-            "quality_report": "quality_report.json",
-            "selected_frames": "selected/",
-            "frame_events": "frame_events.jsonl",
-            "tsdf": None if mesh_result is None else {
-                "observed": {key: Path(value).name for key, value in mesh_result["observed"].items() if key in {"ply", "obj", "glb"}},
-                "filled": None if mesh_result["filled"] is None else {key: Path(value).name for key, value in mesh_result["filled"].items() if key in {"ply", "obj", "glb"}},
-            },
-        },
-    }
-    json_dump(session / "manifest.json", manifest)
-    args.output_root.mkdir(parents=True, exist_ok=True)
-    (args.output_root / "latest_session.txt").write_text(str(session), encoding="utf-8")
-    print(f"[COMPLETE] {session}", flush=True)
-    print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
-    return 0
+    fused_joints,surface_cloud,surface_path = _build_top_outputs(
+        session,accepted_colors,accepted_depths,accepted_masks,accepted_joints,
+        intrinsics,minimum_support)
+    mesh_result = _build_top_mesh(
+        args,session,accepted_colors,accepted_depths,accepted_masks,intrinsics)
+    return _write_top_delivery(args,session,dict(camera.metadata),intrinsics,accepted_count,
+        frames_seen,rejected_counts,minimum_support,fused_joints,surface_cloud,
+        surface_path,mesh_result)
 
 
 if __name__ == "__main__":

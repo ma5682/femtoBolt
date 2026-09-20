@@ -167,6 +167,83 @@ def draw_preview(
     return display, (x1, y1, x1 + button_width, y2)
 
 
+def _save_capture_frame(args,session,frames_log,frame,index):
+    stem = f"{index:06d}"
+    rgb_path = session / "rgb" / f"{stem}.jpg"
+    depth_path = session / "depth" / f"{stem}.png"
+    pose_path = session / "pose" / f"{stem}.json"
+    imwrite_unicode(rgb_path, frame.color_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    imwrite_unicode(depth_path,np.rint(np.clip(frame.depth_mm, 0, 65535)).astype(np.uint16))
+    pose_record = {
+        "schema": "femto-scene-frame-pose-v1",
+        "frame": index,
+        "pose_valid": bool(args.fixed_camera),
+        "T_WC": np.eye(4).tolist() if args.fixed_camera else None,
+        "pose_source": ("fixed_camera_identity" if args.fixed_camera
+                        else "not_available; estimate before multiview reconstruction"),
+        "coordinate_system": "+X right, +Y down, +Z forward",
+    }
+    json_dump(pose_path, pose_record)
+    append_jsonl(frames_log,{
+        "frame": index,
+        "camera_frame_index": frame.frame_index,
+        "camera_timestamp_us": frame.timestamp_us,
+        "system_timestamp_us": frame.system_timestamp_us,
+        "color_timestamp_us": frame.color_timestamp_us,
+        "color_system_timestamp_us": frame.color_system_timestamp_us,
+        "depth_timestamp_us": frame.depth_timestamp_us,
+        "depth_system_timestamp_us": frame.depth_system_timestamp_us,
+        "rgb_depth_timestamp_delta_us": frame.color_timestamp_us - frame.depth_timestamp_us,
+        "frame_metadata": frame.frame_metadata,
+        "rgb": rgb_path.relative_to(session).as_posix(),
+        "depth": depth_path.relative_to(session).as_posix(),
+        "pose": pose_path.relative_to(session).as_posix(),
+        "pose_valid": bool(args.fixed_camera),
+    })
+
+
+def _finalize_capture(args,output_root,session,saved_frames,camera_metadata,intrinsics,last_display):
+    versions = {}
+    for distribution in ("pyorbbecsdk2", "numpy", "opencv-contrib-python"):
+        try:
+            versions[distribution] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            pass
+    manifest = {
+        "schema": "femto-full-scene-rgbd-v1",
+        "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
+        "status": "captured" if args.fixed_camera else "captured_pose_pending",
+        "scene_scope": "complete camera field; no semantic mask applied",
+        "frame_count": saved_frames,
+        "camera": {**camera_metadata, "intrinsics": intrinsics.to_dict()},
+        "pose": {
+            "valid": bool(args.fixed_camera),
+            "source": "fixed_camera_identity" if args.fixed_camera else "not_available",
+            "warning": (None if args.fixed_camera
+                        else "Estimate and validate every T_WC before TSDF or 3DGS training."),
+        },
+        "parameters": {
+            "capture_seconds": args.capture_seconds,
+            "capture_fps": args.capture_fps,
+            "max_frames": args.max_frames,
+            "fixed_camera": args.fixed_camera,
+        },
+        "software": versions,
+        "files": {
+            "rgb": "rgb/*.jpg", "depth": "depth/*.png", "pose": "pose/*.json",
+            "frames": "frames.jsonl", "calibration": "calibration/*.json",
+        },
+    }
+    json_dump(session / "manifest.json", manifest)
+    if last_display is not None:
+        imwrite_unicode(session / "last_preview.jpg", last_display, [cv2.IMWRITE_JPEG_QUALITY, 94])
+    output_root.mkdir(parents=True, exist_ok=True)
+    (output_root / "latest_scene.txt").write_text(str(session), encoding="utf-8")
+    print(json.dumps(manifest, ensure_ascii=False, indent=2), flush=True)
+    print(f"[COMPLETE] {session}", flush=True)
+    return 0
+
+
 def main() -> int:
     enable_windows_dpi_awareness()
     args = parse_args()
@@ -240,49 +317,7 @@ def main() -> int:
                 if active and not stop_requested and now >= next_sample:
                     assert session is not None and frames_log is not None
                     index = saved_frames
-                    stem = f"{index:06d}"
-                    rgb_path = session / "rgb" / f"{stem}.jpg"
-                    depth_path = session / "depth" / f"{stem}.png"
-                    pose_path = session / "pose" / f"{stem}.json"
-                    imwrite_unicode(rgb_path, frame.color_bgr, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                    imwrite_unicode(
-                        depth_path,
-                        np.rint(np.clip(frame.depth_mm, 0, 65535)).astype(np.uint16),
-                    )
-                    pose_record = {
-                        "schema": "femto-scene-frame-pose-v1",
-                        "frame": index,
-                        "pose_valid": bool(args.fixed_camera),
-                        "T_WC": np.eye(4).tolist() if args.fixed_camera else None,
-                        "pose_source": (
-                            "fixed_camera_identity"
-                            if args.fixed_camera
-                            else "not_available; estimate before multiview reconstruction"
-                        ),
-                        "coordinate_system": "+X right, +Y down, +Z forward",
-                    }
-                    json_dump(pose_path, pose_record)
-                    append_jsonl(
-                        frames_log,
-                        {
-                            "frame": index,
-                            "camera_frame_index": frame.frame_index,
-                            "camera_timestamp_us": frame.timestamp_us,
-                            "system_timestamp_us": frame.system_timestamp_us,
-                            "color_timestamp_us": frame.color_timestamp_us,
-                            "color_system_timestamp_us": frame.color_system_timestamp_us,
-                            "depth_timestamp_us": frame.depth_timestamp_us,
-                            "depth_system_timestamp_us": frame.depth_system_timestamp_us,
-                            "rgb_depth_timestamp_delta_us": (
-                                frame.color_timestamp_us - frame.depth_timestamp_us
-                            ),
-                            "frame_metadata": frame.frame_metadata,
-                            "rgb": rgb_path.relative_to(session).as_posix(),
-                            "depth": depth_path.relative_to(session).as_posix(),
-                            "pose": pose_path.relative_to(session).as_posix(),
-                            "pose_valid": bool(args.fixed_camera),
-                        },
-                    )
+                    _save_capture_frame(args,session,frames_log,frame,index)
                     saved_frames += 1
                     next_sample += 1.0 / args.capture_fps
 
@@ -338,51 +373,7 @@ def main() -> int:
     if not ever_started or session is None:
         return 0
 
-    versions = {}
-    for distribution in ("pyorbbecsdk2", "numpy", "opencv-contrib-python"):
-        try:
-            versions[distribution] = importlib.metadata.version(distribution)
-        except importlib.metadata.PackageNotFoundError:
-            pass
-    manifest = {
-        "schema": "femto-full-scene-rgbd-v1",
-        "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
-        "status": "captured" if args.fixed_camera else "captured_pose_pending",
-        "scene_scope": "complete camera field; no semantic mask applied",
-        "frame_count": saved_frames,
-        "camera": {**camera_metadata, "intrinsics": intrinsics.to_dict()},
-        "pose": {
-            "valid": bool(args.fixed_camera),
-            "source": "fixed_camera_identity" if args.fixed_camera else "not_available",
-            "warning": (
-                None
-                if args.fixed_camera
-                else "Estimate and validate every T_WC before TSDF or 3DGS training."
-            ),
-        },
-        "parameters": {
-            "capture_seconds": args.capture_seconds,
-            "capture_fps": args.capture_fps,
-            "max_frames": args.max_frames,
-            "fixed_camera": args.fixed_camera,
-        },
-        "software": versions,
-        "files": {
-            "rgb": "rgb/*.jpg",
-            "depth": "depth/*.png",
-            "pose": "pose/*.json",
-            "frames": "frames.jsonl",
-            "calibration": "calibration/*.json",
-        },
-    }
-    json_dump(session / "manifest.json", manifest)
-    if last_display is not None:
-        imwrite_unicode(session / "last_preview.jpg", last_display, [cv2.IMWRITE_JPEG_QUALITY, 94])
-    output_root.mkdir(parents=True, exist_ok=True)
-    (output_root / "latest_scene.txt").write_text(str(session), encoding="utf-8")
-    print(json.dumps(manifest, ensure_ascii=False, indent=2), flush=True)
-    print(f"[COMPLETE] {session}", flush=True)
-    return 0
+    return _finalize_capture(args,output_root,session,saved_frames,camera_metadata,intrinsics,last_display)
 
 
 if __name__ == "__main__":

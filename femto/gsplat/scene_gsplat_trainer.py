@@ -647,14 +647,8 @@ def _export_parameters(params: dict[str, Any], output_dir: Path) -> tuple[Path, 
     return path, report
 
 
-def _train_impl(
-    input_dir: Path,
-    output_dir: Path,
-    config: TrainerConfig,
-    *,
-    resume: Path | None = None,
-    enable_lpips: bool = True,
-) -> tuple[Path, dict[str, Any]]:
+def _prepare_training(input_dir: Path, output_dir: Path, config: TrainerConfig,
+                      resume: Path | None, enable_lpips: bool):
     import torch
 
     if not torch.cuda.is_available():
@@ -696,8 +690,22 @@ def _train_impl(
     output_dir.mkdir(parents=True, exist_ok=True)
     if resume is None and (output_dir / "training_config.json").exists():
         raise FileExistsError("Existing training output requires explicit --resume")
-    log_path = output_dir / "training_metrics.jsonl"
-    strategy = _create_strategy(config)
+    return assessment, device, dataset, output_dir / "training_metrics.jsonl", _create_strategy(config)
+
+
+def _train_impl(
+    input_dir: Path,
+    output_dir: Path,
+    config: TrainerConfig,
+    *,
+    resume: Path | None = None,
+    enable_lpips: bool = True,
+) -> tuple[Path, dict[str, Any]]:
+    import torch
+
+    assessment, device, dataset, log_path, strategy = _prepare_training(
+        input_dir, output_dir, config, resume, enable_lpips
+    )
     start_step = 0
     if resume is not None:
         checkpoint = _load_checkpoint(resume.resolve(), dataset, "cpu")

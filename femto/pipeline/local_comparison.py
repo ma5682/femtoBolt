@@ -80,6 +80,51 @@ def _same_source_image(dataset, frame, raw, raw_frame, kind):
     return selected
 
 
+def _validate_selected_frames(dataset, frames, raw, tracked, raw_index, expected_pose_source,
+                              session, reference, angle_limit, radius, source_paths):
+    import numpy as np
+    from femto.dataset.scene_dataset_validator import validate_pose
+    from femto.tracking.moving_quality import rotation_deg
+
+    poses = []
+    for frame in frames:
+        number = frame['frame']
+        if number not in tracked or number not in raw_index:
+            raise ValueError('Selected source frame not found')
+        record, raw_frame = tracked[number], raw_index[number]
+        pose_path = (dataset / frame['pose']).resolve()
+        pose = read_json(pose_path)
+        matrix = np.asarray(pose.get('T_WC'), dtype=float)
+        if (frame.get('pose_valid') is not True or pose.get('pose_valid') is not True
+                or validate_pose(matrix) or pose.get('pose_source') != expected_pose_source
+                or pose.get('frame') != number or pose.get('session_id') != session
+                or pose.get('reference_frame_id') != reference or record.get('session_id') != session
+                or record.get('reference_frame_id') != reference or record.get('state') != 'tracking'
+                or record.get('selected_for_fusion') is not True or record.get('quality', {}).get('usable') is not True
+                or validate_pose(record.get('T_WC'))
+                or not np.allclose(matrix, record['T_WC'], rtol=0, atol=1e-9)):
+            raise ValueError('Selected pose / trusted online record mismatch')
+        age = record.get('latency_ms')
+        if not isinstance(age, (int, float)) or not math.isfinite(age) or not 0 <= age <= 2000:
+            raise ValueError('Selected online pose was stale or has no timing evidence')
+        if angle_limit is not None and rotation_deg(matrix)>angle_limit+1e-9:
+            raise ValueError('Pose exceeds recorded workspace rotation')
+        if radius is not None and np.linalg.norm(matrix[:3, 3]) > radius:
+            raise ValueError('Selected pose is outside the recorded workspace')
+        for key, track_key in [('camera_timestamp_us', 'capture_timestamp_us'),
+                               ('color_timestamp_us', 'color_timestamp_us'), ('depth_timestamp_us', 'depth_timestamp_us')]:
+            value = frame.get(key)
+            if type(value) is not int or value < 0 or value != raw_frame.get(key) or value != record.get(track_key):
+                raise ValueError('RGB-D timestamp provenance mismatch')
+        if (abs(frame['color_timestamp_us'] - frame['depth_timestamp_us']) > 5000
+                or pose.get('capture_timestamp_us') != frame['camera_timestamp_us']):
+            raise ValueError('RGB-D synchronization / pose timestamp mismatch')
+        source_paths.add(pose_path)
+        source_paths.update(_same_source_image(dataset, frame, raw, raw_frame, k) for k in ('rgb', 'depth'))
+        poses.append(pose)
+    return poses
+
+
 def validate_comparison_input(dataset, *, max_views=20, allow_synthetic=False):
     """Validate an original online posed dataset, without writing validation to it."""
     import numpy as np
@@ -146,7 +191,6 @@ def validate_comparison_input(dataset, *, max_views=20, allow_synthetic=False):
         raise ValueError('Invalid recorded workspace radius')
     if tracking.get('local_workspace_radius_m') != radius:
         raise ValueError('Workspace policy mismatch')
-    poses = []
     source_paths = {dataset / 'manifest.json', dataset / 'frames.jsonl', dataset / 'pose_quality_report.json',
                     raw / 'manifest.json', raw / 'frames.jsonl', tracking_path, raw / 'derived' / 'live_tracking.jsonl'}
     # Hash every captured raw RGB-D/Pose/calibration file, not only the selected views.
@@ -159,42 +203,8 @@ def validate_comparison_input(dataset, *, max_views=20, allow_synthetic=False):
     hashes = fingerprints(source_paths)
     if any(value is None for value in hashes.values()):
         raise ValueError('Required evidence file is missing')
-    for frame in frames:
-        number = frame['frame']
-        if number not in tracked or number not in raw_index:
-            raise ValueError('Selected source frame not found')
-        record, raw_frame = tracked[number], raw_index[number]
-        pose_path = (dataset / frame['pose']).resolve()
-        pose = read_json(pose_path)
-        matrix = np.asarray(pose.get('T_WC'), dtype=float)
-        if (frame.get('pose_valid') is not True or pose.get('pose_valid') is not True
-                or validate_pose(matrix) or pose.get('pose_source') != expected_pose_source
-                or pose.get('frame') != number or pose.get('session_id') != session
-                or pose.get('reference_frame_id') != reference or record.get('session_id') != session
-                or record.get('reference_frame_id') != reference or record.get('state') != 'tracking'
-                or record.get('selected_for_fusion') is not True or record.get('quality', {}).get('usable') is not True
-                or validate_pose(record.get('T_WC'))
-                or not np.allclose(matrix, record['T_WC'], rtol=0, atol=1e-9)):
-            raise ValueError('Selected pose / trusted online record mismatch')
-        age = record.get('latency_ms')
-        if not isinstance(age, (int, float)) or not math.isfinite(age) or not 0 <= age <= 2000:
-            raise ValueError('Selected online pose was stale or has no timing evidence')
-        from femto.tracking.moving_quality import rotation_deg
-        if angle_limit is not None and rotation_deg(matrix)>angle_limit+1e-9:
-            raise ValueError('Pose exceeds recorded workspace rotation')
-        if radius is not None and np.linalg.norm(matrix[:3, 3]) > radius:
-            raise ValueError('Selected pose is outside the recorded workspace')
-        for key, track_key in [('camera_timestamp_us', 'capture_timestamp_us'),
-                               ('color_timestamp_us', 'color_timestamp_us'), ('depth_timestamp_us', 'depth_timestamp_us')]:
-            value = frame.get(key)
-            if type(value) is not int or value < 0 or value != raw_frame.get(key) or value != record.get(track_key):
-                raise ValueError('RGB-D timestamp provenance mismatch')
-        if (abs(frame['color_timestamp_us'] - frame['depth_timestamp_us']) > 5000
-                or pose.get('capture_timestamp_us') != frame['camera_timestamp_us']):
-            raise ValueError('RGB-D synchronization / pose timestamp mismatch')
-        source_paths.add(pose_path)
-        source_paths.update(_same_source_image(dataset, frame, raw, raw_frame, k) for k in ('rgb', 'depth'))
-        poses.append(pose)
+    poses = _validate_selected_frames(dataset, frames, raw, tracked, raw_index,
+        expected_pose_source, session, reference, angle_limit, radius, source_paths)
     proof = validate_reference_provenance(local.get('reference_provenance'), dataset, frames[0], poses[0])
     if tracking.get('reference_provenance') != proof or any(p.get('reference_provenance') != proof for p in poses):
         raise ValueError('Initial W0 reference provenance mismatch')

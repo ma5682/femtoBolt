@@ -23,21 +23,8 @@ def _depth_range(manifest: dict[str, Any]) -> tuple[float, float]:
     return minimum, maximum
 
 
-def build_fixed_keyframe_dataset(
-    source: Path,
-    output: Path,
-) -> tuple[Path, dict[str, Any]]:
-    """Create a one-frame dataset whose RGB and depth come from the same best frame."""
-    source = source.resolve()
-    output = output.resolve()
-    if output.exists():
-        raise FileExistsError(f"Output already exists; refusing to overwrite: {output}")
-    manifest = load_json(source / "manifest.json")
-    frames = load_jsonl(source / "frames.jsonl")
-    if manifest.get("schema") != "femto-full-scene-rgbd-v1" or not frames:
-        raise ValueError("Input is not a non-empty femto-full-scene-rgbd-v1 dataset")
-    minimum_mm, maximum_mm = _depth_range(manifest)
-
+def _measure_frames(source: Path, frames: list[dict[str, Any]], minimum_mm: float,
+                    maximum_mm: float) -> list[dict[str, Any]]:
     raw_metrics: list[dict[str, Any]] = []
     expected_shape: tuple[int, int] | None = None
     for ordinal, frame in enumerate(frames):
@@ -69,6 +56,25 @@ def build_fixed_keyframe_dataset(
                 "rgb_depth_delta_us": int(frame.get("rgb_depth_timestamp_delta_us", 0)),
             }
         )
+    return raw_metrics
+
+
+def build_fixed_keyframe_dataset(
+    source: Path,
+    output: Path,
+) -> tuple[Path, dict[str, Any]]:
+    """Create a one-frame dataset whose RGB and depth come from the same best frame."""
+    source = source.resolve()
+    output = output.resolve()
+    if output.exists():
+        raise FileExistsError(f"Output already exists; refusing to overwrite: {output}")
+    manifest = load_json(source / "manifest.json")
+    frames = load_jsonl(source / "frames.jsonl")
+    if manifest.get("schema") != "femto-full-scene-rgbd-v1" or not frames:
+        raise ValueError("Input is not a non-empty femto-full-scene-rgbd-v1 dataset")
+    minimum_mm, maximum_mm = _depth_range(manifest)
+
+    raw_metrics = _measure_frames(source, frames, minimum_mm, maximum_mm)
 
     useful = [item for item in raw_metrics if item["valid_depth_pixels"] >= 1000]
     if not useful:

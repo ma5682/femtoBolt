@@ -10,6 +10,7 @@ import json
 import math
 from pathlib import Path
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import cv2
@@ -168,6 +169,142 @@ def write_rgb_point_cloud_ply(path: Path, points: np.ndarray, colors_rgb: np.nda
     path.write_bytes(header + vertices.tobytes())
 
 
+def _convert_frames(dataset,output,frames,poses_cv,pose_records,map_x,map_y,new_K,width,height,ctx):
+    for ordinal, (frame, pose_cv, pose_record) in enumerate(zip(frames, poses_cv, pose_records)):
+        color = imread_unicode(dataset / frame["rgb"], cv2.IMREAD_COLOR)
+        depth = imread_unicode(dataset / frame["depth"], cv2.IMREAD_UNCHANGED)
+        if color.shape[:2] != (height, width) or depth.shape != (height, width):
+            raise ValueError(f"Frame {frame['frame']} dimensions do not match calibration")
+        if depth.dtype != np.uint16:
+            raise ValueError(f"Frame {frame['frame']} depth is not uint16 millimetres")
+        from femto.depth.temporal_depth_layer import prepared_depth
+        filled_source, source_confidence, depth_quality, depth_quality_paths = prepared_depth(
+            dataset,frame,depth,ctx.active_depth_range_m[0] * 1000.0,
+            ctx.active_depth_range_m[1] * 1000.0,
+            output / "derived" / "depth_quality" / f"frame_{ordinal:06d}",
+            rgb_bgr=color,keep_artifacts=not ctx.local_measured,
+        )
+        color_rectified = cv2.remap(color, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        if 'original_depth' in frame:
+            depth=imread_unicode(dataset/frame['original_depth'],cv2.IMREAD_UNCHANGED)
+        depth_rectified = cv2.remap(depth, map_x, map_y, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
+        filled_rectified = cv2.remap(filled_source, map_x, map_y, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
+        confidence_rectified = cv2.remap(source_confidence, map_x, map_y, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
+        points, colors, valid_ratio = _sample_rgbd_world_points(
+            color_rectified,depth_rectified,new_K,pose_cv,ctx.active_depth_range_m,
+            ctx.target_points_per_frame,
+        )
+        if len(points) and ordinal in ctx.split['train']:
+            ctx.seed_points.append(points)
+            ctx.seed_colors.append(colors)
+        ctx.depth_valid_ratios.append(valid_ratio)
+        gray = cv2.cvtColor(color_rectified, cv2.COLOR_BGR2GRAY)
+        ctx.luminance_medians.append(float(np.median(gray)))
+        if frame.get("rgb_depth_timestamp_delta_us") is not None:
+            try:
+                ctx.sync_delta_us.append(abs(float(frame["rgb_depth_timestamp_delta_us"])))
+            except (TypeError, ValueError):
+                pass
+        exposure = _metadata_number(frame, "color", "exposure")
+        gain = _metadata_number(frame, "color", "gain")
+        if exposure is not None:
+            ctx.color_exposures.append(exposure)
+        if gain is not None:
+            ctx.color_gains.append(gain)
+        stem = f"{ordinal:06d}"
+        imwrite_unicode(output / "images" / f"{stem}.png", color_rectified)
+        imwrite_unicode(output / "depth_original" / f"{stem}.png", depth_rectified)
+        imwrite_unicode(output / "derived" / "depth" / f"{stem}.png", filled_rectified)
+        np.save(output / "derived" / "confidence" / f"{stem}.npy", confidence_rectified.astype(np.float32), allow_pickle=False)
+        ctx.depth_quality_frames.append({
+            "source_frame": int(frame["frame"]),
+            "original_invalid_rate": depth_quality["original_invalid_rate"],
+            "filled_invalid_rate": depth_quality["filled_invalid_rate"],
+            "repaired_pixels": depth_quality["repaired_pixels"],
+            "policy": depth_quality["policy"],
+            "artifacts": depth_quality_paths,
+        })
+        ctx.output_frames.append({
+            "file_path": f"images/{stem}.png",
+            "depth_file_path": f"derived/depth/{stem}.png",
+            "original_depth_file_path": f"depth_original/{stem}.png",
+            "depth_confidence_file_path": f"derived/confidence/{stem}.npy",
+            "transform_matrix": camera_to_opengl(pose_cv).tolist(),
+            "source_frame": int(frame["frame"]),
+            "source_camera_timestamp_us": int(frame.get("camera_timestamp_us", -1)),
+            "pose_source": pose_record.get("pose_source"),
+            "source_frame_metadata": frame.get("frame_metadata") or {},
+        })
+
+
+def _write_input_quality_report(output,ctx):
+    luminance_summary = _summary(ctx.luminance_medians)
+    exposure_summary = _summary(ctx.color_exposures)
+    gain_summary = _summary(ctx.color_gains)
+    luma_min = float(luminance_summary["min"] or 0.0)
+    luma_max = float(luminance_summary["max"] or 0.0)
+    exposure_min = float(exposure_summary["min"] or 0.0)
+    exposure_max = float(exposure_summary["max"] or 0.0)
+    gain_min = float(gain_summary["min"] or 0.0)
+    gain_max = float(gain_summary["max"] or 0.0)
+    luminance_ratio = luma_max / max(luma_min, 1.0)
+    exposure_ratio = exposure_max / max(exposure_min, 1.0) if ctx.color_exposures else 1.0
+    gain_ratio = gain_max / max(gain_min, 1.0) if ctx.color_gains else 1.0
+    photometric_unstable = luminance_ratio > 1.4 or exposure_ratio > 1.5 or gain_ratio > 1.5
+    quality_warnings: list[str] = []
+    if float(np.median(ctx.depth_valid_ratios)) < 0.15:
+        quality_warnings.append("median valid depth coverage is below 15%")
+    if photometric_unstable:
+        quality_warnings.append("large brightness/exposure variation; exposure compensation is recommended")
+    sync_summary = _summary(ctx.sync_delta_us)
+    if float(sync_summary["p95"] or 0.0) > 5_000.0:
+        quality_warnings.append("RGB-Depth timestamp delta p95 exceeds 5 ms")
+    quality_report = {
+        "schema": "femto-3dgs-input-quality-v1",
+        "frame_count": len(ctx.output_frames),
+        "depth_valid_ratio": _summary(ctx.depth_valid_ratios),
+        "rgb_depth_abs_timestamp_delta_us": sync_summary,
+        "color_luminance_median": luminance_summary,
+        "color_exposure_metadata": exposure_summary,
+        "color_gain_metadata": gain_summary,
+        "photometric_unstable": photometric_unstable,
+        "warnings": quality_warnings,
+        "depth_hole_filling": {
+            "frames": ctx.depth_quality_frames,
+            "training_weight": "original=1.0, repaired=0.3, unknown=0.0",
+            "evaluation_truth": "original observed depth only",
+        },
+    }
+    quality_report_path = output / "quality" / "3dgs_input_report.json"
+    quality_report_path.write_text(
+        json.dumps(quality_report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return quality_report_path,photometric_unstable,luminance_ratio,exposure_ratio,gain_ratio
+
+
+def _write_transforms(output,manifest,new_K,width,height,seed_path,ctx):
+    transforms = {
+        "camera_model": "OPENCV",
+        "fl_x": float(new_K[0, 0]), "fl_y": float(new_K[1, 1]),
+        "cx": float(new_K[0, 2]), "cy": float(new_K[1, 2]),
+        "w": width, "h": height,
+        "k1": 0.0, "k2": 0.0, "k3": 0.0, "k4": 0.0, "p1": 0.0, "p2": 0.0,
+        "depth_unit_scale_factor": 0.001,
+        "depth_confidence_values": ({"range": [0.0, 1.0], "repaired_max": 0.3, "unknown": 0.0,
+                                     "policy": "preserve temporal confidence; temporal observations are not independent ground truth"}
+                                    if manifest.get('temporal_fusion') else {"original": 1.0, "repaired": 0.3, "unknown": 0.0}),
+        "ply_file_path": seed_path.name,
+        "frames": ctx.output_frames,
+        "dataset_split": ctx.split,
+        "train_filenames": [ctx.output_frames[index]['file_path'] for index in ctx.split['train']],
+        "val_filenames": [ctx.output_frames[index]['file_path'] for index in ctx.split['validation']],
+        "test_filenames": [ctx.output_frames[index]['file_path'] for index in ctx.split['test']],
+    }
+    (output / "transforms.json").write_text(
+        json.dumps(transforms, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 def convert(
     dataset: Path,
     output: Path,
@@ -232,98 +369,22 @@ def convert(
     (output / "depth_original").mkdir(parents=True, exist_ok=False)
     (output / "derived" / "confidence").mkdir(parents=True, exist_ok=False)
     (output / "quality").mkdir(parents=True, exist_ok=False)
-    output_frames: list[dict[str, Any]] = []
-    seed_points: list[np.ndarray] = []
-    seed_colors: list[np.ndarray] = []
-    depth_valid_ratios: list[float] = []
-    luminance_medians: list[float] = []
-    sync_delta_us: list[float] = []
-    color_exposures: list[float] = []
-    color_gains: list[float] = []
-    depth_quality_frames: list[dict[str, Any]] = []
     local_measured=bool(manifest.get('local_capture',{}).get('measured_only'))
     active_depth_range_m = _depth_range_m(manifest)
     split = make_split(len(frames))
     target_points_per_frame = max(2_000, max_seed_points // max(len(split['train']), 1))
-    for ordinal, (frame, pose_cv, pose_record) in enumerate(zip(frames, poses_cv, pose_records)):
-        color = imread_unicode(dataset / frame["rgb"], cv2.IMREAD_COLOR)
-        depth = imread_unicode(dataset / frame["depth"], cv2.IMREAD_UNCHANGED)
-        if color.shape[:2] != (height, width) or depth.shape != (height, width):
-            raise ValueError(f"Frame {frame['frame']} dimensions do not match calibration")
-        if depth.dtype != np.uint16:
-            raise ValueError(f"Frame {frame['frame']} depth is not uint16 millimetres")
-        from femto.depth.temporal_depth_layer import prepared_depth
-        filled_source, source_confidence, depth_quality, depth_quality_paths = prepared_depth(
-            dataset,frame,depth,
-            active_depth_range_m[0] * 1000.0,
-            active_depth_range_m[1] * 1000.0,
-            output / "derived" / "depth_quality" / f"frame_{ordinal:06d}",
-            rgb_bgr=color,
-            keep_artifacts=not local_measured,
-        )
-        color_rectified = cv2.remap(color, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-        if 'original_depth' in frame:
-            depth=imread_unicode(dataset/frame['original_depth'],cv2.IMREAD_UNCHANGED)
-        depth_rectified = cv2.remap(depth, map_x, map_y, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
-        filled_rectified = cv2.remap(filled_source, map_x, map_y, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
-        confidence_rectified = cv2.remap(source_confidence, map_x, map_y, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
-        points, colors, valid_ratio = _sample_rgbd_world_points(
-            color_rectified,
-            depth_rectified,
-            new_K,
-            pose_cv,
-            active_depth_range_m,
-            target_points_per_frame,
-        )
-        if len(points) and ordinal in split['train']:
-            seed_points.append(points)
-            seed_colors.append(colors)
-        depth_valid_ratios.append(valid_ratio)
-        gray = cv2.cvtColor(color_rectified, cv2.COLOR_BGR2GRAY)
-        luminance_medians.append(float(np.median(gray)))
-        if frame.get("rgb_depth_timestamp_delta_us") is not None:
-            try:
-                sync_delta_us.append(abs(float(frame["rgb_depth_timestamp_delta_us"])))
-            except (TypeError, ValueError):
-                pass
-        exposure = _metadata_number(frame, "color", "exposure")
-        gain = _metadata_number(frame, "color", "gain")
-        if exposure is not None:
-            color_exposures.append(exposure)
-        if gain is not None:
-            color_gains.append(gain)
-        stem = f"{ordinal:06d}"
-        imwrite_unicode(output / "images" / f"{stem}.png", color_rectified)
-        imwrite_unicode(output / "depth_original" / f"{stem}.png", depth_rectified)
-        imwrite_unicode(output / "derived" / "depth" / f"{stem}.png", filled_rectified)
-        np.save(output / "derived" / "confidence" / f"{stem}.npy", confidence_rectified.astype(np.float32), allow_pickle=False)
-        depth_quality_frames.append({
-            "source_frame": int(frame["frame"]),
-            "original_invalid_rate": depth_quality["original_invalid_rate"],
-            "filled_invalid_rate": depth_quality["filled_invalid_rate"],
-            "repaired_pixels": depth_quality["repaired_pixels"],
-            "policy": depth_quality["policy"],
-            "artifacts": depth_quality_paths,
-        })
-        output_frames.append(
-            {
-                "file_path": f"images/{stem}.png",
-                "depth_file_path": f"derived/depth/{stem}.png",
-                "original_depth_file_path": f"depth_original/{stem}.png",
-                "depth_confidence_file_path": f"derived/confidence/{stem}.npy",
-                "transform_matrix": camera_to_opengl(pose_cv).tolist(),
-                "source_frame": int(frame["frame"]),
-                "source_camera_timestamp_us": int(frame.get("camera_timestamp_us", -1)),
-                "pose_source": pose_record.get("pose_source"),
-                "source_frame_metadata": frame.get("frame_metadata") or {},
-            }
-        )
+    ctx=SimpleNamespace(output_frames=[],seed_points=[],seed_colors=[],depth_valid_ratios=[],
+        luminance_medians=[],sync_delta_us=[],color_exposures=[],color_gains=[],
+        depth_quality_frames=[],local_measured=local_measured,
+        active_depth_range_m=active_depth_range_m,split=split,
+        target_points_per_frame=target_points_per_frame)
+    _convert_frames(dataset,output,frames,poses_cv,pose_records,map_x,map_y,new_K,width,height,ctx)
 
-    if not seed_points:
+    if not ctx.seed_points:
         raise ValueError("No valid RGB-D points remain in the active Femto depth range")
     points, colors = _voxel_downsample_first(
-        np.concatenate(seed_points, axis=0),
-        np.concatenate(seed_colors, axis=0),
+        np.concatenate(ctx.seed_points, axis=0),
+        np.concatenate(ctx.seed_colors, axis=0),
         seed_voxel_m,
         max_seed_points,
     )
@@ -331,79 +392,13 @@ def convert(
     write_rgb_point_cloud_ply(seed_path, points, colors)
     split['seed_sha256'] = file_sha256(seed_path)
 
-    luminance_summary = _summary(luminance_medians)
-    exposure_summary = _summary(color_exposures)
-    gain_summary = _summary(color_gains)
-    luma_min = float(luminance_summary["min"] or 0.0)
-    luma_max = float(luminance_summary["max"] or 0.0)
-    exposure_min = float(exposure_summary["min"] or 0.0)
-    exposure_max = float(exposure_summary["max"] or 0.0)
-    gain_min = float(gain_summary["min"] or 0.0)
-    gain_max = float(gain_summary["max"] or 0.0)
-    luminance_ratio = luma_max / max(luma_min, 1.0)
-    exposure_ratio = exposure_max / max(exposure_min, 1.0) if color_exposures else 1.0
-    gain_ratio = gain_max / max(gain_min, 1.0) if color_gains else 1.0
-    photometric_unstable = (
-        luminance_ratio > 1.4 or exposure_ratio > 1.5 or gain_ratio > 1.5
-    )
-    quality_warnings: list[str] = []
-    if float(np.median(depth_valid_ratios)) < 0.15:
-        quality_warnings.append("median valid depth coverage is below 15%")
-    if photometric_unstable:
-        quality_warnings.append("large brightness/exposure variation; exposure compensation is recommended")
-    sync_summary = _summary(sync_delta_us)
-    if float(sync_summary["p95"] or 0.0) > 5_000.0:
-        quality_warnings.append("RGB-Depth timestamp delta p95 exceeds 5 ms")
-
-    quality_report = {
-        "schema": "femto-3dgs-input-quality-v1",
-        "frame_count": len(output_frames),
-        "depth_valid_ratio": _summary(depth_valid_ratios),
-        "rgb_depth_abs_timestamp_delta_us": sync_summary,
-        "color_luminance_median": luminance_summary,
-        "color_exposure_metadata": exposure_summary,
-        "color_gain_metadata": gain_summary,
-        "photometric_unstable": photometric_unstable,
-        "warnings": quality_warnings,
-        "depth_hole_filling": {
-            "frames": depth_quality_frames,
-            "training_weight": "original=1.0, repaired=0.3, unknown=0.0",
-            "evaluation_truth": "original observed depth only",
-        },
-    }
-    quality_report_path = output / "quality" / "3dgs_input_report.json"
-    quality_report_path.write_text(
-        json.dumps(quality_report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-    transforms = {
-        "camera_model": "OPENCV",
-        "fl_x": float(new_K[0, 0]),
-        "fl_y": float(new_K[1, 1]),
-        "cx": float(new_K[0, 2]),
-        "cy": float(new_K[1, 2]),
-        "w": width,
-        "h": height,
-        "k1": 0.0,
-        "k2": 0.0,
-        "k3": 0.0,
-        "k4": 0.0,
-        "p1": 0.0,
-        "p2": 0.0,
-        "depth_unit_scale_factor": 0.001,
-        "depth_confidence_values": ({"range": [0.0, 1.0], "repaired_max": 0.3, "unknown": 0.0,
-                                     "policy": "preserve temporal confidence; temporal observations are not independent ground truth"}
-                                    if manifest.get('temporal_fusion') else {"original": 1.0, "repaired": 0.3, "unknown": 0.0}),
-        "ply_file_path": seed_path.name,
-        "frames": output_frames,
-        "dataset_split": split,
-        "train_filenames": [output_frames[index]['file_path'] for index in split['train']],
-        "val_filenames": [output_frames[index]['file_path'] for index in split['validation']],
-        "test_filenames": [output_frames[index]['file_path'] for index in split['test']],
-    }
-    (output / "transforms.json").write_text(
-        json.dumps(transforms, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    output_frames=ctx.output_frames;depth_valid_ratios=ctx.depth_valid_ratios
+    luminance_medians=ctx.luminance_medians;sync_delta_us=ctx.sync_delta_us
+    color_exposures=ctx.color_exposures;color_gains=ctx.color_gains
+    depth_quality_frames=ctx.depth_quality_frames
+    (quality_report_path,photometric_unstable,luminance_ratio,
+     exposure_ratio,gain_ratio) = _write_input_quality_report(output,ctx)
+    _write_transforms(output,manifest,new_K,width,height,seed_path,ctx)
     conversion_manifest = {
         "schema": "femto-to-nerfstudio-v2",
         "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),

@@ -6,6 +6,62 @@ from femto.planning.region_path import signature
 from femto.planning.region_exclusions import allowed_region
 
 
+def _finish_plan(projection,mesh,region,allowed,removed,chains,runs,breaks,faces,xx,yy,
+                 width_mm,overlap_percent,boundary_margin_mm,pixel_radius,row_step,
+                 turn_edges,total,modern,direction,start_corner,mask,safe,w,h,check):
+    plan=dict(schema='femto-region-metric-path-v1',coordinate_frame='world_rdf',unit='metre',
+        region_id=region['annotation_id'],region_signature=signature(region),segments=chains,
+        spacing_mm=width_mm*(1-overlap_percent/100),row_step_px=row_step,
+        spacing_semantics='reference_horizontal_rows_mm_converted_at_median_depth_not_uniform_surface_spacing',
+        coverage_parameters=dict(width_mm=width_mm,overlap_percent=overlap_percent,boundary_margin_mm=boundary_margin_mm,pattern='serpentine_v1'),
+        connection_policy='surface_grid_connectors_within_eroded_allowed_mask',
+        execution_ready=False,physical_accuracy_verified=False,
+        route_order=dict(mode='left_right_then_right_left',sweep_runs=len(runs),continuous_chains=len(chains),
+            disconnected_breaks=len(chains)-1,connector_edges=turn_edges),
+        boundary_check=dict(schema='femto-serpentine-boundary-v1',width_mm=width_mm,margin_mm=boundary_margin_mm,
+            candidate_edges=total-len(chains),retained_edges=total-len(chains),rejected_edges=0,pixel_clearance=pixel_radius,
+            method='conservative_projected_radius_mask_erosion_plus_edge_adjacent_depth_gated_grid',contact_footprint_verified=False),
+        motion_demo=dict(speed_mm_s=20.,segment_gap_seconds=.5,transitions_planned=len(chains)==1,execution_ready=False))
+    if modern:
+        plan['coverage_parameters'].update(pattern='serpentine_v2',direction=direction,start_corner=start_corner)
+        plan['spacing_semantics']='reference_rows_mm_converted_at_median_depth_not_uniform_surface_spacing'
+        plan['route_order']['mode']=direction+'_'+start_corner
+        plan['chain_breaks']=breaks
+        bounds=np.asarray(region.get('screen_polygon') or np.c_[xx,yy],float)
+        preferred=[float(bounds[:,0].max() if 'right' in start_corner else bounds[:,0].min()),
+                   float(bounds[:,1].max() if 'bottom' in start_corner else bounds[:,1].min())]
+        first=chains[0][0];adjusted=not np.allclose(preferred,first['pixel'],rtol=0,atol=1e-9)
+        px,py=(int(round(v)) for v in preferred)
+        if not (0<=px<w and 0<=py<h) or not projection.valid[py,px]:cause='偏好角点无可信可见几何支持'
+        elif projection.ids[py,px] not in allowed['triangle_indices']:cause='偏好角点位于禁区剔除或选区外网格'
+        elif not mask[py,px]:cause='偏好角点不在区域像素掩膜内'
+        elif not safe[py,px]:cause='偏好角点不满足扫描半径和边界预留约束'
+        else:cause='偏好角点不是当前扫掠行的可用端点'
+        plan['start_selection']=dict(preference=start_corner,preferred_pixel=preferred,
+            actual_pixel=first['pixel'],actual_xyz_m=first['xyz_m'],adjusted=bool(adjusted),
+            rule='first_valid_sweep_endpoint_from_preferred_corner',
+            adjustment_cause=cause if adjusted else None,
+            reason=cause+'；按扫描顺序选取首条有效扫描端点，不保证最近点' if adjusted else '偏好位置满足扫描约束')
+        plan['motion_demo']=dict(schema='femto-motion-demo-v2',speed_mm_s=20.,
+            time_semantics='scan_and_connector_chords_only_constant_speed',cross_chain_time_s=None if breaks else 0.,
+            gap_policy='stop_require_explicit_continue_no_interpolated_transition',execution_ready=False)
+    # Cross-face chords are not face-local: seed only their endpoints for a
+    # conservative estimate; same-face chords remain valid on their triangle.
+    from femto.planning.region_coverage import evaluate_coverage
+    coverage_segments=[]
+    for chain in chains:
+        for left,right in zip(chain,chain[1:]):
+            if left['triangle_index']==right['triangle_index']:
+                coverage_segments.append([left,right])
+            else:
+                coverage_segments.extend([[left,left],[right,right]])
+    plan['coverage']=evaluate_coverage(mesh,allowed,dict(segments=coverage_segments),width_mm,check)
+    if removed:plan['exclusions']=dict(polygons=region['exclusion_polygons'],removed_triangle_indices=removed,
+        allowed_triangle_indices=allowed['triangle_indices'],rule='remove_whole_triangles_touching_dilated_reference_mask')
+    if region.get('screen_polygon'):plan['image_support']=projection.region_support(region['screen_polygon'],check=check)
+    return plan
+
+
 def serpentine_plan(projection,mesh,region,width_mm=10.,overlap_percent=20.,check=lambda:None,*,boundary_margin_mm=1.,direction=None,start_corner=None):
     for value,lo,hi in ((width_mm,.2,100),(overlap_percent,0,90),(boundary_margin_mm,0,50)):
         if type(value) not in (int,float) or not np.isfinite(value) or not lo<=value<=hi:raise ValueError('Invalid serpentine parameters')
@@ -117,57 +173,9 @@ def serpentine_plan(projection,mesh,region,width_mm=10.,overlap_percent=20.,chec
         current.extend(sample(node,'scan') for node in run[start:]);total+=len(run)-start
         if total>200000:raise ValueError('Serpentine path exceeds 200000 samples')
     if current:chains.append(current)
-    plan=dict(schema='femto-region-metric-path-v1',coordinate_frame='world_rdf',unit='metre',
-        region_id=region['annotation_id'],region_signature=signature(region),segments=chains,
-        spacing_mm=width_mm*(1-overlap_percent/100),row_step_px=row_step,
-        spacing_semantics='reference_horizontal_rows_mm_converted_at_median_depth_not_uniform_surface_spacing',
-        coverage_parameters=dict(width_mm=width_mm,overlap_percent=overlap_percent,boundary_margin_mm=boundary_margin_mm,pattern='serpentine_v1'),
-        connection_policy='surface_grid_connectors_within_eroded_allowed_mask',
-        execution_ready=False,physical_accuracy_verified=False,
-        route_order=dict(mode='left_right_then_right_left',sweep_runs=len(runs),continuous_chains=len(chains),
-            disconnected_breaks=len(chains)-1,connector_edges=turn_edges),
-        boundary_check=dict(schema='femto-serpentine-boundary-v1',width_mm=width_mm,margin_mm=boundary_margin_mm,
-            candidate_edges=total-len(chains),retained_edges=total-len(chains),rejected_edges=0,pixel_clearance=pixel_radius,
-            method='conservative_projected_radius_mask_erosion_plus_edge_adjacent_depth_gated_grid',contact_footprint_verified=False),
-        motion_demo=dict(speed_mm_s=20.,segment_gap_seconds=.5,transitions_planned=len(chains)==1,execution_ready=False))
-    if modern:
-        plan['coverage_parameters'].update(pattern='serpentine_v2',direction=direction,start_corner=start_corner)
-        plan['spacing_semantics']='reference_rows_mm_converted_at_median_depth_not_uniform_surface_spacing'
-        plan['route_order']['mode']=direction+'_'+start_corner
-        plan['chain_breaks']=breaks
-        bounds=np.asarray(region.get('screen_polygon') or np.c_[xx,yy],float)
-        preferred=[float(bounds[:,0].max() if 'right' in start_corner else bounds[:,0].min()),
-                   float(bounds[:,1].max() if 'bottom' in start_corner else bounds[:,1].min())]
-        first=chains[0][0];adjusted=not np.allclose(preferred,first['pixel'],rtol=0,atol=1e-9)
-        px,py=(int(round(v)) for v in preferred)
-        if not (0<=px<w and 0<=py<h) or not projection.valid[py,px]:cause='偏好角点无可信可见几何支持'
-        elif projection.ids[py,px] not in allowed['triangle_indices']:cause='偏好角点位于禁区剔除或选区外网格'
-        elif not mask[py,px]:cause='偏好角点不在区域像素掩膜内'
-        elif not safe[py,px]:cause='偏好角点不满足扫描半径和边界预留约束'
-        else:cause='偏好角点不是当前扫掠行的可用端点'
-        plan['start_selection']=dict(preference=start_corner,preferred_pixel=preferred,
-            actual_pixel=first['pixel'],actual_xyz_m=first['xyz_m'],adjusted=bool(adjusted),
-            rule='first_valid_sweep_endpoint_from_preferred_corner',
-            adjustment_cause=cause if adjusted else None,
-            reason=cause+'；按扫描顺序选取首条有效扫描端点，不保证最近点' if adjusted else '偏好位置满足扫描约束')
-        plan['motion_demo']=dict(schema='femto-motion-demo-v2',speed_mm_s=20.,
-            time_semantics='scan_and_connector_chords_only_constant_speed',cross_chain_time_s=None if breaks else 0.,
-            gap_policy='stop_require_explicit_continue_no_interpolated_transition',execution_ready=False)
-    # Cross-face chords are not face-local: seed only their endpoints for a
-    # conservative estimate; same-face chords remain valid on their triangle.
-    from femto.planning.region_coverage import evaluate_coverage
-    coverage_segments=[]
-    for chain in chains:
-        for left,right in zip(chain,chain[1:]):
-            if left['triangle_index']==right['triangle_index']:
-                coverage_segments.append([left,right])
-            else:
-                coverage_segments.extend([[left,left],[right,right]])
-    plan['coverage']=evaluate_coverage(mesh,allowed,dict(segments=coverage_segments),width_mm,check)
-    if removed:plan['exclusions']=dict(polygons=region['exclusion_polygons'],removed_triangle_indices=removed,
-        allowed_triangle_indices=allowed['triangle_indices'],rule='remove_whole_triangles_touching_dilated_reference_mask')
-    if region.get('screen_polygon'):plan['image_support']=projection.region_support(region['screen_polygon'],check=check)
-    return plan
+    return _finish_plan(projection,mesh,region,allowed,removed,chains,runs,breaks,faces,xx,yy,
+        width_mm,overlap_percent,boundary_margin_mm,pixel_radius,row_step,turn_edges,total,
+        modern,direction,start_corner,mask,safe,w,h,check)
 
 
 from femto.planning.planning_state import versioned
