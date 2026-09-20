@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -73,6 +74,42 @@ class JsonHelperTests(unittest.TestCase):
         self.assertNotIn(" ", text.splitlines()[0])  # compact separators
         target.write_text(text + "\n   \n", encoding="utf-8")
         self.assertEqual([row["frame"] for row in load_jsonl(target)], [0, 1, 2])
+
+    def test_serialization_options_preserve_legacy_json_bytes(self) -> None:
+        payload = {"文本": "中", "items": [1, 2]}
+        target = self.root / "legacy.json"
+        write_json(target, payload, indent=None, ensure_ascii=True)
+        expected = self.root / "legacy-expected.json"
+        expected.write_text(json.dumps(payload, indent=None, ensure_ascii=True), encoding="utf-8")
+        self.assertEqual(target.read_bytes(), expected.read_bytes())
+        rows = self.root / "legacy.jsonl"
+        write_jsonl(rows, [payload], ensure_ascii=True, compact=False)
+        expected_rows = self.root / "legacy-expected.jsonl"
+        expected_rows.write_text(json.dumps(payload, ensure_ascii=True) + "\n", encoding="utf-8")
+        self.assertEqual(rows.read_bytes(), expected_rows.read_bytes())
+
+    def test_durable_writer_flushes_before_atomic_publication(self) -> None:
+        target = self.root / "durable.json"
+        with mock.patch("femto.io_utils.os.fsync", wraps=os.fsync) as fsync:
+            write_json(target, {"文本": "中"}, durable=True, temporary_prefix="viewport_")
+        fsync.assert_called_once()
+        self.assertEqual(load_json(target), {"文本": "中"})
+        expected = self.root / "durable-expected.json"
+        expected.write_text(json.dumps({"文本": "中"}, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.assertEqual(target.read_bytes(), expected.read_bytes())
+        self.assertFalse(list(self.root.glob("viewport_*.tmp")))
+
+        unique_target = self.root / "unique.json"
+        with mock.patch("femto.io_utils.os.fsync") as fsync:
+            write_json(
+                unique_target,
+                {"文本": "中"},
+                unique_temporary=True,
+                temporary_prefix=".history-",
+            )
+        fsync.assert_not_called()
+        self.assertEqual(unique_target.read_bytes(), expected.read_bytes())
+        self.assertFalse(list(self.root.glob(".history-*.tmp")))
 
 
 class ImageHelperTests(unittest.TestCase):

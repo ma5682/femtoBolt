@@ -3,7 +3,7 @@ import argparse,hashlib,json,os,platform,tempfile,time,uuid
 from pathlib import Path
 from datetime import datetime,timezone
 import numpy as np
-from femto.io_utils import load_json as read, write_json_strict as write
+from femto.io_utils import load_json, write_json_strict
 
 PURPOSES=('optical_range','axial_depth','housing_distance','two_point_length','plane_residual','mapping_reprojection')
 KINDS=('synthetic','historical_replay','physical_test')
@@ -108,13 +108,13 @@ def assess(spec,assets):
     return missing
 
 def record(spec_path,observation_path,parent,trial_id,status='measured',reason=None,elapsed_s=None,check=lambda:None,progress=lambda stage:None):
-    start=time.perf_counter();check();spec=read(spec_path);validate_spec(spec)
+    start=time.perf_counter();check();spec=load_json(spec_path);validate_spec(spec)
     tool_identity=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     if status not in ('measured','failed','cancelled'):raise ValueError('Unknown attempt status')
     if not trial_id or (status!='measured' and not reason):raise ValueError('trial_id and failure/cancel reason required')
     if elapsed_s is not None and (not finite(elapsed_s) or elapsed_s<0):raise ValueError('Invalid elapsed time')
     progress('记录原始数据、标定和算法文件指纹')
-    assets=evidence(spec,Path(spec_path).resolve().parent,check);observation=read(observation_path) if observation_path else None
+    assets=evidence(spec,Path(spec_path).resolve().parent,check);observation=load_json(observation_path) if observation_path else None
     result=None
     if status=='measured':
         if not isinstance(observation,dict):raise ValueError('Measured attempt requires an observations JSON object')
@@ -148,7 +148,7 @@ def record(spec_path,observation_path,parent,trial_id,status='measured',reason=N
         tool=Path(__file__).read_bytes()
         if hashlib.sha256(tool).hexdigest()!=tool_identity:raise ValueError('Measurement tool changed during recording')
         (folder/'measurement_tool.py').write_bytes(tool);record['measurement_tool_sha256']=tool_identity
-        record['recording_elapsed_s']=time.perf_counter()-start;record['record_sha256']=hashed(record);write(folder/'record.json',record)
+        record['recording_elapsed_s']=time.perf_counter()-start;record['record_sha256']=hashed(record);write_json_strict(folder/'record.json',record)
         for p in folder.rglob('*'):
             if p.is_file():
                 with p.open('r+b') as f:os.fsync(f.fileno())
@@ -159,7 +159,7 @@ def record(spec_path,observation_path,parent,trial_id,status='measured',reason=N
     return target
 
 def load_record(path):
-    r=read(path);checksum=r.pop('record_sha256',None)
+    r=load_json(path);checksum=r.pop('record_sha256',None)
     if r.get('schema')!='femto-research-attempt-v1' or checksum!=hashed(r):raise ValueError('Record checksum/schema mismatch')
     if hashlib.sha256((Path(path).parent/'measurement_tool.py').read_bytes()).hexdigest()!=r['measurement_tool_sha256']:raise ValueError('Measurement tool snapshot mismatch')
     validate_spec(r['protocol'])

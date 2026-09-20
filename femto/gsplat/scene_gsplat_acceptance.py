@@ -17,7 +17,7 @@ from pathlib import Path
 import time
 from typing import Any
 
-from femto.io_utils import load_json as _load_json
+from femto.io_utils import load_json, write_json
 from femto.dataset.scene_data_kind import classify_dataset_data_kind, load_dataset_manifest_chain
 
 
@@ -29,7 +29,7 @@ REPORT_SCHEMA = "femto-direct-gsplat-acceptance-v1"
 
 def _maybe_json(path: Path) -> dict[str, Any] | None:
     try:
-        return _load_json(path)
+        return load_json(path)
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -130,7 +130,7 @@ def _pose_summary(nerfstudio_dir: Path, conversion: dict[str, Any] | None) -> di
 
 
 def build_acceptance_report(run: Path) -> dict[str, Any]:
-    training = _load_json(run / "training_report.json")
+    training = load_json(run / "training_report.json")
     evaluation = training.get("evaluation") or {}
     aggregate = evaluation.get("aggregate") or {}
     checks = evaluation.get("checks") or {}
@@ -248,7 +248,7 @@ def main() -> int:
         report = build_acceptance_report(run)
         output = args.output or (run / "acceptance_report.json")
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json(output, report)
         report["report_path"] = str(output)
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "blocked", "error": str(error)}, ensure_ascii=False, indent=2))

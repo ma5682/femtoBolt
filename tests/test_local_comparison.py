@@ -14,8 +14,8 @@ import numpy as np
 import open3d as o3d
 
 from femto.pipeline.local_comparison import (StageStopped, changed_files, copy_unchanged_model, fingerprints,
-    read_json, read_rows, run_comparison, sha256, supervise, validate_comparison_input,
-    validate_variant_input, write_json)
+    load_json_object, read_rows, run_comparison, sha256, supervise, validate_comparison_input,
+    validate_variant_input, write_json_strict)
 from femto.pipeline.local_comparison_viewer import sampled_depth_metrics, _mesh_scene, render_fixed_surface, write_comparison_html
 
 
@@ -31,7 +31,7 @@ def make_fixture(root, width=128, height=96):
     from femto.geometry.fusion import read_geometry_safe, export_mesh_formats
     generated = generate_dataset(root/'generated', frames=4, width=width, height=height)
     original_frames = read_rows(generated/'frames.jsonl')
-    original_poses = [read_json(generated/f['pose']) for f in original_frames]
+    original_poses = [load_json_object(generated/f['pose']) for f in original_frames]
     world0 = np.asarray(original_poses[0]['T_WC'])
     inverse = np.linalg.inv(world0)
     raw = root/'raw'
@@ -53,22 +53,22 @@ def make_fixture(root, width=128, height=96):
             rgb=f'rgb/{index:06}.jpg', depth=f'depth/{index:06}.png', pose=f'pose/{index:06}.json')
         for key in ('rgb', 'depth'):
             shutil.copyfile(generated/original[key], raw/frame[key])
-        write_json(raw/frame['pose'], dict(frame=index, pose_valid=True, pose_source='synthetic_ground_truth',
+        write_json_strict(raw/frame['pose'], dict(frame=index, pose_valid=True, pose_source='synthetic_ground_truth',
                                           T_WC=original_poses[source_index]['T_WC']))
         frames.append(frame)
         records.append(dict(frame_id=index, session_id=session, reference_frame_id=0, T_WC=pose.tolist(),
             capture_timestamp_us=timestamp, color_timestamp_us=timestamp, depth_timestamp_us=timestamp,
             state='tracking', latency_ms=10., quality=dict(usable=True), selected_for_fusion=index in accepted))
-    manifest = read_json(generated/'manifest.json')
+    manifest = load_json_object(generated/'manifest.json')
     manifest.update(frame_count=len(frames), purpose='Synthetic same-source replay fixture, not camera evidence',
                     parameters=dict(depth_min_mm=250., depth_max_mm=2210., fixed_camera=False))
-    write_json(raw/'manifest.json', manifest)
+    write_json_strict(raw/'manifest.json', manifest)
     (raw/'frames.jsonl').write_text(''.join(json.dumps(f)+'\n' for f in frames), encoding='utf-8')
     (raw/'derived/live_tracking.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in records), encoding='utf-8')
     proof = reference_provenance(session, records[0], calibration_identity(raw))
     local = dict(measured_only=True, session_id=session, reference_frame_id=0,
         reference_provenance=proof, tracking_report=str(raw/'derived/local_capture_report.json'))
-    write_json(raw/'derived/local_capture_report.json', dict(schema='femto-local-tracking-v1', state='stopped',
+    write_json_strict(raw/'derived/local_capture_report.json', dict(schema='femto-local-tracking-v1', state='stopped',
         session_id=session, reference_frame_id=0, reference_provenance=proof, accepted_frames=accepted,
         coordinate_frame='world_rdf', unit='metre', transform_direction='T_W0_Ct',
         pose_source='synthetic_ground_truth', frame_count=len(records), tracking_lost_events=0))
@@ -81,7 +81,7 @@ def make_fixture(root, width=128, height=96):
         frame.update(pose=f'pose/{ordinal:06}.json', pose_valid=True)
         for kind in ('rgb', 'depth'):
             frame[kind] = str(raw/frames[index][kind])
-        write_json(posed/frame['pose'], dict(frame=index, pose_valid=True,
+        write_json_strict(posed/frame['pose'], dict(frame=index, pose_valid=True,
             pose_source='synthetic_ground_truth', T_WC=records[index]['T_WC'], session_id=session,
             reference_frame_id=0, reference_provenance=proof, capture_timestamp_us=records[index]['capture_timestamp_us']))
         selected.append(frame)
@@ -94,9 +94,9 @@ def make_fixture(root, width=128, height=96):
     posed_manifest.update(frame_count=len(selected), source_dataset=str(raw), local_capture=local,
         pose=dict(valid=True, source='synthetic_ground_truth'), comparison_ground_truth=dict(mesh=str(truth_path),
             coordinate_frame='world_rdf', unit='metre', reference_provenance=proof, sha256=sha256(truth_path)))
-    write_json(posed/'manifest.json', posed_manifest)
+    write_json_strict(posed/'manifest.json', posed_manifest)
     (posed/'frames.jsonl').write_text(''.join(json.dumps(f)+'\n' for f in selected), encoding='utf-8')
-    write_json(posed/'pose_quality_report.json', dict(source_frame_count=len(records), frame_count=len(selected),
+    write_json_strict(posed/'pose_quality_report.json', dict(source_frame_count=len(records), frame_count=len(selected),
         accepted_frame_ordinals=accepted, rejected_frames=[]))
     return posed
 
@@ -123,7 +123,7 @@ class SourceValidationTests(unittest.TestCase):
     def test_session_reference_nonfinite_stale_dynamic_and_workspace_rejection(self):
         rows = read_rows(self.dataset/'frames.jsonl')
         pose_path = self.dataset/rows[1]['pose']
-        original = read_json(pose_path)
+        original = load_json_object(pose_path)
         for key, value in [('session_id', 'another'), ('reference_frame_id', 9), ('T_WC', [[float('nan')]*4]*4)]:
             changed = copy.deepcopy(original)
             changed[key] = value
@@ -131,7 +131,7 @@ class SourceValidationTests(unittest.TestCase):
             pose_path.write_text(json.dumps(changed), encoding='utf-8')
             with self.subTest(key=key), self.assertRaises(ValueError):
                 validate_comparison_input(self.dataset, allow_synthetic=True)
-            write_json(pose_path, original)
+            write_json_strict(pose_path, original)
         tracking_path = self.dataset.parent/'live_tracking.jsonl'
         original_records = read_rows(tracking_path)
         for alteration in ('lost', 'stale', 'dynamic', 'sync'):
@@ -145,13 +145,13 @@ class SourceValidationTests(unittest.TestCase):
             with self.subTest(alteration=alteration), self.assertRaises(ValueError):
                 validate_comparison_input(self.dataset, allow_synthetic=True)
         tracking_path.write_text(''.join(json.dumps(r)+'\n' for r in original_records), encoding='utf-8')
-        manifest = read_json(self.dataset/'manifest.json')
+        manifest = load_json_object(self.dataset/'manifest.json')
         manifest['local_capture']['local_workspace_radius_m']=.02
-        write_json(self.dataset/'manifest.json', manifest)
+        write_json_strict(self.dataset/'manifest.json', manifest)
         report_path = self.dataset.parent/'local_capture_report.json'
-        report = read_json(report_path)
+        report = load_json_object(report_path)
         report['local_workspace_radius_m']=.02
-        write_json(report_path, report)
+        write_json_strict(report_path, report)
         with self.assertRaisesRegex(ValueError, 'workspace'):
             validate_comparison_input(self.dataset, allow_synthetic=True)
 
@@ -297,7 +297,7 @@ class ComparisonRuntimeTests(unittest.TestCase):
             source.mkdir(parents=True)
             mesh = source/'scene_tsdf_mesh_m.ply'
             mesh.write_bytes(b'unchanged fixture geometry')
-            write_json(source/'reconstruction_report.json', dict(outputs=dict(mesh=dict(ply=str(mesh))), source_dataset='original'))
+            write_json_strict(source/'reconstruction_report.json', dict(outputs=dict(mesh=dict(ply=str(mesh))), source_dataset='original'))
             output = root/'B/reconstruction'
             report = copy_unchanged_model(source, output)
             self.assertEqual(sha256(mesh), sha256(output/mesh.name))

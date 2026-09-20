@@ -8,7 +8,7 @@ import shutil
 import cv2
 import numpy as np
 import time
-from femto.io_utils import imread_unicode as _read_image, imwrite_unicode
+from femto.io_utils import imread_unicode, imwrite_unicode, write_json, write_jsonl
 from femto.temporal.scene_temporal_fusion import audit_temporal_motion
 from femto.tracking.local_stability import window_valid,RULE as WINDOW_RULE
 from femto.dataset.local_reference import CALIBRATION_FILES,calibration_identity,validate_reference_provenance
@@ -181,7 +181,7 @@ def _validate_mask_source(dataset,frame,depth,spec,mask_path):
             raise ValueError('Legacy temporal source dataset differs from the actual frame')
         required=_window_evidence(source_context,source_frames)
         _verify_hashes(report.get('source_sha256'),required)
-        decoded=_read_image(context['dataset']/frame['depth'],cv2.IMREAD_UNCHANGED)
+        decoded=imread_unicode(context['dataset']/frame['depth'],cv2.IMREAD_UNCHANGED)
         if decoded.dtype!=np.uint16 or not np.array_equal(decoded,depth):
             raise ValueError('Legacy temporal depth input differs from source pixels')
     except (KeyError,OSError,TypeError,ValueError) as error:
@@ -215,7 +215,7 @@ def filtered_depth(dataset,frame,depth):
     if not spec:return depth
     path=(Path(dataset)/spec['mask']).resolve()
     if hashlib.sha256(path.read_bytes()).hexdigest()!=spec['sha256']:raise ValueError('Temporal mask hash mismatch')
-    mask=_read_image(path,cv2.IMREAD_UNCHANGED)
+    mask=imread_unicode(path,cv2.IMREAD_UNCHANGED)
     if mask.dtype!=np.uint8 or mask.shape!=depth.shape or not np.isin(mask,[0,255]).all():raise ValueError('Invalid support mask')
     _values_sha(depth)
     _validate_mask_source(dataset,frame,depth,spec,path)
@@ -262,9 +262,9 @@ def prepare(dataset,output):
                     ('camera_timestamp_us','capture_timestamp_us'),('color_timestamp_us','color_timestamp_us'),('depth_timestamp_us','depth_timestamp_us'))):
                 raise ValueError('Temporal RGB-D timestamp provenance mismatch')
             for folder,target,flags in [('rgb',images,cv2.IMREAD_COLOR),('depth',depths,cv2.IMREAD_UNCHANGED)]:
-                path=raw/raw_row[folder];digest(path);target.append(_read_image(path,flags))
+                path=raw/raw_row[folder];digest(path);target.append(imread_unicode(path,flags))
         selected_depth=dataset/frame['depth'];selected_rgb=dataset/frame['rgb'];digest(selected_depth);digest(selected_rgb)
-        if not np.array_equal(depths[reference_index],_read_image(selected_depth,cv2.IMREAD_UNCHANGED)) or not np.array_equal(images[reference_index],_read_image(selected_rgb,cv2.IMREAD_COLOR)):
+        if not np.array_equal(depths[reference_index],imread_unicode(selected_depth,cv2.IMREAD_UNCHANGED)) or not np.array_equal(images[reference_index],imread_unicode(selected_rgb,cv2.IMREAD_COLOR)):
             raise ValueError('Selected frame differs from stationary window reference')
         motion_mask,motion=audit_temporal_motion(images);row.update(source_frames=[r['frame_id'] for r in group],motion=motion)
         if not motion['passed']:row['reason']='image_motion_rejected';continue
@@ -296,15 +296,15 @@ def prepare(dataset,output):
         physical_accuracy_verified=False)
     report['source_unchanged']=all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in hashes.items())
     if not report['source_unchanged']:raise ValueError('Source changed during temporal checks')
-    report_path=output/'temporal_support_report.json';report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    report_path=output/'temporal_support_report.json';write_json(report_path, report)
     if not report['applied_frames']:return dataset,report
     derived=output/'dataset';derived.mkdir();shutil.copytree(dataset/'calibration',derived/'calibration');(derived/'pose').mkdir()
     for i,frame in enumerate(frames):
         pose=dataset/frame['pose'];frame['pose']=f'pose/{i:06}.json';shutil.copyfile(pose,derived/frame['pose'])
         for key in ('rgb','depth'):frame[key]=os.path.relpath((dataset/frame[key]).resolve(),derived).replace('\\','/')
-    (derived/'frames.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in frames),encoding='utf-8')
+    write_jsonl(derived/'frames.jsonl', frames, ensure_ascii=True, compact=False)
     manifest['local_capture']['temporal_support_report']=str(report_path)
-    (derived/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+    write_json(derived/'manifest.json', manifest)
     shutil.copyfile(dataset/'pose_quality_report.json',derived/'pose_quality_report.json')
     return derived,report
 

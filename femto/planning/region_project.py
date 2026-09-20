@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 import numpy as np
 from PIL import Image
+from femto.io_utils import write_json, write_json_strict
 
 SCHEMA='femto-region-project-v1'
 ASSETS={'scene_tsdf_mesh_m.ply','rgb.png','depth.npy','image_valid.npy',
@@ -69,7 +70,7 @@ def save_project(model,region,path,plan=None,check=lambda:None,*,planning_parame
             physical_accuracy_verified=False,execution_ready=False,
             scope='single_editable_region_with_full_reference_geometry_and_image_context',
             files={p.name:digest(p) for p in root.iterdir()})
-        (root/'project.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
+        write_json_strict(root/'project.json', payload)
         progress('写入方案清单与压缩包')
         archive=root/'bundle.zip'
         with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:
@@ -122,7 +123,7 @@ def _open_project(path,workspace=None,cancel=None,progress=lambda stage:None):
                 from femto.planning.planning_io import copy_stream
                 copy_stream(source,target,budget.check)
             if digest(root/name)!=expected:raise ValueError('Project asset checksum mismatch: '+name)
-        (root/'project.json').write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding='utf-8')
+        write_json(root/'project.json', data)
     progress('加载参考几何与图像')
     mesh_path=root/'scene_tsdf_mesh_m.ply';_mesh_budget_before_load(mesh_path)
     mesh=read_geometry_safe(mesh_path,mesh=True)
@@ -170,7 +171,7 @@ def _open_project(path,workspace=None,cancel=None,progress=lambda stage:None):
             region_signature=original['region_signature'] if 'plan_binding' in original else signature(model.store.regions[0]))
         from femto.annotation.measurement_audit import layer_contract
         plan['data_layers']=layer_contract(model.store)
-        candidate=root/'candidate_path.json';candidate.write_text(json.dumps(plan),encoding='utf-8')
+        candidate=root/'candidate_path.json';write_json(candidate, plan, indent=None, ensure_ascii=True)
         model.saved_plan=load_path(candidate,model.store,p,model.store.regions[0],budget.check)
         from femto.planning.planning_state import parameters
         if model.planning_parameters is not None and model.planning_parameters!=parameters(model.saved_plan):

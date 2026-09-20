@@ -5,21 +5,21 @@ import hashlib
 import json
 from pathlib import Path
 
-from femto.io_utils import load_json as read_json
+from femto.io_utils import load_json
 
 
 def resolve_source(source):
     source = Path(source).resolve()
     model = None
     if (source/'demo_summary.json').is_file():
-        summary = read_json(source/'demo_summary.json')
+        summary = load_json(source/'demo_summary.json')
         if summary.get('frame_count') != 1 or summary.get('fixed_camera') is not True:
             raise ValueError('Single-frame GS requires a completed fixed keyframe model')
         model = source
         source = Path(summary['source_dataset'])
         if not source.is_absolute(): source = model/source
         source = source.resolve()
-    manifest = read_json(source/'manifest.json')
+    manifest = load_json(source/'manifest.json')
     if manifest.get('schema') == 'femto-rgbd-photo-v1':
         if model is not None: raise ValueError('Keyframe model points to an unrelated photo')
         return source, manifest, dict(source_kind='photo', source_model=None, selected_source_frame=None)

@@ -67,10 +67,10 @@ class SupportTests(unittest.TestCase):
             self.assertTrue(all(r.get('local_temporal_support') for r in rows))
             # Inspect integration calls rather than inferring support from mesh appearance.
             import femto.pipeline.scene_reconstruction as reconstruction
-            original=reconstruction._prepare_rgbd;observations=[]
+            original=reconstruction.prepare_rgbd;observations=[]
             def observe(color,depth,*args,**kwargs):
                 observations.append(depth.copy());return original(color,depth,*args,**kwargs)
-            with mock.patch.object(reconstruction,'_prepare_rgbd',side_effect=observe):
+            with mock.patch.object(reconstruction,'prepare_rgbd',side_effect=observe):
                 reconstruct_scene(source,root/'result2',depth_min_m=.25,depth_max_m=2.21)
             self.assertTrue(any(np.all(d[:,:64]==0) and np.any(d[:,64:]>0) for d in observations))
             self.assertTrue(any(np.any(d[:,:64]>0) for d in observations))

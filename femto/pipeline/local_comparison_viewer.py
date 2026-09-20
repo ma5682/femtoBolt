@@ -124,8 +124,8 @@ def evaluate_and_render(baseline, dataset, reconstruction, *, width=640):
     import cv2
     import open3d as o3d
     from femto.geometry.fusion import read_geometry_safe
-    from femto.io_utils import imread_unicode as _read_image, imwrite_unicode, load_json_object as read_json, write_json_strict as write_json
-    from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps, prepare_rgbd as _prepare_rgbd
+    from femto.io_utils import imread_unicode, imwrite_unicode, load_json_object, write_json_strict
+    from femto.geometry.rgbd_frames import distortion_maps, prepare_rgbd
     from femto.local.local_temporal_support import filtered_depth
     from femto.pipeline.local_comparison import read_rows, sha256
 
@@ -137,14 +137,14 @@ def evaluate_and_render(baseline, dataset, reconstruction, *, width=640):
     if not len(mesh.triangles) or not np.isfinite(vertices).all():
         raise ValueError('Empty or nonfinite comparison mesh')
     scene = _mesh_scene(mesh)
-    mx, my, k, original_width, original_height = _distortion_maps(Path(baseline['dataset']))
+    mx, my, k, original_width, original_height = distortion_maps(Path(baseline['dataset']))
     rows = []
     for frame in frames:
-        pose = np.asarray(read_json(dataset/frame['pose'])['T_WC'], dtype=float)
-        rgb = _read_image(dataset/frame['rgb'], cv2.IMREAD_COLOR)
-        depth = _read_image(dataset/frame['depth'], cv2.IMREAD_UNCHANGED)
+        pose = np.asarray(load_json_object(dataset/frame['pose'])['T_WC'], dtype=float)
+        rgb = imread_unicode(dataset/frame['rgb'], cv2.IMREAD_COLOR)
+        depth = imread_unicode(dataset/frame['depth'], cv2.IMREAD_UNCHANGED)
         actual = filtered_depth(dataset, frame, depth)
-        _, _, rectified_rgb, rectified_depth = _prepare_rgbd(rgb, depth, mx, my, k, 1., .25, 2.21)
+        _, _, rectified_rgb, rectified_depth = prepare_rgbd(rgb, depth, mx, my, k, 1., .25, 2.21)
         metrics = sampled_depth_metrics(scene, rectified_depth, k, pose)
         original_valid = (depth>=250) & (depth<=2210)
         retained_valid = (actual>=250) & (actual<=2210)
@@ -170,7 +170,7 @@ def evaluate_and_render(baseline, dataset, reconstruction, *, width=640):
         source_image_size=[original_width, original_height], display_image_size=[width, image.shape[0]],
         rgb_sha256=sha256(initial_rgb_path), depth_sha256=sha256(initial_depth_path),
         near_m=.25, far_m=2.21, same_lighting=True)
-    write_json(reconstruction / 'comparison_view.json', reference)
+    write_json_strict(reconstruction / 'comparison_view.json', reference)
     triangles = np.asarray(mesh.triangles)
     edges = np.sort(np.concatenate((triangles[:, :2], triangles[:, 1:], triangles[:, [2, 0]])), axis=1)
     _, multiplicities = np.unique(edges, axis=0, return_counts=True)
@@ -202,7 +202,7 @@ def evaluate_and_render(baseline, dataset, reconstruction, *, width=640):
         result['synthetic_ground_truth'] = dict(**_summary(distances), source=truth,
             definition='Sampled reconstructed mesh vertices to known synthetic W0 surface; software fixture only',
             physical_accuracy_verified=False)
-    write_json(reconstruction / 'comparison_metrics.json', result)
+    write_json_strict(reconstruction / 'comparison_metrics.json', result)
     return result
 
 

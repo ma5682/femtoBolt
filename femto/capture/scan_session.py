@@ -19,7 +19,7 @@ from femto.dataset.calibration_files import write_calibration
 from femto.geometry.depth_cloud import depth_cloud
 from femto.geometry.fusion import write_point_cloud_safe
 from femto.hardware.orbbec_rgbd import AlignedFrame, OrbbecAlignedCamera
-from femto.io_utils import append_jsonl, imwrite_unicode, write_json as json_dump
+from femto.io_utils import append_jsonl, imwrite_unicode, write_json
 from femto.capture.scene_capture import depth_preview
 from femto.paths import PHOTOS_ROOT
 
@@ -149,7 +149,7 @@ def save_rgbd_photo(
             "calibration": "calibration/*.json",
         },
     }
-    json_dump(output / "manifest.json", manifest)
+    write_json(output / "manifest.json", manifest)
     output_root.mkdir(parents=True, exist_ok=True)
     (output_root / "latest_photo.txt").write_text(str(output), encoding="utf-8")
     return output
@@ -311,7 +311,7 @@ def save_scan_frame(scan: ActiveScan, frame: AlignedFrame, *, lossless: bool = F
         depth_path,
         np.rint(np.clip(frame.depth_mm, 0, 65535)).astype(np.uint16),
     )
-    json_dump(
+    write_json(
         pose_path,
         {
             "schema": "femto-scene-frame-pose-v1",
@@ -404,10 +404,10 @@ def finalize_scan(scan: ActiveScan, camera: OrbbecAlignedCamera) -> Path:
     if not scan.fixed_camera:
         quality_path = scan.session / "derived" / "capture_quality.json"
         quality_path.parent.mkdir(parents=True, exist_ok=True)
-        json_dump(quality_path, {"schema": "femto-moving-capture-quality-v1",
+        write_json(quality_path, {"schema": "femto-moving-capture-quality-v1",
             "hint_only": True, "samples": scan.quality_history,
             "purpose": "Image/depth guidance only; not a live pose or overlap measurement"})
-    json_dump(scan.session / "manifest.json", manifest)
+    write_json(scan.session / "manifest.json", manifest)
     if scan.last_preview is not None:
         imwrite_unicode(
             scan.session / "last_preview.jpg",

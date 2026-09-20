@@ -13,14 +13,14 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from femto.io_utils import imread_unicode as _read_image, load_json as read_json, load_jsonl as rows
+from femto.io_utils import imread_unicode, load_json, load_jsonl, write_json_strict
 from femto.tracking.local_tracking_diagnostics import distribution, summarize, image_diagnostics
 from femto.tracking.scene_live_tracker import LiveTracker, PairEstimator
 
 
 def frame_from_row(source, row):
-    return SimpleNamespace(color_bgr=_read_image(source/row['rgb'], cv2.IMREAD_COLOR),
-        depth_mm=_read_image(source/row['depth'], cv2.IMREAD_UNCHANGED),
+    return SimpleNamespace(color_bgr=imread_unicode(source/row['rgb'], cv2.IMREAD_COLOR),
+        depth_mm=imread_unicode(source/row['depth'], cv2.IMREAD_UNCHANGED),
         timestamp_us=row['camera_timestamp_us'], frame_index=row['camera_frame_index'],
         color_timestamp_us=row['color_timestamp_us'], depth_timestamp_us=row['depth_timestamp_us'],
         system_timestamp_us=row.get('system_timestamp_us', 0),
@@ -32,7 +32,7 @@ def frame_from_row(source, row):
 def source_files(source):
     files = [source/'frames.jsonl', source/'manifest.json', source/'derived/live_tracking.jsonl',
              source/'derived/local_capture_report.json', *sorted((source/'calibration').glob('*.json'))]
-    for row in rows(source/'frames.jsonl'):
+    for row in load_jsonl(source/'frames.jsonl'):
         files.extend(source/row[key] for key in ('rgb', 'depth', 'pose'))
     return {str(p.resolve()): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
 
@@ -67,10 +67,10 @@ def replay(source, output, *, baseline=None, variants=('baseline', 'optimized'))
         raise ValueError('Replay output must be outside original acquisition evidence')
     output.mkdir(parents=True, exist_ok=False)
     original = source_files(source)
-    manifest = read_json(source/'manifest.json')
-    log = rows(source/'derived/live_tracking.jsonl')
-    raw = rows(source/'frames.jsonl')
-    historical = read_json(source/'derived/local_capture_report.json')
+    manifest = load_json(source/'manifest.json')
+    log = load_jsonl(source/'derived/live_tracking.jsonl')
+    raw = load_jsonl(source/'frames.jsonl')
+    historical = load_json(source/'derived/local_capture_report.json')
     minimum = manifest['parameters']['depth_min_mm']
     maximum = manifest['parameters']['depth_max_mm']
     baseline_module = load_baseline(baseline) if baseline is not None else None
@@ -155,7 +155,7 @@ def replay(source, output, *, baseline=None, variants=('baseline', 'optimized'))
                   historical=summarize(log, historical.get('duration_s'), historical.get('dropped_input_frames')),
                   variants=reports, comparisons=comparisons,physical_accuracy_verified=False,
                   tracking_code_sha256={p:hashlib.sha256((REPO_ROOT/p).read_bytes()).hexdigest() for p in ('femto/tracking/scene_live_tracker.py','femto/tracking/local_tracking_replay.py','femto/tracking/local_frame_selection.py')})
-    (output/'replay_report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
+    write_json_strict(output/'replay_report.json', report)
     if not report['source_unchanged']:
         raise ValueError('Raw source changed during replay')
     return report
@@ -172,7 +172,7 @@ def main():
     results = []
     for source in args.sources:
         results.append(replay(source, args.output/source.name, baseline=args.baseline, variants=args.variants))
-    (args.output/'summary.json').write_text(json.dumps(results, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
+    write_json_strict(args.output/'summary.json', results)
 
 
 if __name__ == '__main__':

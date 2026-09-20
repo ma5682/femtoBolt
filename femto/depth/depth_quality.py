@@ -17,6 +17,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from femto.io_utils import write_json
+
 
 @dataclass(frozen=True)
 class DepthQualityConfig:
@@ -375,9 +377,9 @@ def save_depth_quality(
     np.save(paths["confidence"], np.asarray(confidence, dtype=np.float32), allow_pickle=False)
     Image.fromarray(np.rint(np.clip(confidence, 0, 1)*255).astype(np.uint8)).save(paths["confidence_preview"])
     enriched = {**report, "outputs": {name: path.name for name, path in paths.items()}}
-    paths["quality_report"].write_text(json.dumps(enriched, ensure_ascii=False, indent=2), encoding="utf-8")
-    paths["quality_report_alias"].write_text(json.dumps(enriched, ensure_ascii=False, indent=2), encoding="utf-8")
-    paths['depth_error_check'].write_text(json.dumps(report['depth_error_check'],ensure_ascii=False,indent=2),encoding='utf-8')
+    write_json(paths["quality_report"], enriched)
+    write_json(paths["quality_report_alias"], enriched)
+    write_json(paths['depth_error_check'], report['depth_error_check'])
     return {name: str(path.resolve()) for name, path in paths.items()}
 
 
@@ -394,8 +396,7 @@ def process_depth_quality(depth_mm: np.ndarray, min_range_mm: float, max_range_m
         output = Path(output)
         output.mkdir(parents=True, exist_ok=False)
         quality = output / "depth_quality.json"
-        quality.write_text(json.dumps({**report, "outputs": {}, "statistics_only": True},
-                                      ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json(quality, {**report, "outputs": {}, "statistics_only": True})
         paths = {"quality_report": str(quality.resolve())}
     return filled, confidence, report, paths
 

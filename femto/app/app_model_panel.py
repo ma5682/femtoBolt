@@ -616,7 +616,7 @@ class ModelPanel:
 
             path = app.latest_gsplat_model / "acceptance_report.json"
             try:
-                self.dependencies.json_dump(
+                self.dependencies.write_json(
                     path,
                     build_acceptance_report(app.latest_gsplat_model),
                 )

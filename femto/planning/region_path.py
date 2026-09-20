@@ -5,6 +5,7 @@ import json
 import uuid
 from pathlib import Path
 import numpy as np
+from femto.io_utils import write_json, write_json_strict
 
 
 def raster_path(projection, mesh, region, row_step_px=10, max_step_mm=5., check=lambda: None):
@@ -181,21 +182,23 @@ def _export_path(plan, store, parent, region=None, presentation=None,check=lambd
             payload['coverage_diagram']='coverage_diagram.png'
     if plan.get('spacing_report'):
         from femto.planning.surface_spacing_report import spacing_text
-        (folder/'surface_spacing_report.json').write_text(json.dumps(dict(plan_binding=plan['plan_binding'],report=plan['spacing_report']),ensure_ascii=False,indent=2),encoding='utf-8')
-        (folder/'surface_spacing_report.txt').write_text(spacing_text(plan)+'\n方案关联：'+json.dumps(plan['plan_binding'],ensure_ascii=False),encoding='utf-8')
+        write_json(folder/'surface_spacing_report.json', dict(plan_binding=plan['plan_binding'],report=plan['spacing_report']))
+        binding_text=json.dumps(plan['plan_binding'],ensure_ascii=False)
+        (folder/'surface_spacing_report.txt').write_text(spacing_text(plan)+'\n方案关联：'+binding_text,encoding='utf-8')
         with (folder/'surface_spacing_samples.csv').open('w',encoding='utf-8-sig',newline='') as stream:
             writer=csv.writer(stream);writer.writerow(['result_sha256','chain','sample','surface_graph_distance_mm','lower_bound_mm','signed_deviation_mm','status','x_m','y_m','z_m'])
             for row in plan['spacing_report']['measurements']:writer.writerow([plan['plan_binding']['result_sha256'],row['chain_index'],row['sample_index'],row['surface_graph_distance_mm'],row['lower_bound_mm'],row['signed_deviation_mm'],row['status'],*row['xyz_m']])
     if plan.get('route_quality'):
         from femto.planning.route_quality import quality_text
-        (folder/'route_quality.txt').write_text(quality_text(plan)+'\n方案关联：'+json.dumps(plan['plan_binding'],ensure_ascii=False),encoding='utf-8')
+        binding_text=json.dumps(plan['plan_binding'],ensure_ascii=False)
+        (folder/'route_quality.txt').write_text(quality_text(plan)+'\n方案关联：'+binding_text,encoding='utf-8')
         with (folder/'sharp_turns.csv').open('w',encoding='utf-8-sig',newline='') as stream:
             writer=csv.writer(stream);writer.writerow(['result_sha256','chain_index','sample_index','deflection_degrees','x_m','y_m','z_m'])
             for turn in plan['route_quality']['sharp_turns']:writer.writerow([plan['plan_binding']['result_sha256'],turn['chain_index'],turn['sample_index'],turn['deflection_degrees'],*turn['xyz_m']])
-        (folder/'route_quality.json').write_text(json.dumps(dict(plan_binding=plan['plan_binding'],report=plan['route_quality']),ensure_ascii=False,indent=2),encoding='utf-8')
+        write_json(folder/'route_quality.json', dict(plan_binding=plan['plan_binding'],report=plan['route_quality']))
     if plan.get('coverage_inspection'):
         check();progress('写入覆盖采样与遗漏定位')
-        (folder/'coverage_inspection.json').write_text(json.dumps(dict(plan_binding=plan['plan_binding'],report=plan['coverage_inspection']),ensure_ascii=False,indent=2),encoding='utf-8')
+        write_json(folder/'coverage_inspection.json', dict(plan_binding=plan['plan_binding'],report=plan['coverage_inspection']))
         with (folder/'coverage_omissions.csv').open('w',encoding='utf-8-sig',newline='') as stream:
             writer=csv.writer(stream);writer.writerow(['schema','result_sha256','id','reason','in_denominator','sampled_area_m2','pixel_count','bbox_pixel','focus_xyz_m','evidence'])
             for item in plan['coverage_inspection']['omissions']:
@@ -215,13 +218,13 @@ def _export_path(plan, store, parent, region=None, presentation=None,check=lambd
     progress('生成报告与文件关联')
     payload['share_archive']='route_package.zip'
     if not legacy_binding_upgrade:
-        (folder/'plan_binding.json').write_text(json.dumps(plan.get('plan_binding'),ensure_ascii=False,indent=2),encoding='utf-8')
+        write_json(folder/'plan_binding.json', plan.get('plan_binding'))
     if 'coverage' in plan:
         from femto.planning.region_path_guard import coverage_report_text
         payload['coverage_report']='coverage_report.txt'
         (folder/'coverage_report.txt').write_text(coverage_report_text(plan),encoding='utf-8-sig')
     payload['files']={asset.name:hashlib.sha256(asset.read_bytes()).hexdigest() for asset in folder.iterdir() if asset.is_file()}
-    (folder/'path.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
+    write_json_strict(folder/'path.json', payload)
     progress('压缩完整分享包')
     import zipfile
     with zipfile.ZipFile(folder/'route_package.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:

@@ -9,6 +9,8 @@ import uuid
 
 import numpy as np
 
+from femto.io_utils import write_json_strict
+
 
 def fingerprint(path):
     path = Path(path)
@@ -196,7 +198,7 @@ def save_record(model, row):
     folder = model.reconstruction / 'measurement_validation' / 'records'
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / (uuid.uuid4().hex + '.json')
-    path.write_text(json.dumps(row, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
+    write_json_strict(path, row)
     return path
 
 
@@ -219,7 +221,7 @@ def save_report(model):
     folder = parent / ('report_' + uuid.uuid4().hex)
     folder.mkdir(parents=True)
     audit.update(measurements=records, measurement_groups=summarize(records), excluded_records=invalid)
-    (folder / 'report.json').write_text(json.dumps(audit, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
+    write_json_strict(folder / 'report.json', audit)
     keys = ['test_id','measured_mm','reference_mm','reference_uncertainty_mm','signed_error_mm',
             'absolute_error_mm','tolerance_mm','outcome','instrument','conditions','record_id']
     with (folder / 'measurements.csv').open('w', encoding='utf-8-sig', newline='') as stream:

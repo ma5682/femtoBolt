@@ -14,7 +14,7 @@ import uuid
 from collections import Counter
 
 import numpy as np
-from femto.io_utils import append_jsonl, write_json as json_dump
+from femto.io_utils import append_jsonl, write_json, write_jsonl
 from femto.tracking.moving_quality import POLICY, rotation_deg
 from femto.dataset.calibration_files import write_calibration
 from femto.tracking.scene_live_tracker import LiveTracker, PairEstimator, PreparedRGBD
@@ -304,7 +304,7 @@ class LocalCapture:
                 if selected:
                     if not self.accepted:
                         self.reference_provenance = reference_provenance(self.session_id, record, self.calibration)
-                        json_dump(self.session/'derived'/'local_reference.json', self.reference_provenance)
+                        write_json(self.session/'derived'/'local_reference.json', self.reference_provenance)
                     self.accepted.append(record)
                     tracker.add_keyframe(tracker.previous,record['T_WC'],index)
                 record['calibration_sha256'] = self.calibration['sha256']
@@ -400,7 +400,7 @@ class LocalCapture:
         except Exception as report_error:
             failure['report_error'] = str(report_error)
         try:
-            json_dump(self.session/'derived'/'local_failure.json', failure)
+            write_json(self.session/'derived'/'local_failure.json', failure)
         except Exception as report_error:
             failure['failure_report_error'] = str(report_error)
         self.emit('cancelled' if status == 'cancelled' else 'error', error=str(error), failure=failure,
@@ -459,7 +459,7 @@ class LocalCapture:
         report['diagnostics'] = summarize(self.records, elapsed, self.dropped)
         report['raw_save_policy'] = dict(max_outstanding_writes=1, receipt_required_before_admission=True,
                                         input_queue_limit=1, full_aligned_rgbd_preserved=True)
-        json_dump(self.session/'derived'/'local_capture_report.json', report)
+        write_json(self.session/'derived'/'local_capture_report.json', report)
 
     def _export_poses(self):
         # Check all associations before creating any posed dataset.
@@ -499,7 +499,7 @@ class LocalCapture:
             for key in ('rgb', 'depth'):
                 frame[key] = os.path.relpath(self.session/frame[key], output).replace('\\', '/')
             frame['pose'], frame['pose_valid'] = f'pose/{n:06d}.json', True
-            json_dump(output/frame['pose'], dict(schema='femto-scene-frame-pose-v1', frame=frame['frame'],
+            write_json(output/frame['pose'], dict(schema='femto-scene-frame-pose-v1', frame=frame['frame'],
                 pose_valid=True, T_WC=record['T_WC'], pose_source='online_rgbd_research_grade',
                 tracking_algorithm='local-evidence-tracker-v2',
                 tracking_options=dict(getattr(self, 'tracker_options', TRACKER_OPTIONS)),
@@ -508,7 +508,7 @@ class LocalCapture:
                 reference_frame_id=record['reference_frame_id'], capture_timestamp_us=record['capture_timestamp_us'],
                 reference_provenance=proof))
             derived.append(frame)
-        (output/'frames.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in derived), encoding='utf-8')
+        write_jsonl(output/'frames.jsonl', derived, ensure_ascii=True, compact=False)
         manifest = json.loads((self.session/'manifest.json').read_text(encoding='utf-8'))
         manifest.update(status='derived_pose_estimated', source_dataset=str(self.session), frame_count=len(derived),
             pose=dict(valid=True, source='online_rgbd_research_grade'),
@@ -520,11 +520,11 @@ class LocalCapture:
                 tracking_algorithm='local-evidence-tracker-v2',
                 tracking_options=dict(getattr(self, 'tracker_options', TRACKER_OPTIONS)),
                 tracking_report=str(self.session/'derived'/'local_capture_report.json')))
-        json_dump(output/'manifest.json', manifest)
+        write_json(output/'manifest.json', manifest)
         # Keep the standard quality-report reader compatible with the online path.
         from femto.tracking.moving_quality import pose_diversity
         span_m, span_deg = pose_diversity([np.asarray(r['T_WC']) for r in self.accepted])
-        json_dump(output/'pose_quality_report.json', dict(status='estimated_research_grade',
+        write_json(output/'pose_quality_report.json', dict(status='estimated_research_grade',
             source_dataset=str(self.session), source_frame_count=len(self.records), frame_count=len(derived),
             accepted_frame_ordinals=[r['frame_id'] for r in self.accepted],
             frame_quality=[dict(frame_ordinal=r['frame_id'], **r['quality']) for r in self.records if 'quality' in r],

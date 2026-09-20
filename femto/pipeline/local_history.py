@@ -3,16 +3,14 @@ import json
 import math
 from pathlib import Path
 import time
-import os
-import tempfile
-from femto.io_utils import load_json_object as read_json
+from femto.io_utils import load_json_object, write_json
 from femto.local.local_processing import result_quality, empty_report
 
 
 def deleted_records(outputs):
     path=Path(outputs)/'local_history_deleted.json'
     if not path.exists():return {}
-    data=read_json(path)
+    data=load_json_object(path)
     if data.get('schema')!='local-history-deleted-v1' or not isinstance(data.get('records'),dict):
         raise ValueError('Invalid history deletion index')
     return data['records']
@@ -42,13 +40,12 @@ def set_records_deleted(rows,datasets,outputs,deleted=True):
     else:
         for row in rows:records.pop(str(Path(row['key']).resolve()),None)
     root=Path(outputs);root.mkdir(parents=True,exist_ok=True)
-    fd,name=tempfile.mkstemp(prefix='.history-',suffix='.tmp',dir=root)
-    try:
-        with os.fdopen(fd,'w',encoding='utf-8') as stream:
-            json.dump({'schema':'local-history-deleted-v1','records':records},stream,ensure_ascii=False,indent=2)
-        os.replace(name,root/'local_history_deleted.json')
-    finally:
-        if Path(name).exists():Path(name).unlink()
+    write_json(
+        root/'local_history_deleted.json',
+        {'schema':'local-history-deleted-v1','records':records},
+        unique_temporary=True,
+        temporary_prefix='.history-',
+    )
 
 
 def set_record_deleted(row,datasets,outputs,deleted=True):
@@ -60,10 +57,10 @@ def publication_status(result,session_id):
     """Legacy results have no receipt; new results require explicit publication."""
     result=Path(result).resolve();receipt=result/'publication.json'
     summary_path=result/'demo_summary.json'
-    summary=read_json(summary_path) if summary_path.is_file() else {}
+    summary=load_json_object(summary_path) if summary_path.is_file() else {}
     if not receipt.is_file():
         return 'missing' if summary.get('publication_required') is True else 'legacy_not_recorded'
-    data=read_json(receipt)
+    data=load_json_object(receipt)
     if (data.get('schema')!='femto-local-publication-v1' or data.get('session_id')!=session_id or
             Path(data.get('result','')).resolve()!=result or
             (summary.get('publication_required') is True and summary.get('publication_id')!=session_id)):
@@ -100,8 +97,8 @@ def fixed_reference_eligibility(reconstruction,metadata,report,check=lambda:None
     check()
     reference=AnnotationStore.source_origin_reference(reconstruction/'scene_tsdf_mesh_m.ply',metadata)
     if reference['kind']!='initial_color_camera':return False,'origin_unverified',required,[]
-    intrinsic=read_json(dataset/'calibration/color_intrinsic.json')
-    distortion=read_json(dataset/'calibration/distortion.json')['rgb']
+    intrinsic=load_json_object(dataset/'calibration/color_intrinsic.json')
+    distortion=load_json_object(dataset/'calibration/distortion.json')['rgb']
     if ('BROWN_CONRADY_K6' not in str(distortion.get('model','')) or
             any(not math.isfinite(float(intrinsic[key])) for key in ('fx','fy','cx','cy','width','height')) or
             min(float(intrinsic['fx']),float(intrinsic['fy']),float(intrinsic['width']),float(intrinsic['height']))<=0 or
@@ -142,8 +139,8 @@ def scan_history(datasets,outputs,*,cancel=None,seconds=30):
                  session_id=None,state='incomplete',count=None,error=None,fixed=False,mesh=None,report=None,
                  fixed_reason='missing_reference',fixed_files=[],missing_source_files=[],compare=False,comparison_files=[])
         try:
-            metadata=read_json(context)
-            report=read_json(reconstruction/'reconstruction_report.json')
+            metadata=load_json_object(context)
+            report=load_json_object(reconstruction/'reconstruction_report.json')
             row['session_id']=metadata.get('session_id')
             row['count']=report.get('frame_count')
             dataset=Path(report['source_dataset'])
@@ -180,11 +177,11 @@ def scan_history(datasets,outputs,*,cancel=None,seconds=30):
             report_path=source/'derived/local_capture_report.json'
             failure=source/'derived/local_failure.json'
             if report_path.is_file():
-                report=read_json(report_path);row['session_id']=report.get('session_id')
+                report=load_json_object(report_path);row['session_id']=report.get('session_id')
                 row['count']=len(report.get('accepted_frames',[]));row['report']=str(report_path.resolve())
                 row['state']='lost' if report.get('state')=='lost' else 'recorded'
             if failure.is_file():
-                report=read_json(failure);row['report']=str(failure.resolve())
+                report=load_json_object(failure);row['report']=str(failure.resolve())
                 row['state']='failed';row['error']=report.get('error');row['session_id']=report.get('session_id',row['session_id'])
         except (OSError,ValueError,KeyError,TypeError) as error:row['error']=str(error);row['state']='incomplete'
         row['quality']=empty_report()
@@ -192,7 +189,7 @@ def scan_history(datasets,outputs,*,cancel=None,seconds=30):
             try:
                 processing=report.get('processing_report')
                 if processing:
-                    quality=read_json(processing)
+                    quality=load_json_object(processing)
                     if quality.get('source_session_id') != row['session_id']:
                         raise ValueError('Processing session mismatch')
                     row['quality']=quality

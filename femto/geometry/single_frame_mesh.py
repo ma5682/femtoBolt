@@ -12,6 +12,7 @@ from PIL import Image
 import trimesh
 
 from femto.geometry.fusion import _native_cache_path
+from femto.io_utils import write_json
 
 
 def build_pixel_mesh(depth_mm, color_bgr, intrinsic, distortion, T_WC):
@@ -124,6 +125,6 @@ def export_pixel_mesh(mesh, uv, source_rgb: Path, output: Path, report: dict):
               'texture_file': texture.name, 'ply_appearance': 'vertex_color_fallback',
               'obj_appearance': 'original_rgb_texture; distribute OBJ, MTL and texture together',
               'glb_appearance': 'embedded_rgb_texture'}
-    (output / 'mesh_report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+    write_json(output / 'mesh_report.json', report)
     return {"ply": str(ply), "obj": str(obj), "glb": str(glb), "mtl": str(mtl),
             "texture": str(texture), "vertex_uv": str(uv_path), "report": report}

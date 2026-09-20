@@ -20,7 +20,7 @@ import struct
 import time
 import uuid
 
-from femto.io_utils import write_json_strict as _write
+from femto.io_utils import write_json_strict
 
 
 from femto.paths import REPO_ROOT as ROOT
@@ -540,7 +540,7 @@ def summarize_existing(report_paths, output, *, allow_synthetic=False, cancelled
                      'Real noise, ghosting, ROI benefit and physical accuracy remain unverified.'])
     def publish():
         report['audit_elapsed_s'] = time.monotonic()-budget.started
-        _write(output / 'parameter_study_report.json', report)
+        write_json_strict(output / 'parameter_study_report.json', report)
         if progress:
             progress(copy.deepcopy(report))
     publish()
@@ -587,7 +587,7 @@ def summarize_existing(report_paths, output, *, allow_synthetic=False, cancelled
         report.update(artifacts_unchanged=True, latest_unchanged=True,
                       state='complete' if all(r['state']=='complete' for r in report['cases']) else 'incomplete',
                       audited_file_count=len(hashes), audit_hash_bytes=budget.hashed_bytes)
-        _write(output / 'audited_files.json', hashes)
+        write_json_strict(output / 'audited_files.json', hashes)
         _write_html(output, report)
     except StudyStopped as error:
         report.update(state=error.state, error=str(error))
@@ -644,7 +644,7 @@ def run_study(dataset, output, *, candidates=DEFAULT_CANDIDATES, reuse_paths=(),
                active_case=None, cases=[], worker_count=1, default_changed=False, physical_accuracy_verified=False)
     def publish():
         job['elapsed_s'] = time.monotonic()-budget.started
-        _write(output / 'parameter_study_job.json', job)
+        write_json_strict(output / 'parameter_study_job.json', job)
         if progress:
             progress(copy.deepcopy(job))
     def stopped():

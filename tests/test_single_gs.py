@@ -4,7 +4,7 @@ import unittest
 from unittest import mock
 import numpy as np
 from PIL import Image
-from femto.io_utils import load_json as read_json, write_json
+from femto.io_utils import load_json, write_json
 from femto.gsplat.scene_single_gs import prepare, seed_arrays
 from femto.dataset.single_frame_source import resolve_source
 from femto.gsplat.scene_single_gs_viewer import FixedViewport, load_viewport, SingleViewer, native_render_size
@@ -34,7 +34,7 @@ class SingleGsTests(unittest.TestCase):
             view.save(); saved=(view.output/'viewport.json').read_bytes()
             view.reset(); view.load()
             self.assertEqual(view.view.zoom,2)
-            with mock.patch.object(Path,'replace',side_effect=PermissionError): view.save()
+            with mock.patch('femto.io_utils.os.replace',side_effect=PermissionError): view.save()
             self.assertEqual((view.output/'viewport.json').read_bytes(),saved)
             self.assertFalse(list(view.output.glob('*.tmp')))
             before=view.view
@@ -124,7 +124,7 @@ class SingleGsTests(unittest.TestCase):
             write_json(photo/'calibration'/'distortion.json',dict(rgb=dict(model='BROWN_CONRADY_K6',
                 **{k:0 for k in ('k1','k2','k3','k4','k5','k6','p1','p2')})))
             before={p:p.read_bytes() for p in photo.rglob('*') if p.is_file()}
-            out=prepare(photo,root/'derived'); meta=read_json(out/'single_input.json')
+            out=prepare(photo,root/'derived'); meta=load_json(out/'single_input.json')
             self.assertIsNone(meta['T_WC']); self.assertFalse(meta['external_pose_valid'])
             self.assertEqual(before,{p:p.read_bytes() for p in before})
             with self.assertRaises(FileExistsError): prepare(photo,out)

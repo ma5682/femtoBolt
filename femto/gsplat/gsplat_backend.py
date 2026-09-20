@@ -29,7 +29,7 @@ import tempfile
 import time
 from typing import Any, Callable
 
-from femto.io_utils import load_json as _load_json
+from femto.io_utils import load_json
 from femto.gsplat.scene_gsplat_trainer import (
     ASCII_RUNTIME_ROOT,
     LATEST_MARKER,
@@ -183,7 +183,7 @@ def resolve_training_input(demo_root: Path | None) -> Path:
         return candidate
     summary = candidate / "demo_summary.json"
     if summary.is_file():
-        return Path(_load_json(summary).get("nerfstudio", candidate / "nerfstudio")).resolve()
+        return Path(load_json(summary).get("nerfstudio", candidate / "nerfstudio")).resolve()
     nested = candidate / "nerfstudio"
     if (nested / "transforms.json").is_file():
         return nested
@@ -192,9 +192,9 @@ def resolve_training_input(demo_root: Path | None) -> Path:
 
 def prepare_training_input(demo_root: Path | None) -> Path:
     input_dir = resolve_training_input(demo_root)
-    if _load_json(input_dir / 'transforms.json').get('dataset_split') is not None:
+    if load_json(input_dir / 'transforms.json').get('dataset_split') is not None:
         return input_dir
-    manifest = _load_json(input_dir / 'conversion_manifest.json')
+    manifest = load_json(input_dir / 'conversion_manifest.json')
     source = Path(manifest['source_dataset'])
     if not source.is_absolute():
         source = input_dir / source
@@ -225,7 +225,7 @@ def assess_training_input(demo_root: Path | None = None, *, require_real: bool =
     quality = input_dir / "quality" / "3dgs_input_report.json"
     if quality.is_file():
         try:
-            assessment["input_quality"] = _load_json(quality)
+            assessment["input_quality"] = load_json(quality)
         except (OSError, json.JSONDecodeError):
             pass
     return assessment
@@ -328,7 +328,7 @@ def train(
         raise RuntimeError(
             f"Direct gsplat training failed (exit {return_code}); see {log_path}\n" + "\n".join(tail[-8:])
         )
-    return output_dir, _load_json(report_path)
+    return output_dir, load_json(report_path)
 
 
 def latest_trained_model(output_dir: Path | None = None) -> TrainedModel:
@@ -341,14 +341,14 @@ def latest_trained_model(output_dir: Path | None = None) -> TrainedModel:
     report_path = output_dir / "training_report.json"
     if not report_path.is_file():
         raise ValueError(f"Trained direct gsplat result is missing its report: {report_path}")
-    report = _load_json(report_path)
+    report = load_json(report_path)
     model_ply = Path(report.get("model_ply") or (output_dir / "model" / "trained_gaussians.ply"))
     if not model_ply.is_file():
         raise ValueError(f"Trained Gaussian PLY no longer exists: {model_ply}")
     spz_value = report.get("model_spz")
     spz = Path(spz_value) if spz_value and Path(spz_value).is_file() else None
     manifest_path = output_dir / "model" / "model_manifest.json"
-    manifest = _load_json(manifest_path) if manifest_path.is_file() else {}
+    manifest = load_json(manifest_path) if manifest_path.is_file() else {}
     return TrainedModel(
         output_dir=output_dir, model_ply=model_ply, model_spz=spz, report=report, manifest=manifest
     )

@@ -14,7 +14,7 @@ import shutil
 
 import numpy as np
 
-from femto.io_utils import load_json as read_json, load_jsonl as rows, write_json_strict as write_json
+from femto.io_utils import load_json, load_jsonl, write_json_strict, write_jsonl
 from femto.dataset.local_reference import calibration_identity, reference_provenance
 from femto.tracking.moving_quality import POLICY, rotation_deg
 from femto.dataset.scene_dataset_validator import validate_pose
@@ -22,10 +22,10 @@ from femto.dataset.scene_dataset_validator import validate_pose
 
 def assess(source):
     source = Path(source).resolve()
-    report = read_json(source/'derived/local_capture_report.json')
-    records = rows(source/'derived/live_tracking.jsonl')
-    raw = rows(source/'frames.jsonl')
-    manifest = read_json(source/'manifest.json')
+    report = load_json(source/'derived/local_capture_report.json')
+    records = load_jsonl(source/'derived/live_tracking.jsonl')
+    raw = load_jsonl(source/'frames.jsonl')
+    manifest = load_json(source/'manifest.json')
     reasons = []
     if report.get('state') != 'lost' or not report.get('termination'):
         reasons.append('not_a_recorded_tracking_interruption')
@@ -71,7 +71,7 @@ def assess(source):
         selected.append(record)
     if selected:
         proof = reference_provenance(report['session_id'], selected[0], calibration)
-        if proof != report.get('reference_provenance') or proof != read_json(source/'derived/local_reference.json'):
+        if proof != report.get('reference_provenance') or proof != load_json(source/'derived/local_reference.json'):
             raise ValueError('Prefix initial origin provenance mismatch')
         first_valid = next((r for r in records if r.get('state') == 'tracking'), None)
         if not first_valid or selected[0]['frame_id'] != first_valid['frame_id']:
@@ -102,7 +102,7 @@ def prepare(source, output):
         raise ValueError('Prefix derivation must be outside the original session')
     decision, selected, raw, manifest, tracking = assess(source)
     output.mkdir(parents=True, exist_ok=False)
-    write_json(output/'interrupted_prefix_report.json', decision)
+    write_json_strict(output/'interrupted_prefix_report.json', decision)
     if not decision['eligible']:
         return None, decision
     files = [source/'manifest.json', source/'frames.jsonl', source/'derived/live_tracking.jsonl',
@@ -119,13 +119,13 @@ def prepare(source, output):
         for key in ('rgb', 'depth'):
             row[key] = os.path.relpath(source/row[key], dataset).replace('\\', '/')
         row.update(pose=f'pose/{ordinal:06d}.json', pose_valid=True)
-        write_json(dataset/row['pose'], dict(schema='femto-scene-frame-pose-v1', frame=row['frame'],
+        write_json_strict(dataset/row['pose'], dict(schema='femto-scene-frame-pose-v1', frame=row['frame'],
             pose_valid=True, T_WC=record['T_WC'], pose_source='online_rgbd_research_grade',
             coordinate_system='+X right, +Y down, +Z forward; metres', session_id=tracking['session_id'],
             reference_frame_id=tracking['reference_frame_id'], capture_timestamp_us=row['camera_timestamp_us'],
             reference_provenance=tracking['reference_provenance']))
         derived.append(row)
-    (dataset/'frames.jsonl').write_text(''.join(json.dumps(r, ensure_ascii=False)+'\n' for r in derived), encoding='utf-8')
+    write_jsonl(dataset/'frames.jsonl', derived, compact=False)
     manifest = copy.deepcopy(manifest)
     manifest.update(status='derived_interrupted_prefix', source_dataset=str(source), frame_count=len(derived),
         pose=dict(valid=True, source='online_rgbd_research_grade'),
@@ -133,17 +133,17 @@ def prepare(source, output):
             reference_provenance=tracking['reference_provenance'], measured_only=True,
             tracking_report=str(source/'derived/local_capture_report.json'),
             **decision['recorded_policy'], capture_scope='interrupted_prefix', interrupted_prefix=decision))
-    write_json(dataset/'manifest.json', manifest)
+    write_json_strict(dataset/'manifest.json', manifest)
     from femto.tracking.moving_quality import pose_diversity
     span, angle = pose_diversity([np.asarray(r['T_WC']) for r in selected])
-    write_json(dataset/'pose_quality_report.json', dict(status='estimated_research_grade_interrupted_prefix',
+    write_json_strict(dataset/'pose_quality_report.json', dict(status='estimated_research_grade_interrupted_prefix',
         source_dataset=str(source), source_frame_count=len(raw), frame_count=len(derived),
         accepted_frame_ordinals=decision['accepted_frames'], translation_span_m=span, rotation_span_deg=angle,
         capture_scope='interrupted_prefix', frame_quality=[dict(frame_ordinal=r['frame_id'], **r.get('quality', {})) for r in selected],
         rejected_frames=[], pairs=[], limitations=['Only the recorded admitted prefix in the original W0; no resumed tracking or accuracy certificate.']))
     decision['source_sha256'] = hashes
     decision['source_unchanged'] = all(hashlib.sha256(Path(p).read_bytes()).hexdigest() == h for p, h in hashes.items())
-    write_json(output/'interrupted_prefix_report.json', decision)
+    write_json_strict(output/'interrupted_prefix_report.json', decision)
     if not decision['source_unchanged']:
         raise ValueError('Source changed during interrupted prefix preparation')
     return dataset, decision
@@ -161,14 +161,14 @@ def reconstruct(source, output, *, cancelled=lambda: False, progress=None):
         if cancelled():
             raise RuntimeError('Interrupted-prefix reconstruction cancelled')
         receipt = job._owned_result(result)
-        write_json(result/'publication.json', dict(receipt, status='derived_complete',
+        write_json_strict(result/'publication.json', dict(receipt, status='derived_complete',
                    capture_scope='interrupted_prefix', published_markers=[], business_latest_updated=False))
         decision.update(status='derived_complete', result=str(result), worker_resources=job.stats)
-        write_json(output/'interrupted_prefix_report.json', decision)
+        write_json_strict(output/'interrupted_prefix_report.json', decision)
         return result, decision
     except Exception as error:
         decision.update(status='failed', error=str(error))
-        write_json(output/'interrupted_prefix_report.json', decision)
+        write_json_strict(output/'interrupted_prefix_report.json', decision)
         raise
 
 

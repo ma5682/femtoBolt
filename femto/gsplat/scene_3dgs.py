@@ -17,7 +17,7 @@ import subprocess
 import time
 from typing import Any
 
-from femto.io_utils import load_json as _load_json
+from femto.io_utils import load_json, write_json
 
 
 from femto.paths import REPO_ROOT as ROOT
@@ -123,12 +123,12 @@ def latest_demo_root() -> Path:
 
 def assess_training_input(demo_root: Path | None = None) -> dict[str, Any]:
     root = (demo_root or latest_demo_root()).resolve()
-    summary = _load_json(root / "demo_summary.json")
+    summary = load_json(root / "demo_summary.json")
     conversion = dict(summary.get("nerfstudio_conversion") or {})
     input_dir = Path(summary.get("nerfstudio", root / "nerfstudio")).resolve()
     conversion_path = input_dir / "conversion_manifest.json"
     if conversion_path.is_file():
-        conversion = _load_json(conversion_path)
+        conversion = load_json(conversion_path)
     frame_count = int(conversion.get("frame_count", summary.get("frame_count", 0)))
     translation_span_m = float(conversion.get("translation_span_m", 0.0))
     rotation_span_deg = float(conversion.get("rotation_span_deg", 0.0))
@@ -138,7 +138,7 @@ def assess_training_input(demo_root: Path | None = None) -> dict[str, Any]:
         reasons.append("missing transforms.json")
     transforms: dict[str, Any] = {}
     if (input_dir / "transforms.json").is_file():
-        transforms = _load_json(input_dir / "transforms.json")
+        transforms = load_json(input_dir / "transforms.json")
     seed_name = str(transforms.get("ply_file_path", ""))
     seed_path = input_dir / seed_name if seed_name else None
     if seed_path is None or not seed_path.is_file():
@@ -296,9 +296,7 @@ def train_latest(
             "antialiased" if "antialiasing" in features["enabled"] else "installed default"
         ),
     }
-    (output / "training_report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json(output / "training_report.json", report)
     if status != "trained":
         raise RuntimeError(f"3DGS training failed; inspect {log_path}")
     config = configs[0]

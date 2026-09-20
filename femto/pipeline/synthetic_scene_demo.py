@@ -16,7 +16,7 @@ import numpy as np
 import open3d as o3d
 
 from femto.geometry.fusion import export_mesh_formats
-from femto.io_utils import imwrite_unicode as _imwrite, write_json as _write_json, write_jsonl as _write_jsonl
+from femto.io_utils import imwrite_unicode, write_json, write_jsonl
 
 
 from femto.paths import REPO_ROOT as ROOT
@@ -158,14 +158,14 @@ def generate_dataset(output_root: Path, *, frames: int = 14, width: int = 480, h
         "k1": 0.0, "k2": 0.0, "k3": 0.0, "k4": 0.0, "k5": 0.0, "k6": 0.0,
         "p1": 0.0, "p2": 0.0,
     }
-    _write_json(dataset / "calibration" / "color_intrinsic.json", intrinsic)
-    _write_json(dataset / "calibration" / "depth_intrinsic.json", intrinsic)
-    _write_json(
+    write_json(dataset / "calibration" / "color_intrinsic.json", intrinsic)
+    write_json(dataset / "calibration" / "depth_intrinsic.json", intrinsic)
+    write_json(
         dataset / "calibration" / "depth_to_color.json",
         {"rotation": np.eye(3).tolist(), "translation_mm": [0.0, 0.0, 0.0]},
     )
-    _write_json(dataset / "calibration" / "distortion.json", {"rgb": zero_distortion, "depth": zero_distortion})
-    _write_json(
+    write_json(dataset / "calibration" / "distortion.json", {"rgb": zero_distortion, "depth": zero_distortion})
+    write_json(
         dataset / "calibration" / "factory_calibration.json",
         {
             "source": "synthetic_ground_truth",
@@ -176,7 +176,7 @@ def generate_dataset(output_root: Path, *, frames: int = 14, width: int = 480, h
             "depth_to_color": {"rotation": np.eye(3).tolist(), "translation_mm": [0.0, 0.0, 0.0]},
         },
     )
-    _write_json(dataset / "calibration" / "camera_metadata.json", {"device": "synthetic_test_camera"})
+    write_json(dataset / "calibration" / "camera_metadata.json", {"device": "synthetic_test_camera"})
 
     scene, ground_truth, colors = _build_scene()
     export_mesh_formats(
@@ -199,9 +199,9 @@ def generate_dataset(output_root: Path, *, frames: int = 14, width: int = 480, h
         rgb_relative = Path("rgb") / f"{stem}.jpg"
         depth_relative = Path("depth") / f"{stem}.png"
         pose_relative = Path("pose") / f"{stem}.json"
-        _imwrite(dataset / rgb_relative, color_bgr, [cv2.IMWRITE_JPEG_QUALITY, 96])
-        _imwrite(dataset / depth_relative, depth_u16)
-        _write_json(
+        imwrite_unicode(dataset / rgb_relative, color_bgr, [cv2.IMWRITE_JPEG_QUALITY, 96])
+        imwrite_unicode(dataset / depth_relative, depth_u16)
+        write_json(
             dataset / pose_relative,
             {
                 "schema": "femto-scene-frame-pose-v1",
@@ -232,7 +232,7 @@ def generate_dataset(output_root: Path, *, frames: int = 14, width: int = 480, h
         )
         if index in {0, frames // 2, frames - 1}:
             preview_images.append(color_bgr)
-    _write_jsonl(dataset / "frames.jsonl", records)
+    write_jsonl(dataset / "frames.jsonl", records)
     manifest = {
         "schema": "femto-full-scene-rgbd-v1",
         "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
@@ -245,9 +245,9 @@ def generate_dataset(output_root: Path, *, frames: int = 14, width: int = 480, h
         "files": {"rgb": "rgb/*.jpg", "depth": "depth/*.png", "pose": "pose/*.json", "frames": "frames.jsonl"},
         "purpose": "deterministic end-to-end software demo; not Femto sensor evidence",
     }
-    _write_json(dataset / "manifest.json", manifest)
+    write_json(dataset / "manifest.json", manifest)
     if preview_images:
-        _imwrite(dataset / "synthetic_preview.jpg", np.hstack(preview_images), [cv2.IMWRITE_JPEG_QUALITY, 94])
+        imwrite_unicode(dataset / "synthetic_preview.jpg", np.hstack(preview_images), [cv2.IMWRITE_JPEG_QUALITY, 94])
     output_root.mkdir(parents=True, exist_ok=True)
     (output_root / "latest_demo_scene.txt").write_text(str(dataset), encoding="utf-8")
     return dataset

@@ -139,14 +139,14 @@ class LocalIntegrationTests(unittest.TestCase):
     def test_real_rgbd_pair_backend_on_static_synthetic_frame(self):
         from femto.pipeline.synthetic_scene_demo import generate_dataset
         from femto.tracking.scene_live_tracker import PairEstimator
-        from femto.io_utils import imread_unicode as _read_image
+        from femto.io_utils import imread_unicode
         import cv2
         with TemporaryDirectory() as td:
             dataset=generate_dataset(Path(td)/'data',frames=4,width=512,height=288)
             row=json.loads((dataset/'frames.jsonl').read_text().splitlines()[0])
             frame=make_frame([500])
-            frame.color_bgr=_read_image(dataset/row['rgb'],cv2.IMREAD_COLOR)
-            frame.depth_mm=_read_image(dataset/row['depth'],cv2.IMREAD_UNCHANGED)
+            frame.color_bgr=imread_unicode(dataset/row['rgb'],cv2.IMREAD_COLOR)
+            frame.depth_mm=imread_unicode(dataset/row['depth'],cv2.IMREAD_UNCHANGED)
             pair=PairEstimator(dataset,500,3860)
             prepared=pair.prepare(frame)
             transform,metrics=pair.estimate(prepared,prepared)

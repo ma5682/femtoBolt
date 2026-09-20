@@ -16,7 +16,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from femto.io_utils import imread_unicode, imwrite_unicode, load_json, load_jsonl
+from femto.io_utils import imread_unicode, imwrite_unicode, load_json, load_jsonl, write_json
 from femto.dataset.scene_dataset_validator import resolve_dataset, validate_pose
 from femto.dataset.scene_gsplat_split import make_split, file_sha256
 from femto.depth.depth_quality import process_depth_quality
@@ -276,9 +276,7 @@ def _write_input_quality_report(output,ctx):
         },
     }
     quality_report_path = output / "quality" / "3dgs_input_report.json"
-    quality_report_path.write_text(
-        json.dumps(quality_report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json(quality_report_path, quality_report)
     return quality_report_path,photometric_unstable,luminance_ratio,exposure_ratio,gain_ratio
 
 
@@ -300,9 +298,7 @@ def _write_transforms(output,manifest,new_K,width,height,seed_path,ctx):
         "val_filenames": [ctx.output_frames[index]['file_path'] for index in ctx.split['validation']],
         "test_filenames": [ctx.output_frames[index]['file_path'] for index in ctx.split['test']],
     }
-    (output / "transforms.json").write_text(
-        json.dumps(transforms, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json(output / "transforms.json", transforms)
 
 
 def convert(
@@ -443,9 +439,7 @@ def convert(
         "quality_report": str(quality_report_path.relative_to(output).as_posix()),
         "commercial_provenance": "independent adapter using documented Nerfstudio format; no Graphdeco source",
     }
-    (output / "conversion_manifest.json").write_text(
-        json.dumps(conversion_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json(output / "conversion_manifest.json", conversion_manifest)
     return conversion_manifest
 
 

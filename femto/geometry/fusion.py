@@ -15,6 +15,7 @@ import open3d as o3d
 import trimesh
 
 from femto.geometry.pose_geometry import Intrinsics, depth_to_points
+from femto.io_utils import write_json
 
 
 NATIVE_IO_CACHE = Path(os.environ["LOCALAPPDATA"]) / "FemtoPatientPose" / "native_io"
@@ -293,8 +294,6 @@ def export_mesh_formats(
         "largest_component_triangles": component_faces[0] if component_faces else 0,
         "note": note,
     }
-    (output_dir / report_name).write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json(output_dir / report_name, report)
     return {"ply": str(ply), "obj": str(obj), "glb": str(glb), "report": report,
             "intermediate_obj_glb_written": bool(write_obj_glb)}

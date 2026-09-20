@@ -11,7 +11,7 @@ import numpy as np
 import open3d as o3d
 
 from femto.geometry.fusion import temporal_median_depth, write_point_cloud_safe
-from femto.io_utils import append_jsonl, imwrite_unicode, write_json as json_dump
+from femto.io_utils import append_jsonl, imwrite_unicode, write_json
 from femto.hardware.orbbec_rgbd import AlignedFrame, DEPTH_MODE_SPECS, OrbbecAlignedCamera
 from femto.dataset.calibration_files import write_calibration
 from femto.tracking.scene_pose_estimator import assess_rgb_motion_pair
@@ -137,7 +137,7 @@ def save_segment(
             ],
         },
     }
-    json_dump(output / "segments" / mode / "manifest.json", report)
+    write_json(output / "segments" / mode / "manifest.json", report)
     return cloud, report
 
 
@@ -203,7 +203,7 @@ def merge_segments(
         "file": merged_path.name,
         "limitation": "Only observed RGB-aligned surfaces; no unseen surfaces or inferred geometry",
     }
-    json_dump(output / "manifest.json", report)
+    write_json(output / "manifest.json", report)
     (output.parent / "latest_full_range_cloud.txt").write_text(str(output), encoding="utf-8")
     return report
 
@@ -215,7 +215,7 @@ def capture_three_modes(
     modes = TUNED_DEPTH_MODES if tuned else SEGMENTED_DEPTH_MODES
     frame_count = TUNED_FRAMES_PER_MODE if tuned else SEGMENTED_FRAMES_PER_MODE
     output.mkdir(parents=True, exist_ok=True)
-    json_dump(output / "manifest.json", {"status": "capturing", "segments": []})
+    write_json(output / "manifest.json", {"status": "capturing", "segments": []})
     clouds, reports = [], []
     skipped_modes = []
     previous_view = None
@@ -286,7 +286,7 @@ def capture_three_modes(
             if tuned:
                 views = [common_rgb_view(frame, camera) for frame in frames]
                 static_report = audit_static_views(views, previous_view)
-                json_dump(segment / "static_check.json", static_report)
+                write_json(segment / "static_check.json", static_report)
                 if not static_report["passed"]:
                     raise RuntimeError(
                         f"{mode}: 场景/相机发生移动或无法确认静止，已保留原始帧，停止融合以避免重影。"
@@ -306,7 +306,7 @@ def capture_three_modes(
                             "raw_evidence": f"segments/{mode}/raw",
                             "static_check_passed": True,
                         }
-                        json_dump(segment / "manifest.json", skipped)
+                        write_json(segment / "manifest.json", skipped)
                         skipped_modes.append(skipped)
                         continue
             cloud, report = save_segment(output, mode, frames, camera)
@@ -320,20 +320,20 @@ def capture_three_modes(
             }
             if tuned:
                 report["static_check"] = {"file": f"segments/{mode}/static_check.json", "passed": True}
-            json_dump(segment / "manifest.json", report)
+            write_json(segment / "manifest.json", report)
             clouds.append(cloud)
             reports.append(report)
-            json_dump(output / "manifest.json", {"status": "capturing", "segments": reports})
+            write_json(output / "manifest.json", {"status": "capturing", "segments": reports})
         report = merge_segments(output, clouds, reports)
         report["capture_preset"] = "official_detail_coverage" if tuned else "legacy_three_modes"
         report["requested_modes"] = list(modes)
         report["skipped_modes"] = skipped_modes
         report["enhancement_applied"] = "wide_detail" in report["capture_modes"]
         report["stationary_background_checks_passed"] = True if tuned else None
-        json_dump(output / "manifest.json", report)
+        write_json(output / "manifest.json", report)
         return report
     except Exception as error:
-        json_dump(output / "manifest.json", {
+        write_json(output / "manifest.json", {
             "status": "failed", "segments": reports, "error": str(error),
         })
         raise

@@ -13,7 +13,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from femto.io_utils import append_jsonl, imwrite_unicode, write_json as json_dump
+from femto.io_utils import append_jsonl, imwrite_unicode, write_json
 from femto.hardware.orbbec_rgbd import OrbbecAlignedCamera
 
 
@@ -183,7 +183,7 @@ def _save_capture_frame(args,session,frames_log,frame,index):
                         else "not_available; estimate before multiview reconstruction"),
         "coordinate_system": "+X right, +Y down, +Z forward",
     }
-    json_dump(pose_path, pose_record)
+    write_json(pose_path, pose_record)
     append_jsonl(frames_log,{
         "frame": index,
         "camera_frame_index": frame.frame_index,
@@ -234,7 +234,7 @@ def _finalize_capture(args,output_root,session,saved_frames,camera_metadata,intr
             "frames": "frames.jsonl", "calibration": "calibration/*.json",
         },
     }
-    json_dump(session / "manifest.json", manifest)
+    write_json(session / "manifest.json", manifest)
     if last_display is not None:
         imwrite_unicode(session / "last_preview.jpg", last_display, [cv2.IMWRITE_JPEG_QUALITY, 94])
     output_root.mkdir(parents=True, exist_ok=True)

@@ -20,8 +20,8 @@ from femto.capture.local_raw_writer import RawFrameWriter
 from femto.dataset.local_reference import reference_provenance
 from femto.tracking.local_tracking_diagnostics import classify, quality_text, summarize
 from femto.tracking.scene_live_tracker import PairEstimator
-from femto.io_utils import imread_unicode as _read_image
-from femto.geometry.rgbd_frames import prepare_rgbd as _prepare_rgbd
+from femto.io_utils import imread_unicode
+from femto.geometry.rgbd_frames import prepare_rgbd
 from test_segmented_capture import make_camera, make_frame
 
 
@@ -119,12 +119,12 @@ class PreparationAndDiagnosticsTests(unittest.TestCase):
             source = generate_dataset(Path(td)/'data', frames=4, width=516, height=292)
             row = json.loads((source/'frames.jsonl').read_text().splitlines()[0])
             frame = make_frame([500], 1)
-            frame.color_bgr = _read_image(source/row['rgb'], cv2.IMREAD_COLOR)
-            frame.depth_mm = _read_image(source/row['depth'], cv2.IMREAD_UNCHANGED)
+            frame.color_bgr = imread_unicode(source/row['rgb'], cv2.IMREAD_COLOR)
+            frame.depth_mm = imread_unicode(source/row['depth'], cv2.IMREAD_UNCHANGED)
             before = frame.depth_mm.copy()
             estimator = PairEstimator(source, 500, 3860)
             mx, my, k, _, _ = estimator.maps
-            old, intrinsic, color, depth = _prepare_rgbd(frame.color_bgr, frame.depth_mm, mx, my, k, .25, .5, 3.86)
+            old, intrinsic, color, depth = prepare_rgbd(frame.color_bgr, frame.depth_mm, mx, my, k, .25, .5, 3.86)
             current = estimator.prepare(frame)
             np.testing.assert_array_equal(current.depth_mm, depth)
             np.testing.assert_array_equal(current.color_bgr, color)
@@ -171,8 +171,8 @@ class InterruptedPrefixTests(unittest.TestCase):
         finalize_scan(capture.scan, capture.camera)
         capture.records=records; capture.accepted=records[:3]
         capture.reference_provenance=reference_provenance(capture.session_id, records[0], capture.calibration)
-        from femto.io_utils import write_json_strict as write_json
-        write_json(capture.session/'derived/local_reference.json', capture.reference_provenance)
+        from femto.io_utils import write_json_strict
+        write_json_strict(capture.session/'derived/local_reference.json', capture.reference_provenance)
         (capture.session/'derived/live_tracking.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in records), encoding='utf-8')
         tracker=SimpleNamespace(reference_id=0, lost=True, max_gap_s=2, loss_context=dict(reason='tracking_gap', last_valid_frame_id=2))
         capture._write_tracking_report(tracker)

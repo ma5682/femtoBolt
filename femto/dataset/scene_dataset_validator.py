@@ -9,6 +9,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+from femto.io_utils import write_json
+
 from femto.io_utils import imread_unicode_or_none, load_json, load_jsonl
 
 
@@ -204,7 +206,7 @@ def validate_dataset(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     if not args.no_write_report:
         report_path = dataset / "quality" / "validation_report.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json(report_path, report)
         report["report_path"] = str(report_path)
     return report, 2 if errors else 0
 

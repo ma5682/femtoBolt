@@ -7,7 +7,7 @@ import html
 import json
 from pathlib import Path
 import numpy as np
-from femto.io_utils import load_json as read, write_json_strict as dump
+from femto.io_utils import load_json, write_json_strict
 from femto.dataset.scene_data_kind import classify_dataset_data_kind, load_dataset_manifest_chain
 
 SPEC_SCHEMA = 'femto-field-acceptance-spec-v1'
@@ -56,7 +56,7 @@ def evaluate_field_spec(spec, base):
     if not targets: pending.append('No physical targets specified')
     for index, trial in enumerate(trials):
         reconstruction = resolve_reconstruction((base/Path(trial['reconstruction'])).resolve())
-        record = read(reconstruction/'reconstruction_report.json')
+        record = load_json(reconstruction/'reconstruction_report.json')
         dataset = Path(record['source_dataset'])
         if classify_dataset_data_kind(dataset) != 'real_femto': raise ValueError('Field acceptance requires real Femto lineage')
         raw, fingerprint = capture_identity(dataset)
@@ -101,14 +101,14 @@ def build_report(location, field_spec=None):
     if (location/'reconstruction_report.json').exists(): reconstruction,output = location,location.parent
     elif (location/'reconstruction/reconstruction_report.json').exists(): reconstruction,output=location/'reconstruction',location
     else: reconstruction,output = None,location
-    geometry = read(reconstruction/'reconstruction_report.json') if reconstruction else None
+    geometry = load_json(reconstruction/'reconstruction_report.json') if reconstruction else None
     dataset = Path(geometry['source_dataset']) if geometry else location
     pose_path=dataset/'pose_quality_report.json'
-    pose=read(pose_path) if pose_path.exists() else {}
+    pose=load_json(pose_path) if pose_path.exists() else {}
     if not geometry and pose.get('source_dataset'): dataset=Path(pose['source_dataset'])
     chain,complete=load_dataset_manifest_chain(dataset)
     capture_path=chain[-1][0]/'derived/capture_quality.json' if chain else None
-    capture=read(capture_path) if capture_path and capture_path.exists() else None
+    capture=load_json(capture_path) if capture_path and capture_path.exists() else None
     paths=[pose_path,*[p/'manifest.json' for p,_ in chain]]
     if reconstruction: paths.append(reconstruction/'reconstruction_report.json')
     if capture_path and capture_path.exists(): paths.append(capture_path)
@@ -121,8 +121,8 @@ def build_report(location, field_spec=None):
     limitations.extend(['有效深度比例是图像像素比例，不是目标表面覆盖率。','双向配准残差只表示内部自洽，不是实物尺寸误差。','尚无回环/全局位姿优化；未验收表面厚度、绝对坐标精度与目标完整覆盖。'])
     physical=dict(status='PENDING',accepted=None,pending=['待提供实测参考尺寸、容差、表面端点及至少3次独立采集'],targets=[],measurements=[])
     if field_spec:
-        spec_path=Path(field_spec).resolve();physical=evaluate_field_spec(read(spec_path),spec_path.parent)
-        spec=read(spec_path)
+        spec_path=Path(field_spec).resolve();physical=evaluate_field_spec(load_json(spec_path),spec_path.parent)
+        spec=load_json(spec_path)
         if reconstruction is None:
             raise ValueError('Physical acceptance requires a reconstruction')
         from femto.reports.scene_scale_validation import resolve_reconstruction
@@ -180,11 +180,11 @@ def render_report(report):
 def write_report(location, field_spec=None):
     output,report=build_report(location,field_spec)
     output.mkdir(parents=True,exist_ok=True)
-    dump(output/'result_quality.json',report)
+    write_json_strict(output/'result_quality.json',report)
     (output/'result_quality.html').write_text(render_report(report),encoding='utf-8')
     template=output/'field_acceptance_spec.json'
     if not template.exists():
-        dump(template,dict(schema=SPEC_SCHEMA,targets=[dict(id='床体固定标记A到B',ground_truth_distance_mm=None,
+        write_json_strict(template,dict(schema=SPEC_SCHEMA,targets=[dict(id='床体固定标记A到B',ground_truth_distance_mm=None,
             ground_truth_source='',absolute_tolerance_mm=None,repeatability_range_tolerance_mm=None)],
             trials=[dict(reconstruction=report['reconstruction'],geometry_source='tsdf_mesh',
                 measurements=[dict(target_id='床体固定标记A到B',point_a_world_m=None,point_b_world_m=None)])] if report['reconstruction'] else []))

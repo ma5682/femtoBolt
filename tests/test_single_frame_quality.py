@@ -8,7 +8,7 @@ import numpy as np
 
 from femto.geometry.single_frame_quality import clean_depth
 from femto.pipeline.scene_reconstruction import reconstruct_scene
-from femto.geometry.rgbd_frames import prepare_rgbd as _prepare_rgbd
+from femto.geometry.rgbd_frames import prepare_rgbd
 from femto.io_utils import imwrite_unicode
 from femto.geometry.fusion import read_geometry_safe
 from femto.pipeline.synthetic_scene_demo import generate_dataset
@@ -36,7 +36,7 @@ class SingleFrameQualityTests(unittest.TestCase):
     def test_open3d_includes_2210mm_endpoint(self):
         y, x = np.indices((4, 5), dtype=np.float32)
         depth = np.full((4, 5), 2210, np.uint16)
-        rgbd, *_ = _prepare_rgbd(np.zeros((4, 5, 3), np.uint8), depth, x, y,
+        rgbd, *_ = prepare_rgbd(np.zeros((4, 5, 3), np.uint8), depth, x, y,
                                   np.array([[10., 0, 2], [0, 10., 2], [0, 0, 1]]), 1, .25, 2.21)
         np.testing.assert_allclose(np.asarray(rgbd.depth), 2.21)
 

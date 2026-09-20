@@ -30,7 +30,7 @@ from typing import Any
 
 import numpy as np
 
-from femto.io_utils import load_json as _load_json
+from femto.io_utils import load_json, write_json
 from femto.gsplat.scene_gsplat_export import read_trained_gaussian_ply
 from femto.ui_i18n import LANGUAGE_NAMES, tr
 
@@ -481,8 +481,8 @@ def resolve_model(target: Path) -> tuple[Path, dict[str, Any], dict[str, Any]]:
         output_dir = target
     manifest_path = output_dir / "model" / "model_manifest.json"
     report_path = output_dir / "training_report.json"
-    manifest = _load_json(manifest_path) if manifest_path.is_file() else {}
-    report = _load_json(report_path) if report_path.is_file() else {}
+    manifest = load_json(manifest_path) if manifest_path.is_file() else {}
+    report = load_json(report_path) if report_path.is_file() else {}
     if direct_ply:
         model_ply = target
     else:
@@ -504,7 +504,7 @@ def training_optics(manifest: dict[str, Any]) -> tuple[CameraOptics | None, np.n
     if not transforms_path.is_file():
         return None, None
     try:
-        payload = _load_json(transforms_path)
+        payload = load_json(transforms_path)
     except (OSError, json.JSONDecodeError):
         return None, None
     try:
@@ -660,9 +660,7 @@ def render_orbit(
         "elapsed_s": time.time() - started,
         "files": written,
     }
-    (output / "orbit_render.json").write_text(
-        json.dumps(report_payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json(output / "orbit_render.json", report_payload)
     return report_payload
 
 

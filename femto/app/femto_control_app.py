@@ -33,7 +33,7 @@ from femto.gsplat.gsplat_backend import (
     runtime_status as gsplat_runtime_status,
     train as train_direct_gsplat,
 )
-from femto.io_utils import write_json as json_dump
+from femto.io_utils import write_json
 from femto.hardware.orbbec_rgbd import AlignedFrame, DEPTH_MODE_SPECS, OrbbecAlignedCamera
 from femto.temporal.scene_keyframe import build_fixed_keyframe_dataset
 from femto.capture.scene_capture import create_session, depth_preview, enable_windows_dpi_awareness
@@ -296,7 +296,7 @@ class FemtoControlApp:
             THREE_DGS_PROFILE_KEYS=THREE_DGS_PROFILE_KEYS,
             assess_training_input=assess_training_input,
             gsplat_runtime_status=gsplat_runtime_status,
-            json_dump=json_dump,
+            write_json=write_json,
             messagebox=messagebox,
             open_gsplat_viewer=open_gsplat_viewer,
             subprocess=subprocess,

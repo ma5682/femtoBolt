@@ -63,7 +63,7 @@ class MovingQualityTests(unittest.TestCase):
             forward=calls%2==0;calls+=1
             pose=np.eye(4);pose[0,3]=.006 if forward else (-.006 if not inconsistent else .06)
             return True,pose,np.eye(6)
-        with mock.patch.object(estimator,'o3d') as engine, mock.patch.object(estimator,'assess_background_motion',return_value={'reliable':True,'appears_fixed':False}), mock.patch.object(estimator,'_distortion_maps',return_value=(None,None,np.eye(3),100,80)), mock.patch.object(estimator,'_read_image',side_effect=read), mock.patch.object(estimator,'_prepare_rgbd',return_value=(object(),object(),None,None)):
+        with mock.patch.object(estimator,'o3d') as engine, mock.patch.object(estimator,'assess_background_motion',return_value={'reliable':True,'appears_fixed':False}), mock.patch.object(estimator,'distortion_maps',return_value=(None,None,np.eye(3),100,80)), mock.patch.object(estimator,'imread_unicode',side_effect=read), mock.patch.object(estimator,'prepare_rgbd',return_value=(object(),object(),None,None)):
             engine.pipelines.odometry.compute_rgbd_odometry.side_effect=odometry
             engine.pipelines.registration.evaluate_registration.return_value=mock.Mock(fitness=.8,inlier_rmse=.002)
             try:

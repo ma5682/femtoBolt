@@ -13,7 +13,7 @@ from pathlib import Path
 import sys
 import uuid
 
-from femto.io_utils import load_json_object as read_json, write_json_strict as write_json
+from femto.io_utils import load_json_object, write_json_strict
 from femto.local.local_processing import empty_report, result_quality, write_html
 
 TIME_BUDGET_S = 600.0
@@ -40,9 +40,9 @@ def publish_result(result, outputs, session_id, *, cancelled=lambda: False):
             from femto.pipeline.local_comparison import StageStopped
             raise StageStopped('cancelled','Cancelled before publication commit',{})
     check_cancel()
-    summary = read_json(result / 'demo_summary.json')
+    summary = load_json_object(result / 'demo_summary.json')
     receipt_path = result / 'publication.json'
-    receipt = read_json(receipt_path)
+    receipt = load_json_object(receipt_path)
     quality = result_quality(result)
     if (result.parent != outputs or summary.get('publication_id') != session_id
             or summary.get('publication_required') is not True
@@ -120,7 +120,7 @@ def publish_result(result, outputs, session_id, *, cancelled=lambda: False):
                        successful_model_published=bool(active))
         status='failed' if active else getattr(error,'status','failed')
         try:
-            write_json(receipt_path, dict(receipt, status=status, error=str(error), **details))
+            write_json_strict(receipt_path, dict(receipt, status=status, error=str(error), **details))
         except Exception as report_error:
             details['publication_report_error'] = str(report_error)
         raise PublicationError(str(error), details, status) from error
@@ -165,7 +165,7 @@ class LocalOfflineJob:
         path = self.output / 'created_result.json'
         if not path.exists():
             return None
-        created = read_json(path)
+        created = load_json_object(path)
         result = Path(created['result']).resolve()
         if result.parent != self.outputs or created.get('session_id') != self.session_id:
             raise ValueError('Offline result path/session mismatch')
@@ -176,7 +176,7 @@ class LocalOfflineJob:
     def _owned_result(self, result):
         """A child sidecar is insufficient authority to edit an existing result."""
         result=Path(result).resolve()
-        receipt=read_json(result/'publication.json')
+        receipt=load_json_object(result/'publication.json')
         if (result.parent != self.outputs or receipt.get('schema') != PUBLICATION_SCHEMA
                 or receipt.get('session_id') != self.session_id
                 or Path(receipt.get('result','')).resolve() != result
@@ -188,7 +188,7 @@ class LocalOfflineJob:
         from femto.pipeline.local_comparison import StageStopped, supervise
         request = dict(dataset=str(self.dataset), output=str(self.output), outputs=str(self.outputs),
                        session_id=self.session_id)
-        write_json(self.output / 'request.json', request)
+        write_json_strict(self.output / 'request.json', request)
         try:
             self.stats = supervise([sys.executable, '-X', 'utf8', '-m', 'femto.pipeline.local_offline',
                                    '--worker', str(self.output / 'request.json')],
@@ -196,14 +196,14 @@ class LocalOfflineJob:
                 cancelled=self.cancelled, progress=self._refresh)
             self._refresh(self.stats)
             self._created_result()
-            completed = read_json(self.output / 'worker_result.json')
+            completed = load_json_object(self.output / 'worker_result.json')
             if (completed.get('status') != 'complete' or self.result is None
                     or Path(completed['result']).resolve() != self.result
                     or completed.get('session_id') != self.session_id):
                 raise ValueError('Missing or mismatched offline completion receipt')
             if self.cancelled():
                 raise StageStopped('cancelled', 'Cancelled before result publication', self.stats)
-            summary=read_json(self.result/'demo_summary.json')
+            summary=load_json_object(self.result/'demo_summary.json')
             existing=result_quality(self.result)
             if (summary.get('publication_required') is not True
                     or summary.get('publication_id') != self.session_id
@@ -222,11 +222,11 @@ class LocalOfflineJob:
 
     def _save_report(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        write_json(self.path, self.report)
+        write_json_strict(self.path, self.report)
         write_html(self.path.with_suffix('.html'), self.report)
         if self.result is not None:
             self._owned_result(self.result)
-            write_json(self.result / 'processing_report.json', self.report)
+            write_json_strict(self.result / 'processing_report.json', self.report)
             write_html(self.result / 'processing_report.html', self.report)
 
     def terminal(self, status, error):
@@ -250,7 +250,7 @@ class LocalOfflineJob:
             try:
                 receipt = self._owned_result(self.result)
                 if receipt.get('status') == 'pending':
-                    write_json(self.result / 'publication.json', dict(receipt, status=status, error=error))
+                    write_json_strict(self.result / 'publication.json', dict(receipt, status=status, error=error))
             except Exception as report_error:
                 failures.append(str(report_error))
         if failures:
@@ -261,7 +261,7 @@ class LocalOfflineJob:
 def _source_paths(dataset):
     """Only immutable evidence; newly created derived reports are deliberately separate."""
     dataset = Path(dataset)
-    manifest = read_json(dataset / 'manifest.json')
+    manifest = load_json_object(dataset / 'manifest.json')
     roots = {dataset, Path(manifest['source_dataset']).resolve()}
     paths = set()
     for root in roots:
@@ -277,14 +277,14 @@ def _source_paths(dataset):
 def worker(request_file):
     from femto.pipeline.local_comparison import changed_files, fingerprints
     from femto.local.local_processing import LocalProcessing
-    request = read_json(request_file)
+    request = load_json_object(request_file)
     output = Path(request['output'])
     job = None
     try:
         before = fingerprints(_source_paths(request['dataset']))
         if any(value is None for value in before.values()):
             raise ValueError('Missing immutable source evidence')
-        write_json(output / 'source_hashes.json', before)
+        write_json_strict(output / 'source_hashes.json', before)
         job = LocalProcessing(request['dataset'], output / 'optimization')
         if job.report.get('source_session_id') != request['session_id']:
             raise ValueError('Offline source session mismatch')
@@ -297,12 +297,12 @@ def worker(request_file):
             publication_id=request['session_id'], created_result_file=output / 'created_result.json',
             local_processing_report=str(job.path)))
         changed = changed_files(before)
-        write_json(output / 'source_integrity.json', dict(source_unchanged=not changed, changed_files=changed))
+        write_json_strict(output / 'source_integrity.json', dict(source_unchanged=not changed, changed_files=changed))
         if changed:
             raise ValueError('Source evidence changed during offline processing')
         job.report['result'] = str(result)
         job.reconstruction('complete')
-        write_json(output / 'worker_result.json', dict(status='complete', session_id=request['session_id'], result=str(result)))
+        write_json_strict(output / 'worker_result.json', dict(status='complete', session_id=request['session_id'], result=str(result)))
         return 0
     except Exception as error:
         if job is not None:
@@ -311,7 +311,7 @@ def worker(request_file):
             except Exception:
                 pass
         try:
-            write_json(output / 'worker_result.json', dict(status='failed', error=str(error), session_id=request['session_id']))
+            write_json_strict(output / 'worker_result.json', dict(status='failed', error=str(error), session_id=request['session_id']))
         except Exception:
             pass
         raise

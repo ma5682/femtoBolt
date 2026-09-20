@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime,timezone
 import cv2
 import numpy as np
-from femto.io_utils import load_json as read, load_jsonl as rows
+from femto.io_utils import load_json, load_jsonl
 from femto.dataset.scene_dataset_validator import validate_pose
 
 
@@ -39,9 +39,9 @@ def diagnose(model,point,check=lambda:None,progress=lambda stage:None):
     report['reference_depth_missing']=not model.projection.minimum<=ref<=model.projection.maximum
     report['reference_pixel']=uv.tolist()
     try:
-        dataset=Path(model.store.origin_reference['source_dataset']);local=read(model.reconstruction/'local_geometry.json')
-        reconstruction=read(model.reconstruction/'reconstruction_report.json');manifest=read(dataset/'manifest.json')
-        frames=rows(dataset/'frames.jsonl');ids=[f['frame'] for f in frames]
+        dataset=Path(model.store.origin_reference['source_dataset']);local=load_json(model.reconstruction/'local_geometry.json')
+        reconstruction=load_json(model.reconstruction/'reconstruction_report.json');manifest=load_json(dataset/'manifest.json')
+        frames=load_jsonl(dataset/'frames.jsonl');ids=[f['frame'] for f in frames]
         if not 1<=len(frames)<=128 or len(set(ids))!=len(ids):raise ValueError('帧数或重复ID无效（预算128帧）')
         if Path(reconstruction['source_dataset']).resolve()!=dataset.resolve() or [f['frame'] for f in reconstruction['frames']]!=ids:raise ValueError('融合报告与来源帧列表不匹配')
         from femto.dataset.local_reference import calibration_identity
@@ -50,20 +50,20 @@ def diagnose(model,point,check=lambda:None,progress=lambda stage:None):
         tolerance=local['support']['tolerance_m']
         if not isinstance(tolerance,(int,float)) or not np.isfinite(tolerance) or tolerance<=0:raise ValueError('缺少已记录的支持门限')
         report['recorded_support_tolerance_m']=tolerance
-        tracking_path=Path(local['tracking_report']);tracking=read(tracking_path);record_path=tracking_path.parent/'live_tracking.jsonl'
-        records={r['frame_id']:r for r in rows(record_path)}
-        raw_dataset=tracking_path.parent.parent;raw_frames={r['frame']:r for r in rows(raw_dataset/'frames.jsonl')}
+        tracking_path=Path(local['tracking_report']);tracking=load_json(tracking_path);record_path=tracking_path.parent/'live_tracking.jsonl'
+        records={r['frame_id']:r for r in load_jsonl(record_path)}
+        raw_dataset=tracking_path.parent.parent;raw_frames={r['frame']:r for r in load_jsonl(raw_dataset/'frames.jsonl')}
         if calibration_identity(raw_dataset)!=calibration:raise ValueError('原始会话标定不匹配')
         if tracking['session_id']!=local['session_id'] or tracking['reference_frame_id']!=local['reference_frame_id']:raise ValueError('跟踪来源与模型原点不匹配')
-        from femto.io_utils import imread_unicode as _read_image
-        from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps
-        mx,my,k,w,h=_distortion_maps(dataset)
+        from femto.io_utils import imread_unicode
+        from femto.geometry.rgbd_frames import distortion_maps
+        mx,my,k,w,h=distortion_maps(dataset)
         report['source_hashes']={str(p.resolve()):digest(p) for p in (dataset/'manifest.json',dataset/'frames.jsonl',tracking_path,record_path)}
         for frame in frames:
             check();progress('核对原始观测帧 '+str(frame['frame']))
             item=dict(frame_id=frame['frame'],status='unknown',supports=False);report['observations'].append(item)
             try:
-                pose_path=dataset/frame['pose'];pose=read(pose_path);record=records[frame['frame']]
+                pose_path=dataset/frame['pose'];pose=load_json(pose_path);record=records[frame['frame']]
                 t=np.asarray(pose['T_WC'],float)
                 if (pose.get('frame')!=frame['frame'] or pose.get('capture_timestamp_us')!=frame.get('camera_timestamp_us') or
                     record.get('session_id')!=local['session_id'] or record.get('calibration_sha256')!=calibration['sha256'] or
@@ -76,7 +76,7 @@ def diagnose(model,point,check=lambda:None,progress=lambda stage:None):
                 original=raw_frames[frame['frame']]
                 if (rgb_path.resolve()!=(raw_dataset/original['rgb']).resolve() or depth_path.resolve()!=(raw_dataset/original['depth']).resolve() or
                     frame.get('camera_timestamp_us')!=record.get('capture_timestamp_us') or frame.get('camera_timestamp_us')!=original.get('camera_timestamp_us')):raise ValueError('RGB/Depth路径或采集时间与原始会话不一致')
-                raw=_read_image(depth_path,cv2.IMREAD_UNCHANGED)
+                raw=imread_unicode(depth_path,cv2.IMREAD_UNCHANGED)
                 if raw.shape!=(h,w) or raw.dtype!=np.uint16:raise ValueError('原始深度尺寸或单位无效')
                 raw=cv2.remap(raw,mx,my,cv2.INTER_NEAREST)
                 item.update(sample_view(samples,t,k,raw,model.projection.minimum,model.projection.maximum))

@@ -16,9 +16,9 @@ import time
 import cv2
 import numpy as np
 
-from femto.io_utils import imread_unicode as _read_image, write_json as json_dump
+from femto.io_utils import imread_unicode, write_json
 from femto.dataset.scene_dataset_validator import validate_pose
-from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps
+from femto.geometry.rgbd_frames import distortion_maps
 
 
 class ObservedAccumulator:
@@ -122,8 +122,8 @@ class LivePreviewWorker:
     def read_samples(self, frame_id, maps):
         mx, my, k, width, height = maps
         stem = f'{frame_id:06d}'
-        rgb = _read_image(self.dataset/'rgb'/f'{stem}.png', cv2.IMREAD_COLOR)
-        depth = _read_image(self.dataset/'depth'/f'{stem}.png', cv2.IMREAD_UNCHANGED)
+        rgb = imread_unicode(self.dataset/'rgb'/f'{stem}.png', cv2.IMREAD_COLOR)
+        depth = imread_unicode(self.dataset/'depth'/f'{stem}.png', cv2.IMREAD_UNCHANGED)
         if rgb.shape[:2] != (height,width) or depth.shape != (height,width) or depth.dtype != np.uint16:
             raise ValueError('Preview RGB-D/calibration mismatch')
         # Select pixels on the undistorted grid; nearest-neighbour depth only.
@@ -140,7 +140,7 @@ class LivePreviewWorker:
     def _run(self):
         error = None
         try:
-            maps = _distortion_maps(self.dataset)
+            maps = distortion_maps(self.dataset)
             while not self.closing.is_set() or not self.pending.empty():
                 if self.failed:
                     raise ValueError('preview_backlog')
@@ -166,7 +166,7 @@ class LivePreviewWorker:
             self.publish(dict(status='error',error=error))
         finally:
             try:
-                json_dump(self.dataset/'derived'/'live_preview_report.json',dict(
+                write_json(self.dataset/'derived'/'live_preview_report.json',dict(
                     schema='femto-observed-preview-v1', session_id=self.session_id,
                     status='error' if self.failed else 'closed', error=error,
                     coordinate_frame='world_rdf', transform_direction='T_W0_Ct',unit='metre',

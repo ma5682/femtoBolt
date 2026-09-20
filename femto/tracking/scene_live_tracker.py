@@ -16,7 +16,7 @@ import open3d as o3d
 
 from femto.tracking.moving_quality import POLICY, frame_quality, cycle_consistency, rotation_deg
 from femto.dataset.scene_dataset_validator import validate_pose
-from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps, prepare_rgbd as _prepare_rgbd
+from femto.geometry.rgbd_frames import distortion_maps, prepare_rgbd
 
 
 FEATURE_SEED_POLICY = dict(
@@ -66,7 +66,7 @@ class PairEstimator:
             raise ValueError('Unknown reverse initialization strategy')
         self.reverse_seed, self.background_mask = reverse_seed, background_mask
         self.feature_seed = bool(feature_seed)
-        self.maps = _distortion_maps(dataset)
+        self.maps = distortion_maps(dataset)
         self.minimum, self.maximum = minimum_mm / 1000, maximum_mm / 1000
         self.option = o3d.pipelines.odometry.OdometryOption()
         self.option.iteration_number_per_pyramid_level = o3d.utility.IntVector([30, 20, 10])

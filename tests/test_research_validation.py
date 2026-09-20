@@ -16,7 +16,7 @@ class ValidationWorkflowTests(unittest.TestCase):
             p=self.root/(role+'.txt');p.write_text(role);self.spec['assets'].append(dict(role=role,path=str(p)))
         self.spec['tolerance']=5.;self.obs={'xyz_m':[[0,0,.5],[.1,0,.5]]}
     def run_record(self,trial='1',status='measured',reason=None,elapsed=1.):
-        v.write(self.root/'spec.json',self.spec);v.write(self.root/'obs.json',self.obs)
+        v.write_json_strict(self.root/'spec.json',self.spec);v.write_json_strict(self.root/'obs.json',self.obs)
         return v.record(self.root/'spec.json',self.root/'obs.json',self.root/'runs',trial,status,reason,elapsed)/'record.json'
     def test_purpose_definitions_and_no_housing_offset(self):
         o={'xyz_m':[[.3,0,.4]]}
@@ -32,7 +32,7 @@ class ValidationWorkflowTests(unittest.TestCase):
     def test_sealed_snapshots_and_recomputed_metrics(self):
         p=self.run_record();r=v.load_record(p);self.assertFalse(r['physical_accuracy_verified']);self.assertEqual(r['verification_status'],'unverified')
         (self.root/'algorithm.txt').write_text('later source edit');self.assertEqual(v.load_record(p)['result']['value'],100)
-        data=v.read(p);data['result']['value']=999;v.write(p,data)
+        data=v.load_json(p);data['result']['value']=999;v.write_json_strict(p,data)
         with self.assertRaisesRegex(ValueError,'checksum'):v.load_record(p)
     def test_uncertainty_missing_and_datum_mismatch_never_pass(self):
         self.spec['reference']['datum']='housing_mark';p=self.run_record();g=v.summary([p])['groups'][0]
@@ -69,6 +69,6 @@ class ValidationWorkflowTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):v.record(self.root/'spec.json',self.root/'obs.json',self.root/'runs','3',check=lambda:(_ for _ in ()).throw(RuntimeError('cancel')))
         path=self.root/'summary.json';v.publish_json(path,{'old':1})
         with self.assertRaises(FileExistsError):v.publish_json(path,{'new':2})
-        self.assertEqual(v.read(path),{'old':1})
+        self.assertEqual(v.load_json(path),{'old':1})
 
 if __name__=='__main__':unittest.main()

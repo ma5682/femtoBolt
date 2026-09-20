@@ -23,6 +23,8 @@ import time
 from typing import Any
 
 import numpy as np
+
+from femto.io_utils import write_json
 from femto.gsplat.scene_gsplat_guard import ResourceLimitError, bounded_strategy_class, guard_cuda, cuda_memory_snapshot
 from PIL import Image
 
@@ -111,8 +113,7 @@ PROFILES: dict[str, TrainerConfig] = {
 
 
 def _json_dump(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(path, payload)
 
 
 def runtime_python() -> Path:

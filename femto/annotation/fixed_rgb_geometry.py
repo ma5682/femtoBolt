@@ -6,9 +6,9 @@ import time
 import cv2
 import numpy as np
 import open3d as o3d
-from femto.io_utils import imread_unicode as _read_image
+from femto.io_utils import imread_unicode
 from femto.annotation.scene_annotations import AnnotationStore, region_boundary
-from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps
+from femto.geometry.rgbd_frames import distortion_maps
 from femto.reports.scene_scale_validation import read_geometry_safe, resolve_reconstruction
 
 
@@ -334,9 +334,9 @@ class FixedRGBModel:
         width,height=int(intrinsic['width']),int(intrinsic['height'])
         if min(width,height)<=0 or width*height>MAX_IMAGE_PIXELS:
             raise ValueError('Fixed RGB mapping exceeds the image / mesh memory budget')
-        mx,my,k,w,h=_distortion_maps(dataset)
+        mx,my,k,w,h=distortion_maps(dataset)
         rgb_path,depth_path=dataset/frame['rgb'],dataset/frame['depth']
-        bgr=_read_image(rgb_path,cv2.IMREAD_COLOR);depth=_read_image(depth_path,cv2.IMREAD_UNCHANGED)
+        bgr=imread_unicode(rgb_path,cv2.IMREAD_COLOR);depth=imread_unicode(depth_path,cv2.IMREAD_UNCHANGED)
         if bgr.shape!=(h,w,3) or depth.shape!=(h,w):raise ValueError('Reference image dimensions mismatch')
         self.rgb=cv2.remap(bgr,mx,my,cv2.INTER_LINEAR)[:,:,::-1].copy()
         depth=cv2.remap(depth,mx,my,cv2.INTER_NEAREST)

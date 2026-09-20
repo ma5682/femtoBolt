@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 import trimesh
 
-from femto.io_utils import imread_unicode as read_image
+from femto.io_utils import imread_unicode, write_json
 
 
 def project_visible(vertices, faces, pose, K, distortion, depth, tolerance_m=.015):
@@ -62,8 +62,8 @@ def export_multiview_texture(mesh, dataset, frames, poses, output, exports, max_
     sources = []
     for slot,ordinal in enumerate(indices):
         frame = frames[ordinal]
-        rgb = read_image(dataset/frame['rgb'],cv2.IMREAD_COLOR)
-        depth = read_image(dataset/frame['depth'],cv2.IMREAD_UNCHANGED)
+        rgb = imread_unicode(dataset/frame['rgb'],cv2.IMREAD_COLOR)
+        depth = imread_unicode(dataset/frame['depth'],cv2.IMREAD_UNCHANGED)
         if rgb.shape != (h,w,3) or depth.shape != (h,w):
             raise ValueError('Texture RGB-D does not match calibration')
         projected,score = project_visible(vertices,faces,poses[ordinal],K,coeff,depth)
@@ -120,5 +120,5 @@ def export_multiview_texture(mesh, dataset, frames, poses, output, exports, max_
                                'Depth consistency checks vertices and centroid; sub-triangle occlusion may remain.',
                                'Unassigned faces retain fused color. Texture sharpness is not verified geometric accuracy.'])
     report_path = output/'multiview_texture_report.json'
-    report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    write_json(report_path, report)
     return dict(exports,texture=str(texture),triangle_uv=str(uv_path),mtl=str(mtl),texture_report=str(report_path))

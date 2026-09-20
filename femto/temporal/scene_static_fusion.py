@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 
 from femto.geometry.fusion import temporal_median_depth
-from femto.io_utils import imread_unicode as _read, imwrite_unicode, load_json, load_jsonl, write_json as json_dump
+from femto.io_utils import imread_unicode, imwrite_unicode, load_json, load_jsonl, write_json, write_jsonl
 
 
 def _select_reference_frame(
@@ -77,7 +77,7 @@ def build_static_median_dataset(
     masks: list[np.ndarray] = []
     expected_shape: tuple[int, int] | None = None
     for frame in frames:
-        depth = _read(source / frame["depth"], cv2.IMREAD_UNCHANGED)
+        depth = imread_unicode(source / frame["depth"], cv2.IMREAD_UNCHANGED)
         if depth.dtype != np.uint16 or depth.ndim != 2:
             raise ValueError(f"Frame {frame['frame']} depth is not uint16 millimetres")
         if expected_shape is None:
@@ -101,7 +101,7 @@ def build_static_median_dataset(
         )
     selected, scores = _select_reference_frame(depths, masks, fused_depth, fused_mask)
     selected_frame = frames[selected]
-    color = _read(source / selected_frame["rgb"], cv2.IMREAD_COLOR)
+    color = imread_unicode(source / selected_frame["rgb"], cv2.IMREAD_COLOR)
     if color.shape[:2] != fused_depth.shape:
         raise ValueError("Selected RGB and fused depth dimensions differ")
 
@@ -114,7 +114,7 @@ def build_static_median_dataset(
         np.rint(np.clip(fused_depth, 0, 65535)).astype(np.uint16),
     )
     imwrite_unicode(output / "temporal_support.png", support)
-    json_dump(
+    write_json(
         output / "pose" / "000000.json",
         {
             "schema": "femto-scene-frame-pose-v1",
@@ -136,10 +136,7 @@ def build_static_median_dataset(
         "pose": "pose/000000.json",
         "pose_valid": True,
     }
-    (output / "frames.jsonl").write_text(
-        json.dumps(derived_frame, ensure_ascii=False, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-    )
+    write_jsonl(output / "frames.jsonl", [derived_frame])
     derived_manifest = {
         **manifest,
         "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
@@ -170,7 +167,7 @@ def build_static_median_dataset(
             "temporal_support": "temporal_support.png",
         },
     }
-    json_dump(output / "manifest.json", derived_manifest)
+    write_json(output / "manifest.json", derived_manifest)
     report = {
         "schema": "femto-fixed-camera-median-report-v1",
         "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
@@ -188,7 +185,7 @@ def build_static_median_dataset(
             "Large unseen surfaces are not filled.",
         ],
     }
-    json_dump(output / "static_fusion_report.json", report)
+    write_json(output / "static_fusion_report.json", report)
     marker = source / "derived" / "latest_fixed_dataset.txt"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(str(output), encoding="utf-8")

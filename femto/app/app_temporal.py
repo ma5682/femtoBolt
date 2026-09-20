@@ -9,7 +9,7 @@ import json
 
 import numpy as np
 
-from femto.io_utils import imwrite_unicode, write_json as json_dump
+from femto.io_utils import imwrite_unicode, write_json, write_jsonl
 from femto.dataset.calibration_files import write_calibration
 
 
@@ -56,9 +56,9 @@ class TemporalBurst:
                                       depth_min_mm=self.camera.min_depth_mm,depth_max_mm=self.camera.max_depth_mm),
                       pose=dict(valid=False,source='not_estimated; fixed temporal grid only'),
                       capture_policy='Existing GUI camera; bounded memory burst; encoding and fusion on worker')
-        json_dump(output/'manifest.json',manifest)
-        json_dump(output/'metadata.json',dict(**manifest,timestamps_us=[f.timestamp_us for f in self.frames]))
-        (output/'frames.jsonl').write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records),encoding='utf-8')
+        write_json(output/'manifest.json',manifest)
+        write_json(output/'metadata.json',dict(**manifest,timestamps_us=[f.timestamp_us for f in self.frames]))
+        write_jsonl(output/'frames.jsonl', records, compact=False)
         return output
 
 

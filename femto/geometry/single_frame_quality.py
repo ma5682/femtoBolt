@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 
+from femto.io_utils import write_json
+
 
 def clean_depth(depth: np.ndarray) -> tuple[np.ndarray, dict]:
     """Reject isolated depth returns; never average, fill or move retained samples."""
@@ -51,7 +53,7 @@ def evidence_manifest(dataset: Path, frame: dict, output: Path) -> dict:
               "frame": frame, "files": entries,
               "depth_unit": "uint16 millimetres; zero unknown", "geometry_unit": "metre",
               "coordinate_system": "World RDF (+X right, +Y down, +Z forward); T_WC maps camera to world"}
-    output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(output, report)
     return report
 
 
@@ -93,5 +95,5 @@ def compare_geometry(raw, cleaned, mesh, cleaning: dict, output: Path) -> dict:
               "limitations": ["Distances compare products of the same observation, not physical accuracy.",
                               "Meshing can exclude unsupported or disconnected source points; zero same-source distance is not proof of accuracy.",
                               "Single-view occlusions and unseen surfaces remain unknown."]}
-    output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(output, report)
     return report

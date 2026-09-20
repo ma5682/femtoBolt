@@ -11,7 +11,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from femto.io_utils import imread_unicode as _read, load_json, load_jsonl, write_json as json_dump
+from femto.io_utils import imread_unicode, load_json, load_jsonl, write_json, write_jsonl
 
 
 def _depth_range(manifest: dict[str, Any]) -> tuple[float, float]:
@@ -28,8 +28,8 @@ def _measure_frames(source: Path, frames: list[dict[str, Any]], minimum_mm: floa
     raw_metrics: list[dict[str, Any]] = []
     expected_shape: tuple[int, int] | None = None
     for ordinal, frame in enumerate(frames):
-        depth = _read(source / frame["depth"], cv2.IMREAD_UNCHANGED)
-        color = _read(source / frame["rgb"], cv2.IMREAD_COLOR)
+        depth = imread_unicode(source / frame["depth"], cv2.IMREAD_UNCHANGED)
+        color = imread_unicode(source / frame["rgb"], cv2.IMREAD_COLOR)
         if depth.dtype != np.uint16 or depth.ndim != 2 or color.shape[:2] != depth.shape:
             raise ValueError(f"Frame {frame['frame']} is not aligned uint16 RGB-D")
         if expected_shape is None:
@@ -104,7 +104,7 @@ def build_fixed_keyframe_dataset(
     shutil.copytree(source / "calibration", output / "calibration")
     shutil.copy2(source / selected_frame["rgb"], output / "rgb" / "000000.jpg")
     shutil.copy2(source / selected_frame["depth"], output / "depth" / "000000.png")
-    json_dump(
+    write_json(
         output / "pose" / "000000.json",
         {
             "schema": "femto-scene-frame-pose-v1",
@@ -126,10 +126,7 @@ def build_fixed_keyframe_dataset(
         "pose": "pose/000000.json",
         "pose_valid": True,
     }
-    (output / "frames.jsonl").write_text(
-        json.dumps(derived_frame, ensure_ascii=False, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-    )
+    write_jsonl(output / "frames.jsonl", [derived_frame])
     derived_manifest = {
         **manifest,
         "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
@@ -158,7 +155,7 @@ def build_fixed_keyframe_dataset(
             "calibration": "calibration/*.json",
         },
     }
-    json_dump(output / "manifest.json", derived_manifest)
+    write_json(output / "manifest.json", derived_manifest)
     report = {
         "schema": "femto-fixed-camera-keyframe-report-v1",
         "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
@@ -179,7 +176,7 @@ def build_fixed_keyframe_dataset(
             "Only the fixed camera viewpoint is available.",
         ],
     }
-    json_dump(output / "keyframe_report.json", report)
+    write_json(output / "keyframe_report.json", report)
     marker = source / "derived" / "latest_keyframe_dataset.txt"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(str(output), encoding="utf-8")

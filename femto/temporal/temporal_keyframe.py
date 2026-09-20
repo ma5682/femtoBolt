@@ -8,7 +8,7 @@ import numpy as np
 import cv2
 
 from femto.depth.depth_quality import process_depth_quality
-from femto.io_utils import imread_unicode as _read, imwrite_unicode, write_json as json_dump
+from femto.io_utils import imread_unicode, imwrite_unicode, write_json, write_jsonl
 from femto.depth.temporal_depth_fusion import confidence_weighted_median
 from femto.temporal.scene_temporal_fusion import audit_temporal_motion, _hash, _child
 from femto.depth.temporal_depth_layer import load_temporal_confidence, prepared_depth  # noqa: F401  (re-export)
@@ -115,8 +115,8 @@ def build_temporal_keyframe(source, progress=lambda text:None):
     paths += [source/'manifest.json',source/'frames.jsonl',*sorted((source/'calibration').glob('*.json'))]
     hashes={str(p.relative_to(source)):_hash(p) for p in paths}
     low,high=np.asarray(manifest['camera']['depth_range_m'])*1000
-    raw=[_read(_child(source,r['depth']),cv2.IMREAD_UNCHANGED) for r in records]
-    rgb=[_read(_child(source,r['rgb']),cv2.IMREAD_COLOR) for r in records]
+    raw=[imread_unicode(_child(source,r['depth']),cv2.IMREAD_UNCHANGED) for r in records]
+    rgb=[imread_unicode(_child(source,r['rgb']),cv2.IMREAD_COLOR) for r in records]
     intr=json.loads((source/'calibration/color_intrinsic.json').read_text(encoding='utf-8'))
     for r in records:
         recorded=r.get('aligned_intrinsics')
@@ -133,7 +133,7 @@ def build_temporal_keyframe(source, progress=lambda text:None):
         filled.append(f); confidence.append(w)
     progress('fusion')
     motion,check=assess_temporal_scene(raw,rgb,low,high)
-    json_dump(output/'motion_report.json',check)
+    write_json(output/'motion_report.json',check)
     imwrite_unicode(output/'scene_motion_mask.png',motion.astype(np.uint8)*255)
     fused,weights,maps,report=fuse_quality_frames(raw,filled,confidence,low,high,motion)
     imwrite_unicode(output/'fused_depth_mm.png',fused)
@@ -148,7 +148,7 @@ def build_temporal_keyframe(source, progress=lambda text:None):
                              maps['original_support_count'],maps['filled_support_count'],maps['selected_original']).validate()
     if not fused.any():
         report.update(status='rejected_no_trusted_depth',source_sha256=hashes)
-        json_dump(output/'temporal_report.json',report)
+        write_json(output/'temporal_report.json',report)
         raise ValueError(f'No trusted temporal depth remains; scene_motion_detected={check["scene_motion_detected"]}: {output}')
     # Reuse the existing keyframe selector for RGB selection and metadata. Its
     # copied raw depth remains a separate observation, never overwritten.
@@ -162,17 +162,17 @@ def build_temporal_keyframe(source, progress=lambda text:None):
     imwrite_unicode(dataset/'depth/temporal_observed_mm.png',observed)
     frame.update(depth='depth/fused_depth_mm.png',depth_confidence='final_confidence.npy',
                  original_depth='depth/temporal_observed_mm.png',reference_raw_depth=raw_reference)
-    (dataset/'frames.jsonl').write_text(json.dumps(frame,ensure_ascii=False)+'\n',encoding='utf-8')
+    write_jsonl(dataset/'frames.jsonl', [frame], compact=False)
     meta=json.loads((dataset/'manifest.json').read_text(encoding='utf-8'))
     meta['temporal_fusion']=dict(version=1,report=str(output/'temporal_report.json'),confidence='final_confidence.npy',
                                source_sha256=hashes,reference_raw_depth=raw_reference,source_count=n)
     meta['files']['depth']=frame['depth']
-    json_dump(dataset/'manifest.json',meta)
+    write_json(dataset/'manifest.json',meta)
     kreport['temporal_fusion']=meta['temporal_fusion']
     kreport['limitations']=['RGB is the selected reference frame; depth is a fixed-grid temporal estimate.',
                              'Original selected depth is retained separately; no independent geometry ground truth.',
                              'Only the fixed camera visible surfaces are available.']
-    json_dump(dataset/'keyframe_report.json',kreport)
+    write_json(dataset/'keyframe_report.json',kreport)
     report.update(status='completed',source=str(source),source_sha256=hashes,
                   source_unchanged=all(_hash(source/p)==s for p,s in hashes.items()),
                   selected_rgb_source=next(r['rgb'] for r in records if r['frame']==kreport['selected_source_frame']),
@@ -183,19 +183,18 @@ def build_temporal_keyframe(source, progress=lambda text:None):
                   temporal_observation_scope='selected real temporal measurements, not independent ground truth',
                   input_array_memory_mib=sum(a.nbytes for a in raw+rgb+filled+confidence)/2**20)
     if not report['source_unchanged']: raise RuntimeError('Source evidence changed')
-    json_dump(output/'temporal_report.json',report)
+    write_json(output/'temporal_report.json',report)
     progress('cloud')
     from types import SimpleNamespace
     from femto.geometry.depth_cloud import depth_cloud
     from femto.geometry.depth_confidence_cloud import write_confident_point_cloud, build_confident_depth_cloud
-    selected_rgb=_read(dataset/frame['rgb'],cv2.IMREAD_COLOR)
+    selected_rgb=imread_unicode(dataset/frame['rgb'],cv2.IMREAD_COLOR)
     distortion=json.loads((dataset/'calibration/distortion.json').read_text())['rgb']
     cloud,c=build_confident_depth_cloud(raw[0],fused,weights,selected_rgb,SimpleNamespace(**intr),distortion,
                                        low,high,temporal_layer=layer)
     write_confident_point_cloud(output/'fused_pointcloud.ply',cloud,c,temporal_confidence=True)
     report['elapsed_ms']=(perf_counter()-started)*1000
     report['average_processing_ms_per_frame']=report['elapsed_ms']/n
-    json_dump(output/'temporal_report.json',report)
+    write_json(output/'temporal_report.json',report)
     return dataset,report
-
 

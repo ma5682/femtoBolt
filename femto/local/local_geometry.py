@@ -2,8 +2,8 @@
 import cv2
 import numpy as np
 import open3d as o3d
-from femto.io_utils import imread_unicode as _read_image
-from femto.geometry.rgbd_frames import prepare_rgbd as _prepare_rgbd
+from femto.io_utils import imread_unicode
+from femto.geometry.rgbd_frames import prepare_rgbd
 
 
 def filter_small_components(mesh):
@@ -39,11 +39,11 @@ def retain_observed_triangles(mesh, dataset, frames, poses, maps, minimum, maxim
         raise ValueError('Prepared depth count does not match local frames')
     for ordinal,(frame, pose) in enumerate(zip(frames, poses)):
         if prepared_depths is None:
-            color = _read_image(dataset/frame['rgb'], cv2.IMREAD_COLOR)
-            depth = _read_image(dataset/frame['depth'], cv2.IMREAD_UNCHANGED)
+            color = imread_unicode(dataset/frame['rgb'], cv2.IMREAD_COLOR)
+            depth = imread_unicode(dataset/frame['depth'], cv2.IMREAD_UNCHANGED)
             from femto.local.local_temporal_support import filtered_depth
             depth=filtered_depth(dataset,frame,depth)
-            _, _, _, depth = _prepare_rgbd(color, depth, mx, my, k, 1., minimum, maximum)
+            _, _, _, depth = prepare_rgbd(color, depth, mx, my, k, 1., minimum, maximum)
         else:
             depth=np.asarray(prepared_depths[ordinal])
         jump=np.zeros(depth.shape,bool)

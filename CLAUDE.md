@@ -125,7 +125,7 @@ C:\FemtoGsplatRuntime\Scripts\python.exe -m femto.gsplat.scene_gsplat_export out
 
 | 层 | 子包 | 职责 | 主要模块 |
 |---|---|---|---|
-| 0 | `femto` | 叶子工具 | `io_utils`（唯一的 JSON / JSONL / 图片读写实现；`cv2` 延迟导入，gsplat 运行时可用）、`ui_i18n`（`tr(language, key)`，只覆盖高级页、Open3D 查看器和 gsplat 查看器；其余窗口用内联 `(zh, en)` 元组，`test_ui_i18n` 要求 zh/en 键集一致）、`paths`（`REPO_ROOT` 等数据树位置与 `child_path`） |
+| 0 | `femto` | 叶子工具 | `io_utils`（唯一的 JSON / JSONL / 图片读写实现；默认 `ensure_ascii=False`，兼容旧文件字节时显式传序列化参数；`cv2` 延迟导入，gsplat 运行时可用）、`ui_i18n`（`tr(language, key)`，只覆盖高级页、Open3D 查看器和 gsplat 查看器；其余窗口用内联 `(zh, en)` 元组，`test_ui_i18n` 要求 zh/en 键集一致）、`paths`（`REPO_ROOT` 等数据树位置与 `child_path`） |
 | 1 | `femto.depth` | 逐帧深度质量 | `depth_quality`（保守补洞，`DepthQualityConfig` 只能收紧）、`depth_error_check`、`temporal_depth_fusion`、`temporal_depth_layer`（时域中间层，含 `prepared_depth` / `load_temporal_confidence`）；置信度层 1.0 原始 / 0.3 修复 / 0 未知，每次派生深度都有同名 float32 confidence |
 | 2 | `femto.dataset` | 数据集 schema 与门禁 | `scene_dataset_validator`、`scene_data_kind`（只有原始 manifest `camera.device=="Orbbec Femto Bolt"` 才是 `real_femto`）、`local_reference`（`CALIBRATION_FILES`、参考证据）、`calibration_files.write_calibration`、`scene_gsplat_split`（严格 train/val/test 分区）、`single_frame_source.resolve_source`（关键帧模型 / 照片的单帧来源解析） |
 | 3 | `femto.geometry` | 反投影与网格原语 | `pose_geometry`（人体分支无畸变针孔）、`depth_cloud`（全项目 K6 反投影的正典实现）、`rgbd_frames`（`distortion_maps` / `prepare_rgbd` / `load_poses`）、`fusion`（Open3D 原生 IO 兜底）、`multiview_texture`、`single_frame_mesh` / `single_frame_quality`、`scene_gaussian`（未训练初值）、`depth_confidence_cloud` |
@@ -196,13 +196,13 @@ CLI `scene_capture.py`（`near` 档、JPEG）与 GUI 采集（`wide_detail`、�
 
 仓库路径含中文，新代码沿用同样写法：
 
-- **不要用 `cv2.imread` / `cv2.imwrite`**。统一用 `io_utils.imread_unicode` / `imwrite_unicode`（`np.fromfile` + `cv2.imdecode` / `imencode` + `write_bytes`），或 PIL。不要再在模块里复制一份私有实现；需要旧名字时用 `from io_utils import imread_unicode as _read_image` 这类别名。
+- **不要用 `cv2.imread` / `cv2.imwrite`**。统一用 `io_utils.imread_unicode` / `imwrite_unicode`（`np.fromfile` + `cv2.imdecode` / `imencode` + `write_bytes`），或 PIL。不要再在模块里复制私有实现，也不要为公共 IO / 几何函数创建 `_read_image`、`json_dump` 等兼容别名；调用点和测试 patch 目标都直接使用公开名。
 - **Open3D 原生读写**走 `fusion.write_point_cloud_safe` / `read_geometry_safe`，先落到 `%LOCALAPPDATA%\FemtoPatientPose\native_io` 的 ASCII 临时路径再搬运。`fusion.py` 在 import 时就读 `os.environ["LOCALAPPDATA"]`，无该变量的环境 import 即崩。
 - 带 `confidence` 属性的自定义 PLY（`depth_confidence_cloud`）被 Open3D 重读时会丢掉该属性，下游融合必须读 depth + `.npy`，不能读回 PLY。
 - **Open3D Filament 资源**在中文路径下加载失败；`scene_demo_viewer._open3d_ascii_resources()` 镜像 wheel 资源到 `%LOCALAPPDATA%\FemtoSceneDemo\open3d_resources_*`，`live_point_cloud` 子进程也依赖它。
 - **CUDA JIT / SPZ C++ reader** 怕中文路径：gsplat 走 `C:\FemtoGsplatRuntime` 联接，SPZ 导出先复制到 ASCII 临时目录（回退 `C:/FemtoSpzTmp`）。MediaPipe 模型复制到 `%LOCALAPPDATA%\FemtoPatientPose\models`。
 - `start_femto_app.cmd` 用 `pythonw.exe`，`femto_control_app.main()` 仅在流为 None 时把 stdout/stderr 追加到 `Log/femto_control_*.log`；GUI 崩溃先看 `Log/`（还有 `OrbbecSDK.log.txt`、`live_point_cloud.log`、`export_preview.log`）。
-- JSON 一律 `json.dumps(..., ensure_ascii=False)` 写、`encoding="utf-8-sig"` 读（部分 marker 带 BOM）。`.cmd` 里的中文提示需要 `chcp 65001`；gsplat `.cmd` 另设 `PYTHONUTF8=1`、`VSLANG=1033`。
+- JSON 新写入默认 `ensure_ascii=False`，既有产物必须通过 `io_utils` 的显式参数保留原转义、缩进和 JSONL 分隔符字节；统一用 `encoding="utf-8-sig"` 读（部分 marker 带 BOM）。`.cmd` 里的中文提示需要 `chcp 65001`；gsplat `.cmd` 另设 `PYTHONUTF8=1`、`VSLANG=1033`。
 - `commercial_compliance_check.py` 的 `EXCLUDED_SCAN_DIRS` 含三个 venv 及 `outputs`、`datasets`、`references`、`__pycache__`；`femto/`、`tools/` 和 `tests/` 都会被扫描。AST 扫描用 `ast.parse(read_bytes())`，BOM 不能藏受限导入。`release_ready` 是常量 False；缺 SPZ zlib DLL 是无条件 error，无 SPZ 运行时的机器过不了开发基线。
 
 ## 目录产物与 marker 文件

@@ -8,8 +8,8 @@ import shutil
 import numpy as np
 import open3d as o3d
 import cv2
-from femto.io_utils import imread_unicode as _read_image
-from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps, prepare_rgbd as _prepare_rgbd, load_poses as _load_poses
+from femto.io_utils import imread_unicode, write_json, write_json_strict, write_jsonl
+from femto.geometry.rgbd_frames import distortion_maps, prepare_rgbd, load_poses
 from femto.dataset.scene_dataset_validator import validate_pose
 from femto.tracking.moving_quality import rotation_deg,cycle_consistency
 
@@ -87,21 +87,21 @@ def refine(dataset,output):
     local=manifest.get('local_capture',{})
     if not local.get('measured_only'):raise ValueError('Only local observed-depth datasets supported')
     frames=[json.loads(s) for s in (dataset/'frames.jsonl').read_text(encoding='utf-8-sig').splitlines() if s.strip()]
-    poses=_load_poses(dataset,frames)
+    poses=load_poses(dataset,frames)
     if not np.allclose(poses[0],np.eye(4),rtol=0,atol=1e-9):raise ValueError('Reference must remain identity')
     if len(frames)>20:
         report=dict(schema='femto-local-refinement-v1',accepted=False,reason='more_than_20_views_budget',source_dataset=str(dataset),frames=[])
-        (output/'refinement_report.json').write_text(json.dumps(report),encoding='utf-8')
+        write_json(output/'refinement_report.json', report, indent=None, ensure_ascii=True)
         return dataset,report
     evidence=set(dataset/'calibration'/p.name for p in (dataset/'calibration').iterdir() if p.is_file())
     evidence.update([dataset/'manifest.json',dataset/'frames.jsonl'])
     for f in frames:evidence.update((dataset/f[k]).resolve() for k in ('rgb','depth','pose'))
     hashes={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in evidence}
-    mx,my,k,_,_=_distortion_maps(dataset)
+    mx,my,k,_,_=distortion_maps(dataset)
     clouds=[];checks=[]
     for frame in frames:
-        rgb=_read_image(dataset/frame['rgb'],cv2.IMREAD_COLOR);depth=_read_image(dataset/frame['depth'],cv2.IMREAD_UNCHANGED)
-        rgbd,intrinsic,_,_=_prepare_rgbd(rgb,depth,mx,my,k,.5,.25,2.21)
+        rgb=imread_unicode(dataset/frame['rgb'],cv2.IMREAD_COLOR);depth=imread_unicode(dataset/frame['depth'],cv2.IMREAD_UNCHANGED)
+        rgbd,intrinsic,_,_=prepare_rgbd(rgb,depth,mx,my,k,.5,.25,2.21)
         full=o3d.geometry.PointCloud.create_from_rgbd_image(rgbd,intrinsic)
         # Disjoint point samples for fitting and comparison; both still share sensor noise.
         fit=full.select_by_index(list(range(0,len(full.points),2))).voxel_down_sample(.003)
@@ -151,7 +151,7 @@ def refine(dataset,output):
     report['source_unchanged']=unchanged
     if not unchanged:raise ValueError('Source changed during refinement')
     report_path=output/'refinement_report.json'
-    report_path.write_text(json.dumps(report,ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
+    write_json_strict(report_path, report)
     if not accepted:return dataset,report
     derived=output/'dataset';derived.mkdir();(derived/'pose').mkdir();shutil.copytree(dataset/'calibration',derived/'calibration')
     import os
@@ -160,19 +160,19 @@ def refine(dataset,output):
         record['T_WC']=newposes[i].tolist()
         if i:record.update(pose_source='offline_robust_icp_research_grade',initial_pose_source=record.get('pose_source'),initial_T_WC=poses[i].tolist())
         frame['pose']=f'pose/{i:06}.json'
-        (derived/frame['pose']).write_text(json.dumps(record,ensure_ascii=False,indent=2),encoding='utf-8')
+        write_json(derived/frame['pose'], record)
         for key in ('rgb','depth'):frame[key]=os.path.relpath((dataset/frame[key]).resolve(),derived).replace('\\','/')
-    (derived/'frames.jsonl').write_text(''.join(json.dumps(f)+'\n' for f in frames),encoding='utf-8')
+    write_jsonl(derived/'frames.jsonl', frames, ensure_ascii=True, compact=False)
     manifest['local_capture']['refinement_report']=str(report_path)
     manifest['pose']=dict(valid=True,source='offline_robust_icp_research_grade')
     manifest['refinement_source_dataset']=str(dataset)
-    (derived/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+    write_json(derived/'manifest.json', manifest)
     quality=json.loads((dataset/'pose_quality_report.json').read_text(encoding='utf-8-sig'))
     from femto.tracking.moving_quality import pose_diversity
     quality['translation_span_m'],quality['rotation_span_deg']=pose_diversity(newposes)
     quality['refinement_report']=str(report_path)
     quality['limitations']=quality.get('limitations',[])+report['limitations']
-    (derived/'pose_quality_report.json').write_text(json.dumps(quality,ensure_ascii=False,indent=2),encoding='utf-8')
+    write_json(derived/'pose_quality_report.json', quality)
     return derived,report
 
 

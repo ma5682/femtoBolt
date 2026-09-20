@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 
 from femto.gsplat.scene_gsplat_data import read_ply_vertex_records
+from femto.io_utils import write_json
 
 
 SPZ_SOURCE_TAG = "v3.0.0"
@@ -332,8 +333,8 @@ def export_run_spz(run_directory: Path, *, source_coordinate: str = "RDF") -> di
     # compatibility fields expected by downstream release tooling.
     manifest["model_spz"] = str(spz_path)
     manifest["spz_error"] = None
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(report_path, report)
+    write_json(manifest_path, manifest)
     return {
         "status": "exported",
         "run_directory": str(run_directory),
@@ -401,8 +402,7 @@ def write_model_lineage(
         "spz_error": spz_report.get("error") if spz_report else None,
         "outputs": {"ply": ply_report, "spz": spz_report},
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(path, manifest)
     return manifest
 
 

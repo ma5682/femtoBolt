@@ -29,7 +29,7 @@ from femto.geometry.fusion import (
     temporal_median_depth,
     write_point_cloud_safe,
 )
-from femto.io_utils import append_jsonl, imwrite_unicode, write_json as json_dump
+from femto.io_utils import append_jsonl, imwrite_unicode, write_json
 from femto.hardware.orbbec_rgbd import OrbbecAlignedCamera
 from femto.geometry.pose_geometry import (
     LANDMARK_NAMES,
@@ -256,7 +256,7 @@ def write_selected_frame(
         np.rint(np.clip(depth_mm, 0, 65535)).astype(np.uint16),
     )
     imwrite_unicode(session / "selected" / "mask" / f"{stem}.png", mask)
-    json_dump(session / "selected" / "pose" / f"{stem}.json", pose_record)
+    write_json(session / "selected" / "pose" / f"{stem}.json", pose_record)
 
 
 def create_session(output_root: Path) -> Path:
@@ -344,7 +344,7 @@ def _evaluate_top_frame(args,session,event_log,frame,intrinsics,result,ctx,captu
                 ctx.reference_depth = frame.depth_mm.copy()
                 ctx.reference_mask = mask.copy()
             status = f"Accepted {len(ctx.accepted_depths)}/{args.accepted_frames}"
-            json_dump(session / "latest_joints.json", pose_record)
+            write_json(session / "latest_joints.json", pose_record)
     elif capture_active:
         reject_reason = "no_pose"
         status = "Rejected: no_pose"
@@ -388,8 +388,8 @@ def _build_top_outputs(session,accepted_colors,accepted_depths,accepted_masks,ac
         "joints": serialise_joints(fused_joints),
         "joint_temporal_support": [int(value) for value in joint_support],
     }
-    json_dump(session / "joints_3d_m.json", joints_record)
-    json_dump(session / "patient_regions_3d_m.json", regions)
+    write_json(session / "joints_3d_m.json", joints_record)
+    write_json(session / "patient_regions_3d_m.json", regions)
     with (session / "joints_3d_m.csv").open("w", newline="", encoding="utf-8-sig") as output:
         writer = csv.writer(output)
         writer.writerow(["index", "name", "x_m", "y_m", "z_m", "support_frames"])
@@ -463,7 +463,7 @@ def _write_top_delivery(args,session,camera_metadata,intrinsics,accepted_count,f
             "A moving eye-in-hand scan requires synchronized robot T_BF and calibrated T_FC.",
         ],
     }
-    json_dump(session / "quality_report.json", report)
+    write_json(session / "quality_report.json", report)
     manifest = {
         "schema": "femto-patient-top-scan-v1",
         "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
@@ -485,7 +485,7 @@ def _write_top_delivery(args,session,camera_metadata,intrinsics,accepted_count,f
             },
         },
     }
-    json_dump(session / "manifest.json", manifest)
+    write_json(session / "manifest.json", manifest)
     args.output_root.mkdir(parents=True, exist_ok=True)
     (args.output_root / "latest_session.txt").write_text(str(session), encoding="utf-8")
     print(f"[COMPLETE] {session}", flush=True)
@@ -524,7 +524,7 @@ def _validate_top_capture(args,session,last_display,capture_was_started,preview_
             "preview_frames_seen": preview_frames_seen,
             "message": "Preview was closed before START CAPTURE was pressed.",
         }
-        json_dump(session / "quality_report.json", report)
+        write_json(session / "quality_report.json", report)
         print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
         return 0
     if accepted_count < args.minimum_frames:
@@ -535,7 +535,7 @@ def _validate_top_capture(args,session,last_display,capture_was_started,preview_
             "frames_seen": frames_seen,
             "rejected": rejected_counts,
         }
-        json_dump(session / "quality_report.json", report)
+        write_json(session / "quality_report.json", report)
         print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
         return 2
     return None
@@ -588,8 +588,8 @@ def main() -> int:
         with OrbbecAlignedCamera() as camera, PoseLandmarker.create_from_options(options) as landmarker:
             assert camera.intrinsics is not None
             intrinsics = camera.intrinsics
-            json_dump(session / "camera_intrinsic.json", intrinsics.to_dict())
-            json_dump(session / "camera_metadata.json", camera.metadata)
+            write_json(session / "camera_intrinsic.json", intrinsics.to_dict())
+            write_json(session / "camera_metadata.json", camera.metadata)
             if not args.no_window:
                 cv2.namedWindow(window_title, cv2.WINDOW_NORMAL)
                 cv2.setMouseCallback(window_title, on_mouse)
@@ -615,7 +615,7 @@ def main() -> int:
                 if camera.intrinsics != intrinsics:
                     intrinsics = camera.intrinsics
                     assert intrinsics is not None
-                    json_dump(session / "camera_intrinsic.json", intrinsics.to_dict())
+                    write_json(session / "camera_intrinsic.json", intrinsics.to_dict())
                 preview_frames_seen += 1
                 if capture_active:
                     frames_seen += 1

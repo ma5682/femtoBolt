@@ -13,6 +13,7 @@ from PIL import Image
 
 from femto.depth.depth_quality import DepthQualityConfig, process_depth_quality
 from femto.geometry.depth_confidence_cloud import build_confident_depth_cloud, write_confident_point_cloud
+from femto.io_utils import write_json
 
 
 def replay_depth_quality(source: Path, *, frame_index: int = 0, mode: str = 'quality') -> Path:
@@ -55,7 +56,7 @@ def replay_depth_quality(source: Path, *, frame_index: int = 0, mode: str = 'qua
                    repaired_pixels=report['repaired_pixels'], policy=report['policy'], quality_files=paths,
                    mode=mode, processing_ms=report['processing_ms'], depth_error_check=report['depth_error_check'],
                    material_acceptance='Unlabelled existing real capture; not a five-material physical acceptance test')
-    (output/'replay_verification.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
+    write_json(output/'replay_verification.json', summary)
     if not unchanged or not observed_unchanged:
         raise AssertionError('Original evidence changed')
     return output

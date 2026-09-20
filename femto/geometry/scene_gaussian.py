@@ -14,6 +14,8 @@ from typing import Any
 import numpy as np
 import open3d as o3d
 
+from femto.io_utils import write_json
+
 from femto.geometry.fusion import write_point_cloud_safe
 
 
@@ -139,7 +141,7 @@ def export_gaussian_initialization(
         "commercial_provenance": "independent PLY writer; no Graphdeco source",
     }
     manifest_path = output_dir / "gaussian_manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(manifest_path, manifest)
     return {
         "model": str(model_path),
         "preview": str(preview_path),

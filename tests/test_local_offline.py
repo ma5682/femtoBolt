@@ -11,7 +11,7 @@ from unittest import mock
 
 from femto.capture.local_capture import LocalCapture
 from femto.pipeline.local_offline import LocalOfflineJob, PublicationError, publish_result
-from femto.io_utils import load_json_object as read_json
+from femto.io_utils import load_json_object
 from femto.local.local_processing import SCHEMA
 
 
@@ -69,7 +69,7 @@ class OfflineTests(unittest.TestCase):
             write(result/'publication.json',bad)
             self.assertIsNone(mode_of(result))
             self.assertIsNone(restore(outputs)['moving'])
-        summary=read_json(result/'demo_summary.json')
+        summary=load_json_object(result/'demo_summary.json')
         summary['publication_required']=False
         write(result/'demo_summary.json',summary)
         self.assertIsNone(mode_of(result))
@@ -105,7 +105,7 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual([str(outputs / 'latest_complete_demo.txt')], raised.exception.details['rolled_back_markers'])
         for path, original in before.items():
             self.assertEqual(path.read_bytes(), original)
-        self.assertEqual(read_json(result / 'publication.json')['status'], 'failed')
+        self.assertEqual(load_json_object(result / 'publication.json')['status'], 'failed')
 
     def test_cancel_during_publication_rolls_back_before_completion_receipt(self):
         import femto.pipeline.local_offline as local_offline
@@ -124,7 +124,7 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual(raised.exception.status,'cancelled')
         self.assertEqual(marker.read_text(),'previous')
         self.assertFalse((outputs/'latest_moving_reconstruction.txt').exists())
-        self.assertEqual(read_json(result/'publication.json')['status'],'cancelled')
+        self.assertEqual(load_json_object(result/'publication.json')['status'],'cancelled')
 
     def test_application_shutdown_cancels_even_before_sdk_owner_returns(self):
         from test_local_capture import make_camera
@@ -181,7 +181,7 @@ class OfflineTests(unittest.TestCase):
                 job.run()
         self.assertEqual(raised.exception.status, 'cancelled')
         self.assertFalse(list(outputs.glob('latest*.txt')))
-        self.assertEqual(read_json(result / 'publication.json')['status'], 'cancelled')
+        self.assertEqual(load_json_object(result / 'publication.json')['status'], 'cancelled')
 
     def test_child_sidecar_cannot_edit_a_different_existing_result(self):
         dataset, outputs, foreign, quality = result_fixture(self.root, session='foreign')
@@ -245,7 +245,7 @@ class OfflineTests(unittest.TestCase):
         from test_local_comparison import make_fixture
         from femto.pipeline.local_comparison import changed_files, fingerprints
         dataset = make_fixture(self.root / 'fixture')
-        manifest = read_json(dataset / 'manifest.json')
+        manifest = load_json_object(dataset / 'manifest.json')
         before = fingerprints(p for p in (self.root / 'fixture').rglob('*') if p.is_file())
         outputs = self.root / 'results'
         outputs.mkdir()
@@ -258,8 +258,8 @@ class OfflineTests(unittest.TestCase):
         result, summary = job.run()
         self.assertEqual(changed_files(before), [])
         self.assertEqual(latest.read_text(), 'previous-model')
-        self.assertTrue(read_json(job.output / 'source_integrity.json')['source_unchanged'])
-        self.assertEqual(read_json(result / 'publication.json')['status'], 'pending')
+        self.assertTrue(load_json_object(job.output / 'source_integrity.json')['source_unchanged'])
+        self.assertEqual(load_json_object(result / 'publication.json')['status'], 'pending')
         self.assertEqual(summary['data_kind'], 'synthetic')
         self.assertEqual(job.report['reconstruction']['status'], 'complete')
         self.assertTrue((result / 'reconstruction/initial_observed_points_m.ply').is_file())

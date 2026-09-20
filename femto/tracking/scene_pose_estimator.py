@@ -13,10 +13,10 @@ import cv2
 import numpy as np
 import open3d as o3d
 
-from femto.io_utils import imread_unicode as _read_image, load_json, load_jsonl
+from femto.io_utils import imread_unicode, load_json, load_jsonl, write_json, write_jsonl
 from femto.tracking.moving_quality import POLICY, frame_quality, cycle_consistency, select_keyframes
 from femto.dataset.scene_dataset_validator import resolve_dataset, validate_pose
-from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps, prepare_rgbd as _prepare_rgbd
+from femto.geometry.rgbd_frames import distortion_maps, prepare_rgbd
 from femto.tracking.moving_quality import pose_diversity
 
 
@@ -162,11 +162,11 @@ def assess_background_motion(
     details: list[dict[str, Any]] = []
     for source_index, target_index in pairs:
         if source_index not in image_cache:
-            image_cache[source_index] = _read_image(
+            image_cache[source_index] = imread_unicode(
                 dataset / frames[source_index]["rgb"], cv2.IMREAD_GRAYSCALE
             )
         if target_index not in image_cache:
-            image_cache[target_index] = _read_image(
+            image_cache[target_index] = imread_unicode(
                 dataset / frames[target_index]["rgb"], cv2.IMREAD_GRAYSCALE
             )
         pair = assess_rgb_motion_pair(
@@ -283,16 +283,13 @@ def estimate_poses(
         evidence["valid_output_pose_count"] = 0
         evidence["rejected_frame_count"] = len(evidence.get("rejected_frames", []))
         output.mkdir(parents=True, exist_ok=True)
-        (output / "pose_quality_report.json").write_text(
-            json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        write_json(output / "pose_quality_report.json", evidence)
         try:
             from femto.reports.scene_quality_report import write_report
             write_report(output)
         except Exception as report_error:
             evidence["quality_report_error"] = str(report_error)
-            (output / "pose_quality_report.json").write_text(
-                json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
+            write_json(output / "pose_quality_report.json", evidence)
         raise
 
 
@@ -327,7 +324,7 @@ def _prepare_pose_estimation(dataset,output,image_scale,failure_evidence):
     range_m = source_manifest.get("camera", {}).get("depth_range_m")
     depth_min_m = float(parameters.get("depth_min_mm", 1000.0 * range_m[0] if range_m else 500.0)) / 1000.0
     depth_max_m = float(parameters.get("depth_max_mm", 1000.0 * range_m[1] if range_m else 3860.0)) / 1000.0
-    map_x, map_y, K, width, height = _distortion_maps(dataset)
+    map_x, map_y, K, width, height = distortion_maps(dataset)
     option = o3d.pipelines.odometry.OdometryOption()
     option.iteration_number_per_pyramid_level = o3d.utility.IntVector([30, 20, 10])
     option.depth_diff_max = 0.07
@@ -386,17 +383,14 @@ def _write_pose_outputs(dataset,output,source_manifest,frames,accepted_frames,po
             "source_dataset": str(dataset),
             "warning": "Research-grade sequential odometry; no loop closure or relocalization.",
         }
-        pose_path.write_text(json.dumps(pose_record, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json(pose_path, pose_record)
         derived = dict(frame)
         derived["rgb"] = _relative_path((dataset / frame["rgb"]).resolve(), output)
         derived["depth"] = _relative_path((dataset / frame["depth"]).resolve(), output)
         derived["pose"] = pose_path.relative_to(output).as_posix()
         derived["pose_valid"] = True
         derived_frames.append(derived)
-    (output / "frames.jsonl").write_text(
-        "".join(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n" for item in derived_frames),
-        encoding="utf-8",
-    )
+    write_jsonl(output / "frames.jsonl", derived_frames)
     derived_manifest = dict(source_manifest)
     derived_manifest.update(
         {
@@ -416,9 +410,7 @@ def _write_pose_outputs(dataset,output,source_manifest,frames,accepted_frames,po
             },
         }
     )
-    (output / "manifest.json").write_text(
-        json.dumps(derived_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json(output / "manifest.json", derived_manifest)
     report = {
         "schema": "femto-rgbd-odometry-report-v1",
         "created_local": time.strftime("%Y-%m-%d %H:%M:%S %z"),
@@ -448,9 +440,7 @@ def _write_pose_outputs(dataset,output,source_manifest,frames,accepted_frames,po
             "Robot T_BF + calibrated T_FC remains the preferred production pose source for eye-in-hand use.",
         ],
     }
-    (output / "pose_quality_report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json(output / "pose_quality_report.json", report)
     marker = dataset / "derived" / "latest_posed_dataset.txt"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(str(output), encoding="utf-8")
@@ -481,8 +471,8 @@ def _estimate_poses(
     previous_cloud: o3d.geometry.PointCloud | None = None
     intrinsic: o3d.camera.PinholeCameraIntrinsic | None = None
     for ordinal, frame in enumerate(frames):
-        color = _read_image(dataset / frame["rgb"], cv2.IMREAD_COLOR)
-        depth = _read_image(dataset / frame["depth"], cv2.IMREAD_UNCHANGED)
+        color = imread_unicode(dataset / frame["rgb"], cv2.IMREAD_COLOR)
+        depth = imread_unicode(dataset / frame["depth"], cv2.IMREAD_UNCHANGED)
         if color.shape[:2] != (height, width) or depth.shape != (height, width):
             raise ValueError(f"Frame {frame['frame']} dimensions do not match calibration")
         if accepted_ordinals and ordinal - accepted_ordinals[-1] > POLICY["max_tracking_gap_frames"]:
@@ -492,7 +482,7 @@ def _estimate_poses(
         if not quality["usable"]:
             rejected_frames.append(dict(frame_ordinal=ordinal, source_frame=int(frame["frame"]), reason=quality["state"]))
             continue
-        current_rgbd, intrinsic, _, _ = _prepare_rgbd(
+        current_rgbd, intrinsic, _, _ = prepare_rgbd(
             color, depth, map_x, map_y, K, image_scale, depth_min_m, depth_max_m
         )
         current_cloud = o3d.geometry.PointCloud.create_from_rgbd_image(

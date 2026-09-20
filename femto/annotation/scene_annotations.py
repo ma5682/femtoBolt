@@ -10,6 +10,7 @@ import open3d as o3d
 import trimesh
 from femto.geometry.fusion import write_point_cloud_safe
 import cv2
+from femto.io_utils import write_json_strict
 
 STATUS = 'not_physically_validated'
 
@@ -464,8 +465,7 @@ class AnnotationStore:
                 physical_accuracy_verified=False, data_layers=layer_contract(self), files=assets,
                 file_sha256={name:hashlib.sha256((folder/name).read_bytes()).hexdigest()
                              for name in assets.values()})
-            (folder / manifest_name).write_text(json.dumps(manifest,ensure_ascii=False,
-                indent=2,allow_nan=False),encoding='utf-8')
+            write_json_strict(folder / manifest_name, manifest)
             regions.append(dict(region, **assets, region_manifest_file=manifest_name))
         data = dict(version=1, source_mesh=self.source, geometry_sha256=self.digest,
                     coordinate_frame='world_rdf', unit='metre', scale_validation=STATUS,
@@ -481,7 +481,7 @@ class AnnotationStore:
             '局部区域为开放表面，不是封闭实体；请勿为了消除提示直接覆盖原模型封孔。\n'
             '显示平滑法线不改变顶点坐标；几何毛刺、孔洞和原纹理接缝可能仍存在。\n',encoding='utf-8-sig')
         check()
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
+        write_json_strict(path, data)
         self.points, self.regions = points, validated_regions
         self.mark_saved()
         return path

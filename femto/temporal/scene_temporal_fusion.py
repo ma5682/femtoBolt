@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from femto.io_utils import imread_unicode as _read, imwrite_unicode, write_json as json_dump
+from femto.io_utils import imread_unicode, imwrite_unicode, write_json, write_jsonl
 from femto.dataset.calibration_files import write_calibration
 from femto.tracking.scene_pose_estimator import assess_rgb_motion_pair
 from femto.depth.temporal_depth_fusion import fuse_temporal_depth
@@ -80,8 +80,8 @@ def build_temporal_dataset(source: Path, *, frame_count=5, start=0, mode='fast')
     intr=SimpleNamespace(**json.loads((source/'calibration/color_intrinsic.json').read_text(encoding='utf-8')))
     distortion=json.loads((source/'calibration/distortion.json').read_text(encoding='utf-8'))['rgb']
     low,high=np.asarray(manifest['camera']['depth_range_m'])*1000
-    depths=[_read(p,cv2.IMREAD_UNCHANGED) for p in depth_paths]
-    images=[_read(p,cv2.IMREAD_COLOR) for p in rgb_paths]
+    depths=[imread_unicode(p,cv2.IMREAD_UNCHANGED) for p in depth_paths]
+    images=[imread_unicode(p,cv2.IMREAD_COLOR) for p in rgb_paths]
     shape=(intr.height,intr.width)
     if any(d.shape!=shape or d.dtype!=np.uint16 for d in depths) or any(c.shape!=(*shape,3) for c in images):
         raise ValueError('RGB-D/calibration grids changed')
@@ -89,9 +89,9 @@ def build_temporal_dataset(source: Path, *, frame_count=5, start=0, mode='fast')
     output.mkdir(parents=True,exist_ok=False)
     motion_mask,motion=audit_temporal_motion(images)
     imwrite_unicode(output/'motion_mask.png',motion_mask.astype(np.uint8)*255)
-    json_dump(output/'motion_report.json',motion)
+    write_json(output/'motion_report.json',motion)
     if not motion['passed']:
-        json_dump(output/'temporal_report.json',dict(status='rejected_motion_or_insufficient_static_evidence',
+        write_json(output/'temporal_report.json',dict(status='rejected_motion_or_insufficient_static_evidence',
                   frame_count=frame_count,source=str(source),motion=motion,source_sha256=hashes,
                   source_unchanged=all(_hash(source/p)==sha for p,sha in hashes.items())))
         return output
@@ -137,7 +137,7 @@ def build_temporal_dataset(source: Path, *, frame_count=5, start=0, mode='fast')
         report['process_rss_bytes']=memory.rss
     except ImportError:
         report['process_peak_working_set_bytes']=None
-    json_dump(output/'temporal_report.json',report)
+    write_json(output/'temporal_report.json',report)
     if not unchanged: raise RuntimeError('Original evidence changed')
     return output
 
@@ -177,9 +177,9 @@ def capture_temporal_frames(root: Path, frame_count=5):
                   parameters=dict(fixed_camera=True,processing_mode='temporal',depth_min_mm=250,depth_max_mm=2210),
                   pose=dict(valid=False,source='not_estimated; fixed-camera temporal pixels only'),
                   capture_policy='bounded burst; no quality computation/PNG encoding in frame read loop')
-    json_dump(output/'manifest.json',manifest)
-    json_dump(output/'metadata.json',dict(**manifest,timestamps_us=[f.timestamp_us for f in frames]))
-    (output/'frames.jsonl').write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records),encoding='utf-8')
+    write_json(output/'manifest.json',manifest)
+    write_json(output/'metadata.json',dict(**manifest,timestamps_us=[f.timestamp_us for f in frames]))
+    write_jsonl(output/'frames.jsonl', records, compact=False)
     if len(frames)!=frame_count: raise RuntimeError(f'Capture timeout; partial raw evidence saved at {output}')
     return output
 

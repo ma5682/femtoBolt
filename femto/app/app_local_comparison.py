@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import ttk
 import uuid
 
-from femto.io_utils import load_json_object as read_json
+from femto.io_utils import load_json_object
 
 
 def comparison_source(result_or_dataset):
@@ -20,17 +20,17 @@ def comparison_source(result_or_dataset):
         root = root.parent
     expected = None
     if (root / 'reconstruction/reconstruction_report.json').is_file():
-        if (root / 'publication.json').is_file() and read_json(root / 'publication.json').get('status') != 'published':
+        if (root / 'publication.json').is_file() and load_json_object(root / 'publication.json').get('status') != 'published':
             raise ValueError('This result was not published; choose a completed result or its original posed dataset')
-        context = read_json(root / 'reconstruction/local_geometry.json')
+        context = load_json_object(root / 'reconstruction/local_geometry.json')
         expected = (context.get('session_id'), context.get('reference_frame_id'))
-        root = Path(read_json(root / 'reconstruction/reconstruction_report.json')['source_dataset']).resolve()
+        root = Path(load_json_object(root / 'reconstruction/reconstruction_report.json')['source_dataset']).resolve()
     seen = set()
     for _ in range(8):
         if root in seen:
             raise ValueError('Cyclic comparison source ancestry')
         seen.add(root)
-        manifest = read_json(root / 'manifest.json')
+        manifest = load_json_object(root / 'manifest.json')
         local = manifest.get('local_capture', {})
         identity = (local.get('session_id'), local.get('reference_frame_id'))
         if not local.get('measured_only') or not identity[0] or type(identity[1]) is not int:
@@ -40,7 +40,7 @@ def comparison_source(result_or_dataset):
         if identity != expected:
             raise ValueError('Comparison source crosses a session or initial reference')
         if local.get('temporal_support_report'):
-            root = Path(read_json(local['temporal_support_report'])['source_dataset']).resolve()
+            root = Path(load_json_object(local['temporal_support_report'])['source_dataset']).resolve()
         elif manifest.get('refinement_source_dataset'):
             root = Path(manifest['refinement_source_dataset']).resolve()
         elif manifest.get('pose', {}).get('source') == 'online_rgbd_research_grade':

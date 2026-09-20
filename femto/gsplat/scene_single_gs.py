@@ -11,7 +11,7 @@ import time
 import numpy as np
 from PIL import Image
 
-from femto.io_utils import load_json as read_json, write_json
+from femto.io_utils import load_json, write_json
 
 from femto.paths import REPO_ROOT as ROOT
 from femto.dataset.single_frame_source import resolve_source
@@ -38,8 +38,8 @@ def prepare(photo: Path, output: Path):
     for path in files:
         path.resolve().relative_to(photo)
     hashes = {str(p.relative_to(photo)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
-    intr = read_json(files[2])
-    distortion = read_json(files[3])['rgb']
+    intr = load_json(files[2])
+    distortion = load_json(files[3])['rgb']
     if 'BROWN_CONRADY_K6' not in distortion.get('model', ''):
         raise ValueError('Unsupported RGB distortion model')
     K = np.array([[intr['fx'], 0, intr['cx']], [0, intr['fy'], intr['cy']], [0, 0, 1]], dtype=float)
@@ -145,7 +145,7 @@ def fit(output: Path, config=SingleConfig(), *, publish=True):
     from femto.gsplat.scene_gsplat_guard import guard_cuda, ResourceLimitError, cuda_memory_snapshot
     from femto.gsplat.scene_gsplat_export import write_trained_gaussian_ply
     output = Path(output).resolve()
-    meta = read_json(output/'single_input.json')
+    meta = load_json(output/'single_input.json')
     if meta.get('schema') != SCHEMA or not meta.get('fixed_view'):
         raise ValueError('Not a single-frame input')
     if (output/'single_report.json').exists():

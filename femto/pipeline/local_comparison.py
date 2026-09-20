@@ -20,7 +20,7 @@ import time
 import traceback
 import uuid
 
-from femto.io_utils import load_json_object as read_json, load_jsonl, write_json_strict as write_json
+from femto.io_utils import load_json_object, load_jsonl, write_json_strict
 
 
 from femto.paths import REPO_ROOT as ROOT
@@ -93,7 +93,7 @@ def _validate_selected_frames(dataset, frames, raw, tracked, raw_index, expected
             raise ValueError('Selected source frame not found')
         record, raw_frame = tracked[number], raw_index[number]
         pose_path = (dataset / frame['pose']).resolve()
-        pose = read_json(pose_path)
+        pose = load_json_object(pose_path)
         matrix = np.asarray(pose.get('T_WC'), dtype=float)
         if (frame.get('pose_valid') is not True or pose.get('pose_valid') is not True
                 or validate_pose(matrix) or pose.get('pose_source') != expected_pose_source
@@ -133,7 +133,7 @@ def validate_comparison_input(dataset, *, max_views=20, allow_synthetic=False):
     from femto.dataset.local_reference import calibration_identity, validate_reference_provenance
 
     dataset = Path(dataset).resolve()
-    manifest = read_json(dataset / 'manifest.json')
+    manifest = load_json_object(dataset / 'manifest.json')
     local = manifest.get('local_capture', {})
     if (manifest.get('schema') != 'femto-full-scene-rgbd-v1'
             or not local.get('measured_only') or manifest.get('temporal_fusion')):
@@ -160,7 +160,7 @@ def validate_comparison_input(dataset, *, max_views=20, allow_synthetic=False):
     tracking_path = Path(local['tracking_report']).resolve()
     if tracking_path != raw / 'derived' / 'local_capture_report.json':
         raise ValueError('Tracking report belongs to another source session')
-    tracking = read_json(tracking_path)
+    tracking = load_json_object(tracking_path)
     records = read_rows(raw / 'derived' / 'live_tracking.jsonl')
     raw_frames = read_rows(raw / 'frames.jsonl')
     tracked = _index(records, 'frame_id')
@@ -217,7 +217,7 @@ def validate_comparison_input(dataset, *, max_views=20, allow_synthetic=False):
         min_depth_mm=limits[0], max_depth_mm=limits[1], no_write_report=True))
     if code or not validation.get('ready_for_multiview_reconstruction'):
         raise ValueError('Read-only dataset validation rejected: ' + str(validation.get('errors')))
-    quality = read_json(dataset / 'pose_quality_report.json')
+    quality = load_json_object(dataset / 'pose_quality_report.json')
     if quality.get('accepted_frame_ordinals') != ids or quality.get('source_frame_count') != len(records):
         raise ValueError('Online quality report source frame mismatch')
     truth = manifest.get('comparison_ground_truth')
@@ -251,12 +251,12 @@ def validate_variant_input(baseline, dataset, *, allow_masks=False):
     import numpy as np
     from femto.dataset.local_reference import calibration_identity, validate_reference_provenance
     from femto.dataset.scene_dataset_validator import validate_pose
-    from femto.io_utils import imread_unicode as _read_image
+    from femto.io_utils import imread_unicode
     from femto.local.local_temporal_support import filtered_depth, stationary_window
     import cv2
 
     source, dataset = Path(baseline['dataset']), Path(dataset).resolve()
-    manifest, original = read_json(dataset / 'manifest.json'), read_json(source / 'manifest.json')
+    manifest, original = load_json_object(dataset / 'manifest.json'), load_json_object(source / 'manifest.json')
     local = manifest.get('local_capture', {})
     if (local.get('session_id') != baseline['session_id']
             or local.get('reference_frame_id') != baseline['reference_frame_id']
@@ -274,7 +274,7 @@ def validate_variant_input(baseline, dataset, *, allow_masks=False):
     if any(f.get('local_temporal_support') for f in frames):
         if not allow_masks:
             raise ValueError('Unexpected temporal mask in raw-depth version')
-        temporal = read_json(local['temporal_support_report'])
+        temporal = load_json_object(local['temporal_support_report'])
         if temporal.get('source_unchanged') is not True or changed_files(temporal.get('source_sha256', {})):
             raise ValueError('Temporal source evidence changed')
         if [r.get('frame') for r in temporal.get('frames', [])] != baseline['accepted_frame_ids']:
@@ -288,7 +288,7 @@ def validate_variant_input(baseline, dataset, *, allow_masks=False):
         for key in ('camera_timestamp_us', 'color_timestamp_us', 'depth_timestamp_us'):
             if frame.get(key) != reference_frame.get(key):
                 raise ValueError('Variant timestamp mismatch')
-        pose = read_json(dataset / frame['pose'])
+        pose = load_json_object(dataset / frame['pose'])
         if (validate_pose(pose.get('T_WC')) or pose.get('pose_valid') is not True
                 or pose.get('frame') != frame['frame'] or pose.get('session_id') != baseline['session_id']
                 or pose.get('reference_frame_id') != baseline['reference_frame_id']
@@ -318,7 +318,7 @@ def validate_variant_input(baseline, dataset, *, allow_masks=False):
                 path = str((dataset / frame[key]).resolve())
                 if temporal['source_sha256'].get(path) != sha256(path):
                     raise ValueError('Temporal mask source image is unbound')
-            depth = _read_image(dataset / frame['depth'], cv2.IMREAD_UNCHANGED)
+            depth = imread_unicode(dataset / frame['depth'], cv2.IMREAD_UNCHANGED)
             filtered_depth(dataset, frame, depth)  # hash, shape, dtype and binary-value gate
         rows.append(pose)
     validate_reference_provenance(baseline['reference_provenance'], dataset, frames[0], rows[0])
@@ -343,20 +343,20 @@ def copy_unchanged_model(source, output):
     source, output = Path(source).resolve(), Path(output).resolve()
     shutil.copytree(source, output)
     for path in output.rglob('*.json'):
-        value = read_json(path)
-        write_json(path, _replace_root(value, source, output))
+        value = load_json_object(path)
+        write_json_strict(path, _replace_root(value, source, output))
     for path in source.rglob('*'):
         if path.is_file() and path.suffix.lower() in ('.ply', '.obj', '.glb', '.png', '.jpg'):
             if sha256(path) != sha256(output / path.relative_to(source)):
                 raise ValueError('Unchanged model copy differs from previous version')
-    return read_json(output / 'reconstruction_report.json')
+    return load_json_object(output / 'reconstruction_report.json')
 
 
 def _worker(spec):
     stage, dataset, output = spec['stage'], Path(spec['dataset']), Path(spec['output'])
     if stage == 'validate':
         return validate_comparison_input(dataset, max_views=spec['max_views'], allow_synthetic=spec['allow_synthetic'])
-    baseline = read_json(spec['baseline'])
+    baseline = load_json_object(spec['baseline'])
     if changed_files(baseline['source_sha256']):
         raise ValueError('Original evidence changed before stage')
     if changed_files(baseline.get('implementation_sha256', {})):
@@ -599,7 +599,7 @@ def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=
     dataset, output = Path(dataset).resolve(), Path(output).resolve()
     if output.exists():
         raise FileExistsError('Comparison output must be a new directory')
-    manifest = read_json(dataset / 'manifest.json')
+    manifest = load_json_object(dataset / 'manifest.json')
     raw = Path(manifest.get('source_dataset', dataset)).resolve()
     if output == dataset or output.is_relative_to(dataset) or output == raw or output.is_relative_to(raw):
         raise ValueError('Comparison output cannot be inside original or posed data')
@@ -632,7 +632,7 @@ def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=
             'Noise, ghosting and ROI hole filling require a predefined region and independent evidence; not inferred from point count.'])
 
     def publish():
-        write_json(report_path, report)
+        write_json_strict(report_path, report)
         if progress:
             progress(copy.deepcopy(report))
 
@@ -646,7 +646,7 @@ def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=
             voxel_m=voxel_m, sdf_trunc_m=sdf_trunc_m, render_width=render_width, **extra)
         spec_path = output / (name + '_request.json')
         result_path = output / (name + '_result.json')
-        write_json(spec_path, spec)
+        write_json_strict(spec_path, spec)
         publish()
         def update(stats):
             row.update(stats)
@@ -655,7 +655,7 @@ def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=
             stats = supervise([sys.executable, '-X', 'utf8', '-m', 'femto.pipeline.local_comparison',
                 '--worker', str(spec_path), '--worker-result', str(result_path)], output / (name + '.log'),
                 timeout_s=stage_timeout_s, memory_mb=memory_mb, cancelled=is_cancelled, progress=update)
-            value = read_json(result_path)
+            value = load_json_object(result_path)
             row.update(state='complete', **stats)
             publish()
             return value, stats
@@ -671,7 +671,7 @@ def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=
     publish()
     try:
         baseline, _ = stage('00_validate', 'validate', dataset, output)
-        write_json(baseline_path, baseline)
+        write_json_strict(baseline_path, baseline)
         report.update(session_id=baseline['session_id'], reference_frame_id=baseline['reference_frame_id'],
             data_kind=baseline['data_kind'], source_frame_count=baseline['source_frame_count'],
             accepted_frame_ids=baseline['accepted_frame_ids'], source_evidence=str(baseline_path))
@@ -698,7 +698,7 @@ def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=
                 geometry_reused=bool(same_as), **value, resource_usage=stats,
                 source_frame_count=baseline['source_frame_count'], accepted_frame_count=len(baseline['accepted_frame_ids']),
                 physical_accuracy_verified=False)
-            write_json(variant_root / 'variant.json', variant)
+            write_json_strict(variant_root / 'variant.json', variant)
             report['variants'].append(variant)
             publish()
         if changed_files(baseline['source_sha256']):
@@ -716,7 +716,7 @@ def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=
         report['latest_changed'] = changed_files(latest)
         report['latest_unchanged'] = not report['latest_changed']
         if baseline_path.is_file():
-            report['source_changed'] = changed_files(read_json(baseline_path)['source_sha256'])
+            report['source_changed'] = changed_files(load_json_object(baseline_path)['source_sha256'])
             report['source_unchanged'] = not report['source_changed']
         else:
             report['source_unchanged'] = None
@@ -744,8 +744,8 @@ def main(argv=None):
     parser.add_argument('--worker-result', type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.worker:
-        value = _worker(read_json(args.worker))
-        write_json(args.worker_result, value)
+        value = _worker(load_json_object(args.worker))
+        write_json_strict(args.worker_result, value)
         return 0
     if args.dataset is None or args.output is None:
         parser.error('dataset and a new output directory are required')

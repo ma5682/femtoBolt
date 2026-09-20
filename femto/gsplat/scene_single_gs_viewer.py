@@ -4,12 +4,10 @@ from femto.paths import REPO_ROOT
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
-import json
 import os
-import tempfile
 from pathlib import Path
 import numpy as np
-from femto.io_utils import load_json as read_json, write_json
+from femto.io_utils import load_json, write_json, write_json_strict
 from femto.gsplat.scene_single_gs import SCHEMA, MARKER, SingleConfig
 
 
@@ -76,7 +74,7 @@ class FixedViewport:
 
 def load_model_metadata(output):
     output=Path(output)
-    meta=read_json(output/'single_report.json')
+    meta=load_json(output/'single_report.json')
     if meta.get('schema')!=SCHEMA or not meta.get('completed') or not meta.get('fixed_view'):
         raise ValueError('Select a completed single-frame fixed-view model')
     model=output/'model.ply'
@@ -90,7 +88,7 @@ class ViewportModelMismatch(ValueError):
 
 
 def load_viewport(path, meta):
-    saved=read_json(path)
+    saved=load_json(path)
     if not isinstance(saved,dict): raise ValueError('Invalid saved region')
     if saved.get('model_sha256')!=meta['model_sha256'] or saved.get('source_fingerprint')!=meta['source_fingerprint']:
         raise ViewportModelMismatch('Saved region belongs to a different source/model')
@@ -174,11 +172,8 @@ class SingleViewer:
         try:
             payload=dict(model_sha256=self.meta['model_sha256'],source_fingerprint=self.meta['source_fingerprint'],
                          viewport=vars(self.view),source_photo=self.meta['source_photo'])
-            with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=self.output,prefix='viewport_',suffix='.tmp',delete=False) as stream:
-                temporary=Path(stream.name)
-                json.dump(payload,stream,ensure_ascii=False,indent=2,allow_nan=False)
-                stream.flush(); os.fsync(stream.fileno())
-            temporary.replace(self.output/'viewport.json')
+            write_json_strict(
+                self.output/'viewport.json', payload, durable=True, temporary_prefix='viewport_')
             self.status.set(self.text('当前区域已保存，可随时回读','Current region saved and ready to load'))
         except (OSError,ValueError) as error:
             self.messagebox.showerror('3DGS',self.text('区域保存失败，请检查模型目录是否可写。','Could not save region. Check that the model folder is writable.'))

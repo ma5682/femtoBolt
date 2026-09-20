@@ -12,7 +12,7 @@ import numpy as np
 
 from femto.dataset.local_reference import calibration_identity, reference_provenance
 from femto.local.local_temporal_support import MASK_SOURCE_SCHEMA, filtered_depth, prepare
-from femto.io_utils import imread_unicode as _read_image, imwrite_unicode
+from femto.io_utils import imread_unicode, imwrite_unicode
 import cv2
 
 
@@ -127,7 +127,7 @@ class TemporalBindingTests(unittest.TestCase):
 
     def chosen(self, dataset, index=2):
         row = next(row for row in read_rows(dataset/'frames.jsonl') if row['frame'] == index)
-        return row, _read_image(dataset/row['depth'], cv2.IMREAD_UNCHANGED)
+        return row, imread_unicode(dataset/row['depth'], cv2.IMREAD_UNCHANGED)
 
     def test_new_binding_preserves_original_pixels_pose_and_source_files(self):
         before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in self.root.rglob('*') if p.is_file()}
@@ -163,7 +163,7 @@ class TemporalBindingTests(unittest.TestCase):
         for path in (dataset/row['rgb'], self.raw/'depth/000001.png'):
             with self.subTest(path=path.name):
                 original = path.read_bytes()
-                picture = _read_image(path, cv2.IMREAD_UNCHANGED)
+                picture = imread_unicode(path, cv2.IMREAD_UNCHANGED)
                 picture[1, 1] += 1
                 imwrite_unicode(path, picture)
                 with self.assertRaises(ValueError):
@@ -265,7 +265,7 @@ class TemporalBindingTests(unittest.TestCase):
     def test_change_during_audit_does_not_rebase_the_expected_source_hash(self):
         def audit(_images):
             path = self.raw/'depth/000001.png'
-            depth = _read_image(path, cv2.IMREAD_UNCHANGED)
+            depth = imread_unicode(path, cv2.IMREAD_UNCHANGED)
             depth[1, 1] += 1
             imwrite_unicode(path, depth)
             return np.zeros((20, 20), bool), dict(passed=True)

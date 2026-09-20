@@ -4,6 +4,8 @@ from datetime import datetime
 import json
 from pathlib import Path
 
+from femto.io_utils import write_json
+
 
 def register_project(reconstruction,path,check=lambda:None):
     """Index a portable project without unpacking or modifying it."""
@@ -20,7 +22,7 @@ def register_project(reconstruction,path,check=lambda:None):
     record=dict(project_file=str(path),name=data.get('region',{}).get('name') or '未命名区域',
         project_id=data['project_id'],revision_id=data['revision_id'],has_plan=bool(data.get('plan')),sha256=library_digest(path,check))
     temporary=folder/(key+'.tmp')
-    temporary.write_text(json.dumps(record,ensure_ascii=False,indent=2),encoding='utf-8')
+    write_json(temporary, record)
     check();temporary.replace(folder/(key+'.json'))
     return path
 

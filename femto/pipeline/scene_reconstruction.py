@@ -15,7 +15,7 @@ import numpy as np
 import open3d as o3d
 
 from femto.geometry.fusion import export_mesh_formats, write_point_cloud_safe
-from femto.io_utils import imread_unicode as _read_image, imwrite_unicode, load_json, load_jsonl
+from femto.io_utils import imread_unicode, imwrite_unicode, load_json, load_jsonl, write_json
 from femto.dataset.scene_dataset_validator import resolve_dataset
 from femto.geometry.scene_gaussian import export_gaussian_initialization
 from femto.geometry.single_frame_quality import clean_depth, compare_geometry, evidence_manifest
@@ -25,7 +25,7 @@ from femto.depth.depth_quality import process_depth_quality
 
 
 from femto.paths import REPO_ROOT as ROOT
-from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps, load_poses as _load_poses, prepare_rgbd as _prepare_rgbd
+from femto.geometry.rgbd_frames import distortion_maps, load_poses, prepare_rgbd
 DEFAULT_DATASETS = ROOT / "datasets"
 
 
@@ -97,7 +97,7 @@ def _prepare_single_frame_evidence(dataset,output,frame,T_WC,color,depth,filled_
     evidence_manifest(dataset, frame, output / "source_evidence.json")
     intr = SimpleNamespace(**load_json(dataset / "calibration" / "color_intrinsic.json"))
     distortion = load_json(dataset / "calibration" / "distortion.json")["rgb"]
-    raw_evidence_depth=_read_image(dataset/frame['reference_raw_depth'],cv2.IMREAD_UNCHANGED) if temporal_input else depth
+    raw_evidence_depth=imread_unicode(dataset/frame['reference_raw_depth'],cv2.IMREAD_UNCHANGED) if temporal_input else depth
     raw_cloud = depth_cloud(raw_evidence_depth, color, intr, distortion, 250, 2210)
     raw_cloud.transform(T_WC)
     depth, cleaning_report = clean_depth(depth)
@@ -115,7 +115,7 @@ def _prepare_single_frame_evidence(dataset,output,frame,T_WC,color,depth,filled_
                                         confidence=depth_confidence,temporal_confidence=True)
     else:
         repaired_cloud, point_confidence = build_confident_depth_cloud(
-            _read_image(dataset / frame['depth'], cv2.IMREAD_UNCHANGED),
+            imread_unicode(dataset / frame['depth'], cv2.IMREAD_UNCHANGED),
             filled_depth, depth_confidence, color, intr, distortion, 250, 2210)
     repaired_cloud.transform(T_WC)
     repaired_cloud_path = output / "derived" / "scene_hole_filled_points_m.ply"
@@ -165,7 +165,7 @@ def _integrate_frame(dataset,output,frame,T_WC,color,depth,filled_depth,depth_co
     if local_measured:
         from femto.local.local_temporal_support import filtered_depth
         integration_depth=filtered_depth(dataset,frame,depth)
-    rgbd, intrinsic, _, filtered_depth = _prepare_rgbd(
+    rgbd, intrinsic, _, filtered_depth = prepare_rgbd(
         color, integration_depth, map_x, map_y, K, image_scale, depth_min_m, depth_max_m
     )
     if local_prepared_depths is not None:
@@ -189,7 +189,7 @@ def _integrate_frame(dataset,output,frame,T_WC,color,depth,filled_depth,depth_co
     if local_measured and ordinal == 0:
         initial_cloud=camera_cloud
         if frame.get('local_temporal_support'):
-            initial_rgbd,initial_intrinsic,_,_=_prepare_rgbd(color,depth,map_x,map_y,K,image_scale,depth_min_m,depth_max_m)
+            initial_rgbd,initial_intrinsic,_,_=prepare_rgbd(color,depth,map_x,map_y,K,image_scale,depth_min_m,depth_max_m)
             initial_cloud=o3d.geometry.PointCloud.create_from_rgbd_image(initial_rgbd,initial_intrinsic).transform(T_WC)
         # A row-major valid-pixel cloud has gaps where depth is invalid.  A
         # linear stride of 16 is the bounded display equivalent of an
@@ -199,7 +199,7 @@ def _integrate_frame(dataset,output,frame,T_WC,color,depth,filled_depth,depth_co
             raise RuntimeError('Initial observed cloud write failed')
     accumulated_before=int(len(accumulated.points));accumulated += camera_cloud
     if not local_measured and np.any(repaired_only):
-        repaired_rgbd, repaired_intrinsic, _, _ = _prepare_rgbd(
+        repaired_rgbd, repaired_intrinsic, _, _ = prepare_rgbd(
             color, repaired_only, map_x, map_y, K, image_scale, depth_min_m, depth_max_m
         )
         for _ in range(3):
@@ -232,13 +232,13 @@ def reconstruct_scene(
     frames = load_jsonl(dataset / "frames.jsonl")
     if manifest.get("schema") != "femto-full-scene-rgbd-v1" or not frames:
         raise ValueError("Input is not a non-empty femto-full-scene-rgbd-v1 dataset")
-    poses = _load_poses(dataset, frames)
+    poses = load_poses(dataset, frames)
     if single_frame_quality:
         if len(frames) != 1 or not np.allclose([depth_min_m, depth_max_m], [.25, 2.21]):
             raise ValueError("Single-frame workflow requires exactly one frame and 0.25–2.21 m")
         if image_scale != 1.0 or point_stride != 1:
             raise ValueError("Single-frame workflow requires full image scale and point stride 1")
-    map_x, map_y, K, expected_width, expected_height = _distortion_maps(dataset)
+    map_x, map_y, K, expected_width, expected_height = distortion_maps(dataset)
 
     local_measured = bool(manifest.get('local_capture', {}).get('measured_only'))
     temporal_input=bool(manifest.get('temporal_fusion'))
@@ -270,8 +270,8 @@ def reconstruct_scene(
         nearest_neighbour_affected_fraction=float((expected_width*expected_height-unique_source)/(expected_width*expected_height)))
     for ordinal, (frame, T_WC) in enumerate(zip(frames, poses)):
         camera_point_count=None;accumulated_before=None;accumulated_before_downsample=None;accumulated_downsampled=False
-        color = _read_image(dataset / frame["rgb"], cv2.IMREAD_COLOR)
-        depth = _read_image(dataset / frame["depth"], cv2.IMREAD_UNCHANGED)
+        color = imread_unicode(dataset / frame["rgb"], cv2.IMREAD_COLOR)
+        depth = imread_unicode(dataset / frame["depth"], cv2.IMREAD_UNCHANGED)
         if color.shape[:2] != (expected_height, expected_width) or depth.shape != (expected_height, expected_width):
             raise ValueError(f"Frame {frame['frame']} dimensions do not match calibration")
         if depth.dtype != np.uint16:
@@ -300,7 +300,7 @@ def reconstruct_scene(
         if temporal_input:
             # Explicit float-weight TSDF inputs; the default single-view mesh
             # retains the existing pixel-adjacency reconstruction behavior.
-            input_rgbd,input_intrinsic,_,input_depth=_prepare_rgbd(
+            input_rgbd,input_intrinsic,_,input_depth=prepare_rgbd(
                 color,filled_depth,map_x,map_y,K,image_scale,depth_min_m,depth_max_m)
             input_conf=cv2.remap(depth_confidence,map_x,map_y,cv2.INTER_NEAREST,borderMode=cv2.BORDER_CONSTANT)
             if input_conf.shape!=input_depth.shape:
@@ -412,13 +412,12 @@ def _finalize_geometry(s):
                 reason='candidate_requires_same-source_comparison_before_default_adoption')
         if not len(mesh.triangles):
             raise ValueError('No measured-supported annotation surface remains')
-        (s.output / 'local_geometry.json').write_text(json.dumps(dict(
+        write_json(s.output / 'local_geometry.json', dict(
             **s.manifest['local_capture'], support=local_support, coordinate_frame='world_rdf',
             unit='metre', transform_direction='T_W0_Ct', inferred_repairs_integrated=False,
             display_artifacts=dict(initial_observed_point_cloud='initial_observed_points_m.ply',
                 role='display_subset_not_measurement',linear_point_stride=16,
-                approximate_pixel_stride=4,point_count=int(len(s.initial_display_subset.points)))),
-            ensure_ascii=False, indent=2), encoding='utf-8')
+                approximate_pixel_stride=4,point_count=int(len(s.initial_display_subset.points)))))
     surface_note = (
         "Single-view measured TSDF surface; small observed gaps may remain and unobserved regions are not invented."
         if len(s.poses) == 1
@@ -530,7 +529,7 @@ def _write_reconstruction_report(s):
     if temporal_input:
         report['depth_quality']['tsdf_confidence_policy']='Phase 1: continuous confidence saved in TSDF inputs; integrate unchanged and temporal TSDF execution deferred to phase 2'
         report['temporal_fusion']=manifest['temporal_fusion']
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(report_path, report)
     return report
 
 

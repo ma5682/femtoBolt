@@ -13,7 +13,7 @@ import numpy as np
 import open3d as o3d
 
 from femto.geometry.fusion import read_geometry_safe
-from femto.io_utils import imread_unicode as _read, imwrite_unicode as _write, load_json, load_jsonl
+from femto.io_utils import imread_unicode, imwrite_unicode, load_json, load_jsonl, write_json
 from femto.dataset.scene_data_kind import classify_dataset_data_kind
 from femto.dataset.scene_dataset_validator import resolve_dataset, validate_dataset
 from femto.tracking.scene_pose_estimator import estimate_poses
@@ -94,8 +94,8 @@ def _contact_sheet(dataset: Path, output: Path) -> None:
     tiles: list[np.ndarray] = []
     for index in indexes:
         frame = frames[index]
-        color = _read(dataset / frame["rgb"], cv2.IMREAD_COLOR)
-        depth = _read(dataset / frame["depth"], cv2.IMREAD_UNCHANGED)
+        color = imread_unicode(dataset / frame["rgb"], cv2.IMREAD_COLOR)
+        depth = imread_unicode(dataset / frame["depth"], cv2.IMREAD_UNCHANGED)
         valid = depth > 0
         normalized = np.zeros_like(depth, dtype=np.uint8)
         normalized[valid] = np.clip(
@@ -114,7 +114,7 @@ def _contact_sheet(dataset: Path, output: Path) -> None:
         cv2.putText(color, f"RGB frame {frame['frame']}", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
         cv2.putText(coloured_depth, "Depth mm", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
         tiles.append(np.vstack((color, coloured_depth)))
-    _write(output, np.hstack(tiles))
+    imwrite_unicode(output, np.hstack(tiles))
 
 
 def _write_html_report(output: Path, summary: dict[str, Any]) -> None:
@@ -212,16 +212,16 @@ def _add_synthetic_ground_truth_error(summary: dict[str, Any], reconstruction_di
 
 def _complete_local_processing(processing_path: Path, posed_dataset: Path, result_root: Path,
                                reconstruction: dict[str, Any], summary: dict[str, Any]) -> None:
-    from femto.io_utils import load_json_object as read_json, write_json_strict as write_json
+    from femto.io_utils import load_json_object, write_json_strict
     from femto.local.local_processing import write_html
-    processing = read_json(processing_path)
+    processing = load_json_object(processing_path)
     if Path(processing['actual_dataset']).resolve() != posed_dataset.resolve():
         raise ValueError('Processing report does not match reconstruction input')
     processing['state'] = 'complete'
     processing['reconstruction'] = dict(status='complete', error=None,
         depth_quality=reconstruction.get('depth_quality'),metrics=reconstruction.get('metrics'))
     processing['result'] = str(result_root)
-    write_json(result_root / 'processing_report.json', processing)
+    write_json_strict(result_root / 'processing_report.json', processing)
     write_html(result_root / 'processing_report.html', processing)
     summary['local_processing_report'] = str(result_root / 'processing_report.json')
 
@@ -259,14 +259,13 @@ def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     result_root.mkdir(parents=True, exist_ok=False)
     publication_id = getattr(args, 'publication_id', None)
     if publication_id:
-        from femto.io_utils import write_json_strict as write_json
-        write_json(result_root / 'publication.json', dict(schema='femto-local-publication-v1',
+        from femto.io_utils import write_json_strict
+        write_json_strict(result_root / 'publication.json', dict(schema='femto-local-publication-v1',
             status='pending', session_id=publication_id, result=str(result_root)))
         if getattr(args, 'created_result_file', None):
-            write_json(Path(args.created_result_file), dict(result=str(result_root), session_id=publication_id))
+            write_json_strict(Path(args.created_result_file), dict(result=str(result_root), session_id=publication_id))
     if getattr(args, 'no_source_report', False):
-        (result_root / 'validation_report.json').write_text(
-            json.dumps(validation, ensure_ascii=False, indent=2), encoding='utf-8')
+        write_json(result_root / 'validation_report.json', validation)
     reconstruction_dir = result_root / "reconstruction"
     nerfstudio_dir = result_root / "nerfstudio"
     minimum_mm, maximum_mm = _depth_range_mm(posed_dataset)
@@ -341,9 +340,7 @@ def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     if processing_path:
         _complete_local_processing(Path(processing_path), posed_dataset, result_root,
                                    reconstruction, summary)
-    (result_root / "demo_summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    write_json(result_root / "demo_summary.json", summary)
     from femto.reports.scene_quality_report import write_report
     write_report(result_root)
     _write_html_report(result_root, summary)

@@ -29,7 +29,7 @@ import numpy as np
 import open3d as o3d
 
 from femto.geometry.fusion import read_geometry_safe
-from femto.io_utils import load_json as _load_json
+from femto.io_utils import load_json, write_json
 from femto.dataset.scene_data_kind import classify_dataset_data_kind
 
 
@@ -73,7 +73,7 @@ def load_measurement_geometry(reconstruction: Path, source: str) -> tuple[np.nda
         raise ValueError(f"Unknown geometry source: {source}; expected one of {sorted(GEOMETRY_SOURCES)}")
     path = reconstruction / GEOMETRY_SOURCES[source]
     if source == "tsdf_mesh":
-        report = _load_json(reconstruction / "reconstruction_report.json")
+        report = load_json(reconstruction / "reconstruction_report.json")
         mesh_path = report.get("outputs", {}).get("mesh", {}).get("ply")
         if mesh_path:
             path = Path(mesh_path)
@@ -135,7 +135,7 @@ class _NearestSurface:
 
 
 def _lineage(reconstruction: Path) -> dict[str, Any]:
-    report = _load_json(reconstruction / "reconstruction_report.json")
+    report = load_json(reconstruction / "reconstruction_report.json")
     lineage: dict[str, Any] = {
         "reconstruction": str(reconstruction),
         "source_dataset": report.get("source_dataset"),
@@ -146,7 +146,7 @@ def _lineage(reconstruction: Path) -> dict[str, Any]:
     }
     summary_path = reconstruction.parent / "demo_summary.json"
     if summary_path.is_file():
-        summary = _load_json(summary_path)
+        summary = load_json(summary_path)
         source = summary.get("source_dataset") or report.get("source_dataset")
         source_path = Path(source) if source else None
         source_kind = classify_dataset_data_kind(source_path)
@@ -174,7 +174,7 @@ def validate_scale(
         raise ValueError("At least one measurement is required")
     lineage = _lineage(reconstruction)
     if geometry_source=='auto':
-        report=_load_json(reconstruction/'reconstruction_report.json')
+        report=load_json(reconstruction/'reconstruction_report.json')
         geometry_source='tsdf_mesh' if report.get('local_capture',{}).get('measured_only') else 'fused_point_cloud'
     points, geometry_path = load_measurement_geometry(reconstruction, geometry_source)
     data_kind = lineage.get("data_kind", "unknown")
@@ -255,7 +255,7 @@ def validate_scale(
 
 
 def load_spec(path: Path) -> tuple[list[dict[str, Any]], str]:
-    payload = _load_json(path)
+    payload = load_json(path)
     if payload.get("schema") != SPEC_SCHEMA:
         raise ValueError(f"Measurement spec must declare schema {SPEC_SCHEMA}")
     measurements = payload.get("measurements")
@@ -320,7 +320,7 @@ def main() -> int:
                 ],
             }
             spec_path = args.spec or (reconstruction / "scale_validation_spec.json")
-            spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+            write_json(spec_path, spec)
             measurements, geometry_source = spec["measurements"], args.geometry_source
         else:
             if args.spec is None:
@@ -329,7 +329,7 @@ def main() -> int:
         report = validate_scale(reconstruction, measurements, geometry_source=geometry_source)
         output = args.output or (reconstruction / "scale_validation.json")
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json(output, report)
         report["report_path"] = str(output)
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
         print(json.dumps({"status": "blocked", "error": str(error)}, ensure_ascii=False, indent=2))

@@ -12,8 +12,9 @@ primitives that used to be copied into a dozen modules. Two constraints shape it
 
 Conventions (see CLAUDE.md, "Windows / 中文路径注意事项"):
 
-* JSON is always written with ``ensure_ascii=False`` and read with
-  ``utf-8-sig`` so BOM-prefixed marker files remain readable.
+* JSON defaults to ``ensure_ascii=False`` and is read with ``utf-8-sig`` so
+  BOM-prefixed marker files remain readable. Legacy byte-compatible writes may
+  explicitly retain their earlier escaping and whitespace settings.
 * JSON writes are atomic (temporary file + ``os.replace``) and create parent
   directories; ``write_json_strict`` additionally rejects NaN / Infinity.
 * Image codec failures raise :class:`ImageCodecError`, which subclasses both
@@ -26,6 +27,7 @@ import functools
 import json
 import os
 from pathlib import Path
+import tempfile
 from typing import Any, Iterable
 
 import numpy as np
@@ -69,12 +71,52 @@ def load_jsonl(path: str | os.PathLike[str]) -> list[Any]:
     return [json.loads(line) for line in Path(path).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
 
 
-def write_json(path: str | os.PathLike[str], value: Any, *, indent: int | None = 2, allow_nan: bool = True) -> None:
-    """Atomically write ``value`` as pretty-printed UTF-8 JSON, creating parent directories."""
+def write_json(
+    path: str | os.PathLike[str],
+    value: Any,
+    *,
+    indent: int | None = 2,
+    allow_nan: bool = True,
+    ensure_ascii: bool = False,
+    durable: bool = False,
+    unique_temporary: bool = False,
+    temporary_prefix: str | None = None,
+) -> None:
+    """Atomically write UTF-8 JSON, optionally flushing it before publication."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    if durable or unique_temporary:
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=target.parent,
+                prefix=temporary_prefix or f".{target.name}-",
+                suffix=".tmp",
+                delete=False,
+            ) as stream:
+                temporary = Path(stream.name)
+                json.dump(
+                    value,
+                    stream,
+                    ensure_ascii=ensure_ascii,
+                    indent=indent,
+                    allow_nan=allow_nan,
+                )
+                if durable:
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            os.replace(temporary, target)
+        finally:
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
+        return
     temporary = target.with_name(target.name + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=indent, allow_nan=allow_nan), encoding="utf-8")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=ensure_ascii, indent=indent, allow_nan=allow_nan),
+        encoding="utf-8",
+    )
     os.replace(temporary, target)
 
 
@@ -82,12 +124,19 @@ write_json_strict = functools.partial(write_json, allow_nan=False)
 write_json_strict.__doc__ = "write_json that rejects NaN / Infinity (``allow_nan=False``)."
 
 
-def write_jsonl(path: str | os.PathLike[str], values: Iterable[Any]) -> None:
-    """Overwrite ``path`` with one compact JSON value per line."""
+def write_jsonl(
+    path: str | os.PathLike[str],
+    values: Iterable[Any],
+    *,
+    ensure_ascii: bool = False,
+    compact: bool = True,
+) -> None:
+    """Overwrite ``path`` with one JSON value per line."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    options = {"separators": (",", ":")} if compact else {}
     target.write_text(
-        "".join(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n" for value in values),
+        "".join(json.dumps(value, ensure_ascii=ensure_ascii, **options) + "\n" for value in values),
         encoding="utf-8",
     )
 

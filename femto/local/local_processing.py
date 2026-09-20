@@ -8,7 +8,7 @@ import math
 from pathlib import Path
 import time
 
-from femto.io_utils import load_json_object as read_json, write_json_strict as write_json
+from femto.io_utils import load_json_object, write_json_strict
 
 SCHEMA = 'femto-local-processing-v1'
 STATUS = {
@@ -86,7 +86,7 @@ class LocalProcessing:
             raise ValueError('Processing output must be outside its input dataset')
         self.output.mkdir(parents=True, exist_ok=False)
         self.path = self.output / 'processing_report.json'
-        manifest = read_json(self.dataset / 'manifest.json')
+        manifest = load_json_object(self.dataset / 'manifest.json')
         local = manifest.get('local_capture', {})
         if not local.get('measured_only'):
             raise ValueError('Local observed-depth dataset required')
@@ -103,7 +103,7 @@ class LocalProcessing:
         self.publish()
 
     def publish(self):
-        write_json(self.path, self.report)
+        write_json_strict(self.path, self.report)
         write_html(self.output / 'processing_report.html', self.report)
         if self.progress:
             self.progress(copy.deepcopy(self.report))
@@ -126,7 +126,7 @@ class LocalProcessing:
                 report=str(self.output / 'refinement/refinement_report.json'),
                 elapsed_s=time.perf_counter()-started, actual_dataset=str(refined), details=report)
             self.report['actual_dataset'] = str(refined)
-            self.report['actual_pose_source'] = read_json(refined / 'manifest.json').get('pose', {}).get('source')
+            self.report['actual_pose_source'] = load_json_object(refined / 'manifest.json').get('pose', {}).get('source')
             self.publish()
             stage = 'temporal'
             self.report[stage] = dict(status='running')
@@ -166,14 +166,14 @@ def result_quality(result):
     rec = root / 'reconstruction'
     quality = empty_report()
     try:
-        reconstruction = read_json(rec / 'reconstruction_report.json')
+        reconstruction = load_json_object(rec / 'reconstruction_report.json')
         actual = Path(reconstruction['source_dataset']).resolve()
-        context = read_json(rec / 'local_geometry.json')
-        manifest = read_json(actual / 'manifest.json')
+        context = load_json_object(rec / 'local_geometry.json')
+        manifest = load_json_object(actual / 'manifest.json')
         quality.update(actual_dataset=str(actual), actual_pose_source=manifest.get('pose', {}).get('source'))
         linked = root / 'processing_report.json'
         if linked.is_file():
-            value = read_json(linked)
+            value = load_json_object(linked)
             if (value.get('schema') != SCHEMA or Path(value.get('actual_dataset', '')).resolve() != actual
                     or value.get('source_session_id') != context.get('session_id')
                     or value.get('reference_frame_id') != context.get('reference_frame_id')
@@ -192,7 +192,7 @@ def result_quality(result):
             local = manifest.get('local_capture', {})
             path = local.get('refinement_report')
             if path:
-                report = read_json(path)
+                report = load_json_object(path)
                 if report.get('schema') != 'femto-local-refinement-v1':
                     raise ValueError('Unknown refinement report schema')
                 _validate_refinement_binding(report,manifest,context,actual)
@@ -200,10 +200,10 @@ def result_quality(result):
                                              report=path, details=report)
             path = local.get('temporal_support_report')
             if path:
-                report=read_json(path)
+                report=load_json_object(path)
                 if report.get('schema') != 'femto-local-temporal-support-v1':
                     raise ValueError('Unknown temporal report schema')
-                source=read_json(Path(report['source_dataset'])/'manifest.json')
+                source=load_json_object(Path(report['source_dataset'])/'manifest.json')
                 if any(source.get('local_capture',{}).get(k) != context.get(k) for k in ('session_id','reference_frame_id')):
                     raise ValueError('Temporal report source session mismatch')
                 temporal=temporal_summary(report)
@@ -226,7 +226,7 @@ def _validate_refinement_binding(report, manifest, context, actual=None):
             raise ValueError('Refinement adoption / actual pose source mismatch')
     elif actual is not None and source != actual:
         raise ValueError('Refinement report belongs to a different input')
-    source_manifest=read_json(source/'manifest.json')
+    source_manifest=load_json_object(source/'manifest.json')
     if any(source_manifest.get('local_capture',{}).get(k) != context.get(k)
            for k in ('session_id','reference_frame_id')):
         raise ValueError('Refinement report source session mismatch')
