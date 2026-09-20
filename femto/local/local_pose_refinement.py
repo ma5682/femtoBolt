@@ -1,4 +1,7 @@
 """Conservative offline refinement against fixed W0; immutable source dataset."""
+from __future__ import annotations
+from typing import Any
+
 import argparse
 import copy
 import hashlib
@@ -14,7 +17,7 @@ from femto.dataset.scene_dataset_validator import validate_pose
 from femto.tracking.moving_quality import rotation_deg,cycle_consistency
 
 
-def metrics(source,target,transform):
+def metrics(source: o3d.geometry.PointCloud,target: o3d.geometry.PointCloud,transform: np.ndarray) -> dict[str, float | None]:
     moved=copy.deepcopy(source).transform(transform)
     tree=o3d.geometry.KDTreeFlann(target)
     points=np.asarray(moved.points);target_colors=np.asarray(target.colors)
@@ -32,20 +35,20 @@ def metrics(source,target,transform):
                 color_error=float(np.median(errors)) if errors else None)
 
 
-def stable_shape(cloud):
+def stable_shape(cloud: o3d.geometry.PointCloud) -> bool:
     if len(cloud.points)<100:return False
     eigen=np.linalg.eigvalsh(np.cov(np.asarray(cloud.points).T))
     return bool(eigen[-1]>0 and eigen[0]/eigen[-1]>=.002)
 
 
-def noise_floor(cloud):
+def noise_floor(cloud: o3d.geometry.PointCloud) -> dict[str, float | None]:
     """Same-frame disjoint-sample consistency; still includes shared sensor noise."""
     a=cloud.select_by_index(list(range(0,len(cloud.points),2)))
     b=cloud.select_by_index(list(range(1,len(cloud.points),2)))
     return metrics(a,b,np.eye(4)) if len(a.points) and len(b.points) else {}
 
 
-def solve(source,target,initial):
+def solve(source: o3d.geometry.PointCloud,target: o3d.geometry.PointCloud,initial: np.ndarray) -> np.ndarray:
     transform=initial.copy()
     for voxel,gate in ((.012,.03),(.006,.015),(.003,.008)):
         a=source.voxel_down_sample(voxel);b=target.voxel_down_sample(voxel)
@@ -59,7 +62,7 @@ def solve(source,target,initial):
     return transform
 
 
-def approve(initial,candidate,reverse,before,after,radius=None):
+def approve(initial: np.ndarray,candidate: np.ndarray,reverse: np.ndarray,before: dict[str, Any],after: dict[str, Any],radius: float | None=None) -> list[str]:
     reasons=[]
     if validate_pose(candidate):return ['invalid_pose']
     correction=np.linalg.inv(initial)@candidate
@@ -79,7 +82,7 @@ def approve(initial,candidate,reverse,before,after,radius=None):
     return sorted(set(reasons))
 
 
-def refine(dataset,output):
+def refine(dataset: str | Path,output: str | Path) -> tuple[Path, dict[str, Any]]:
     dataset,output=Path(dataset).resolve(),Path(output).resolve()
     if output==dataset or dataset in output.parents:raise ValueError('Output must be outside source dataset')
     output.mkdir(parents=True,exist_ok=False)

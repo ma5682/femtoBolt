@@ -1,4 +1,7 @@
 """Temporal controls inside FemtoControlApp. All widgets run on the Tk thread."""
+from __future__ import annotations
+from typing import Any
+
 from femto.paths import REPO_ROOT
 import json
 import os
@@ -48,9 +51,9 @@ class TemporalPanel:
             self.refresh('temporal_finished',self.result)
         self.update_controls()
 
-    def text(self,zh,en): return zh if self.app.language=='zh' else en
+    def text(self,zh: str,en: str) -> str: return zh if self.app.language=='zh' else en
 
-    def restore_last(self):
+    def restore_last(self) -> None:
         from femto.app.femto_control_app import DATASETS_ROOT
         # Legacy standalone runs have no marker. Find the newest temporal raw
         # capture and its latest report without altering reconstruction markers.
@@ -63,17 +66,17 @@ class TemporalPanel:
                     return
                 except (OSError,ValueError,KeyError): continue
 
-    def start(self):
+    def start(self) -> None:
         if self.app.start_temporal(int(self.count.get()),self.mode.get()):
             self.result=None; self.progress.set(0)
             self.status.set(self.text('等待相机采集新帧…','Waiting for new camera frames…'))
 
-    def cancel(self):
+    def cancel(self) -> None:
         if self.app.temporal_collecting:
             self.app.command_queue.put(('temporal_stop',None))
             self.status.set(self.text('正在停止；已采集原始帧将保留。','Stopping; captured raw frames will be retained.'))
 
-    def refresh(self,event,payload):
+    def refresh(self,event: Any,payload: Any) -> None:
         if event=='temporal_progress':
             self.progress.set(100*payload['frames']/payload['total'])
             self.status.set(self.text('采集中','Capturing')+f" {payload['frames']}/{payload['total']}")
@@ -96,7 +99,7 @@ class TemporalPanel:
                 self.progress.set(0)
                 self.status.set(self.text('已停止或未通过静止检查；未生成融合模型。','Stopped or static check rejected; no fused model.')+'\n'+str(payload['output']))
 
-    def update_controls(self):
+    def update_controls(self) -> None:
         if not self.window.winfo_exists(): return
         app=self.app
         available=app.camera_ready and not (app.processing or app.capturing or app.photo_saving)
@@ -111,7 +114,7 @@ class TemporalPanel:
             button.configure(state='normal' if enabled else 'disabled')
         self.app.root.after(200,self.update_controls)
 
-    def open_result(self,name):
+    def open_result(self,name: str) -> None:
         if not self.result or not self.result.get('output'): return
         output=Path(self.result['output'])
         try:

@@ -1,4 +1,7 @@
 """Versioned research measurement records. Never clinical or robot acceptance."""
+from __future__ import annotations
+from typing import Any, Callable
+
 import argparse,hashlib,json,os,platform,tempfile,time,uuid
 from pathlib import Path
 from datetime import datetime,timezone
@@ -8,10 +11,10 @@ from femto.io_utils import load_json, write_json_strict
 PURPOSES=('optical_range','axial_depth','housing_distance','two_point_length','plane_residual','mapping_reprojection')
 KINDS=('synthetic','historical_replay','physical_test')
 
-def hashed(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest()
-def finite(value):return type(value) in (int,float) and np.isfinite(value)
+def hashed(value: Any) -> str:return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest()
+def finite(value: Any) -> Any:return type(value) in (int,float) and np.isfinite(value)
 
-def template():
+def template() -> dict[str, Any]:
     return dict(schema='femto-research-protocol-v1',test_id='replace-with-test-id',purpose='two_point_length',evidence_kind='physical_test',
         target_id=None,operator=None,measurement_definition=None,repetition_scope='independent_capture',coordinate_frame='world_rdf',unit='metre',
         reference=dict(value=None,unit='mm',uncertainty_bound=None,uncertainty_method=None,datum='two_physical_endpoints',instrument=None,reference_object=None),
@@ -20,7 +23,7 @@ def template():
         assets=[dict(role='raw',path='REPLACE_RAW_FILE'),dict(role='calibration',path='REPLACE_CALIBRATION_FILE'),dict(role='algorithm',path='REPLACE_ALGORITHM_SOURCE_FILE')],
         notes='所有空值保留未验证；每次尝试均录入，失败也保留。不据此设置固定补偿。')
 
-def validate_spec(spec):
+def validate_spec(spec: Any) -> None:
     if spec.get('schema')!='femto-research-protocol-v1' or spec.get('purpose') not in PURPOSES or spec.get('evidence_kind') not in KINDS:raise ValueError('Unknown protocol, purpose or evidence kind')
     if not isinstance(spec.get('test_id'),str) or not spec['test_id'].strip():raise ValueError('test_id required')
     if spec.get('coordinate_frame')!='world_rdf' or spec.get('unit')!='metre':raise ValueError('Only W0/RDF metre observations are supported')
@@ -38,7 +41,7 @@ def validate_spec(spec):
     if spec['conditions'].get('distance_mm') is not None and spec['conditions']['distance_mm']<0:raise ValueError('Negative physical distance')
     hashed(spec)
 
-def measure(purpose,observation):
+def measure(purpose: str,observation: Any) -> dict[str, Any]:
     def points(key,count=None):
         p=np.asarray(observation[key],float)
         if p.ndim!=2 or p.shape[1]!=3 or not np.isfinite(p).all() or (count is not None and len(p)!=count):raise ValueError('Invalid '+key)
@@ -68,7 +71,7 @@ def measure(purpose,observation):
         details=dict(projected_pixel=uv.tolist(),scope='reference_camera_reprojection_consistency_not_independent_3D_accuracy')
     return dict(value=value,unit='pixel' if purpose=='mapping_reprojection' else 'mm',details=details)
 
-def evidence(spec,base,check):
+def evidence(spec: Any,base: Any,check: Any) -> list[Any]:
     assets=[]
     if not isinstance(spec.get('assets'),list) or len(spec['assets'])>20000:raise ValueError('Invalid asset list / exceeds 20000 files')
     seen=set()
@@ -85,10 +88,10 @@ def evidence(spec,base,check):
             row.update(status='present',sha256=h.hexdigest(),size=p.stat().st_size)
     return assets
 
-def protocol_key(spec):
+def protocol_key(spec: Any) -> Any:
     return hashed({k:spec.get(k) for k in ('test_id','purpose','evidence_kind','target_id','operator','measurement_definition','reference','conditions','repetition_scope','coordinate_frame','unit','tolerance')})
 
-def assess(spec,assets):
+def assess(spec: Any,assets: Any) -> list[Any]:
     missing=[]
     for k in ('target_id','operator','measurement_definition'):
         if not spec.get(k):missing.append(k)
@@ -107,7 +110,7 @@ def assess(spec,assets):
     if spec['reference'].get('datum')!=required[spec['purpose']]:missing.append('datum_mismatch_no_conversion_applied')
     return missing
 
-def record(spec_path,observation_path,parent,trial_id,status='measured',reason=None,elapsed_s=None,check=lambda:None,progress=lambda stage:None):
+def record(spec_path: str | Path,observation_path: Any,parent: str | Path,trial_id: str,status: str='measured',reason: str | None=None,elapsed_s: float | None=None,check: Callable[..., Any]=lambda:None,progress: Callable[..., Any]=lambda stage:None) -> Any:
     start=time.perf_counter();check();spec=load_json(spec_path);validate_spec(spec)
     tool_identity=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     if status not in ('measured','failed','cancelled'):raise ValueError('Unknown attempt status')
@@ -158,7 +161,7 @@ def record(spec_path,observation_path,parent,trial_id,status='measured',reason=N
         os.replace(folder,target)
     return target
 
-def load_record(path):
+def load_record(path: str | Path) -> Any:
     r=load_json(path);checksum=r.pop('record_sha256',None)
     if r.get('schema')!='femto-research-attempt-v1' or checksum!=hashed(r):raise ValueError('Record checksum/schema mismatch')
     if hashlib.sha256((Path(path).parent/'measurement_tool.py').read_bytes()).hexdigest()!=r['measurement_tool_sha256']:raise ValueError('Measurement tool snapshot mismatch')
@@ -170,7 +173,7 @@ def load_record(path):
             if Path(path).parent.resolve() not in p.parents or hashlib.sha256(p.read_bytes()).hexdigest()!=a['sha256']:raise ValueError('Algorithm snapshot mismatch')
     return r
 
-def summary(paths):
+def summary(paths: Any) -> dict[str, Any]:
     records=[load_record(p) for p in paths];ids=[r['record_id'] for r in records]
     if len(set(ids))!=len(ids):raise ValueError('Duplicate record supplied')
     groups={}
@@ -195,7 +198,7 @@ def summary(paths):
             verification_status='unverified',physical_accuracy_verified=False))
     return dict(schema='femto-research-summary-v1',groups=output,physical_accuracy_verified=False,interpretation='Sample spread is not accuracy; raw-identity deduplication is conservative and does not verify independence.')
 
-def compare(before_paths,after_paths):
+def compare(before_paths: Any,after_paths: Any) -> dict[str, Any]:
     before=[load_record(p) for p in before_paths];after=[load_record(p) for p in after_paths]
     def index(records):
         d={}
@@ -216,14 +219,14 @@ def compare(before_paths,after_paths):
         unpaired_before=len(a)-len(pairs),unpaired_after=len(b)-len(pairs),physical_accuracy_verified=False,
         limitations=['Pairing requires identical purpose, reference, conditions, evidence kind, trial, raw bytes and calibration.', 'A changed value or faster run is not automatically an improvement.'])
 
-def numeric_outcome(r):
+def numeric_outcome(r: Any) -> Any:
     ref=r['protocol']['reference'];limit=r['protocol'].get('tolerance');value=ref.get('value');uncertainty=ref.get('uncertainty_bound')
     if r['missing_conditions'] or value is None or uncertainty is None or limit is None:return 'unverified'
     error=abs(r['result']['value']-value)
     return 'within_entered_interval_only' if error+uncertainty<=limit else 'outside_entered_interval' if error-uncertainty>limit else 'indeterminate_reference_uncertainty'
 
 
-def dataset_assets(dataset):
+def dataset_assets(dataset: str | Path) -> list[Any]:
     dataset=Path(dataset).resolve();entries=[dict(role='source_metadata',path=str(dataset/n)) for n in ('manifest.json','frames.jsonl')]
     frames=[json.loads(s) for s in (dataset/'frames.jsonl').read_text(encoding='utf-8-sig').splitlines() if s.strip()]
     for f in frames:
@@ -233,7 +236,7 @@ def dataset_assets(dataset):
     return entries
 
 
-def publish_json(path,value):
+def publish_json(path: str | Path,value: Any) -> None:
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
     # Hard-link the complete, flushed temporary file; fails atomically if target exists.
     fd,name=tempfile.mkstemp(prefix='.pending_',dir=path.parent)
@@ -243,7 +246,7 @@ def publish_json(path,value):
     finally:Path(name).unlink(missing_ok=True)
 
 
-def verify_assets(path):
+def verify_assets(path: Any) -> dict[str, Any]:
     r=load_record(path);result=[]
     for a in r['assets']:
         p=Path(a['path']);current=None
@@ -258,7 +261,7 @@ def verify_assets(path):
         note='Changed current algorithm files do not destroy sealed snapshots. This is an asset audit, not accuracy verification.',physical_accuracy_verified=False)
 
 
-def main():
+def main() -> None:
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='command',required=True)
     p=sub.add_parser('init');p.add_argument('output',type=Path);p.add_argument('--dataset',type=Path)
     p=sub.add_parser('record');p.add_argument('spec',type=Path);p.add_argument('--observations',type=Path);p.add_argument('--output',required=True,type=Path);p.add_argument('--trial',required=True);p.add_argument('--status',default='measured',choices=('measured','failed','cancelled'));p.add_argument('--reason');p.add_argument('--elapsed',type=float)

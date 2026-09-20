@@ -1,4 +1,7 @@
 """Surface measurement and polygon controls for the desktop viewer."""
+from __future__ import annotations
+from typing import Any
+
 import threading
 import unicodedata
 from pathlib import Path
@@ -9,7 +12,7 @@ from femto.annotation.scene_annotations import AnnotationStore, distance_m, poin
 from femto.ui_i18n import tr
 
 
-def wrap_readout(text, columns=38):
+def wrap_readout(text: Any, columns: int=38) -> Any:
     """Wrap long model/annotation names in the narrow Open3D side panel."""
     lines, line, width = [], '', 0
     for char in str(text):
@@ -33,7 +36,7 @@ def wrap_readout(text, columns=38):
     return '\n'.join(lines)
 
 
-def surface_readout_text(store, point, status, language, columns=38):
+def surface_readout_text(store: Any, point: Any, status: str, language: str, columns: int=38) -> Any:
     """Format stored W/model coordinates only; the viewing camera is irrelevant."""
     def text(key, **values):
         return tr(language, 'viewer.pick.' + key, **values)

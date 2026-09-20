@@ -1,5 +1,7 @@
 '''Reconstruction review and evidence-based physical distance acceptance.'''
 from __future__ import annotations
+from typing import Any
+
 import argparse
 from datetime import datetime
 import hashlib
@@ -12,18 +14,18 @@ from femto.dataset.scene_data_kind import classify_dataset_data_kind, load_datas
 
 SPEC_SCHEMA = 'femto-field-acceptance-spec-v1'
 
-def digest(path):
+def digest(path: str | Path) -> str:
     h = hashlib.sha256()
     with Path(path).open('rb') as stream:
         for block in iter(lambda: stream.read(1024*1024), b''): h.update(block)
     return h.hexdigest()
 
-def numeric_summary(values):
+def numeric_summary(values: Any) -> Any:
     values = np.asarray([v for v in values if v is not None], dtype=float)
     values = values[np.isfinite(values)]
     return dict(count=len(values), median=float(np.median(values)), p95=float(np.quantile(values,.95)), maximum=float(np.max(values))) if len(values) else None
 
-def capture_identity(dataset):
+def capture_identity(dataset: Any) -> tuple[str, str]:
     chain, complete = load_dataset_manifest_chain(dataset)
     if not complete or not chain: raise ValueError('Incomplete source lineage')
     raw = chain[-1][0]
@@ -34,12 +36,12 @@ def capture_identity(dataset):
         for key in ('rgb','depth'): h.update(digest(raw/record[key]).encode('ascii'))
     return str(raw), h.hexdigest()
 
-def positive(value, name):
+def positive(value: Any, name: str) -> float:
     if isinstance(value,bool) or value is None or not np.isfinite(float(value)) or float(value)<=0:
         raise ValueError(name+' must be a positive finite number')
     return float(value)
 
-def evaluate_field_spec(spec, base):
+def evaluate_field_spec(spec: Any, base: Any) -> dict[str, Any]:
     from femto.reports.scene_scale_validation import resolve_reconstruction, validate_scale
     if spec.get('schema') != SPEC_SCHEMA: raise ValueError('Unsupported field acceptance spec')
     targets, trials = spec.get('targets', []), spec.get('trials', [])
@@ -96,7 +98,7 @@ def evaluate_field_spec(spec, base):
         pending=sorted(set(pending)),targets=results,measurements=rows, criteria=targets,
         scope='Specified landmark distances and repeatability only; not full surface or absolute world-coordinate accuracy')
 
-def build_report(location, field_spec=None):
+def build_report(location: str | Path, field_spec: str | Path | None=None) -> tuple[Any, dict[str, Any]]:
     location = Path(location).resolve()
     if (location/'reconstruction_report.json').exists(): reconstruction,output = location,location.parent
     elif (location/'reconstruction/reconstruction_report.json').exists(): reconstruction,output=location/'reconstruction',location
@@ -150,7 +152,7 @@ def build_report(location, field_spec=None):
             note='床体刚性尺寸用于尺度与重复性；人体呼吸/体动不等于相机测量误差，未知区域不计为完整覆盖。'),
         frame_quality=quality,geometry=(geometry or {}).get('metrics',{}),limitations=limitations,evidence=evidence)
 
-def render_report(report):
+def render_report(report: Any) -> str:
     esc=lambda v:html.escape(str(v))
     def value(v):return '未提供' if v is None else (f'{v:.3f}' if isinstance(v,float) else str(v))
     def table(headers,rows):
@@ -177,7 +179,7 @@ def render_report(report):
 {('<section><h2>在线局部补采记录</h2><pre>'+esc(json.dumps(report['online_tracking'],ensure_ascii=False,indent=2))+'</pre><p>延迟为实际处理记录，非实物定位精度。</p></section>') if report.get('online_tracking') else ''}
 <section><h2>来源与复核</h2><p><code>{esc(report['source_dataset'])}</code></p><p><a href="result_quality.json">完整JSON报告</a> · <a href="field_acceptance_spec.json">实拍验收填写模板</a></p><details><summary>证据文件与校验值</summary>{files}</details></section></main></html>'''
 
-def write_report(location, field_spec=None):
+def write_report(location: Any, field_spec: Any=None) -> Any:
     output,report=build_report(location,field_spec)
     output.mkdir(parents=True,exist_ok=True)
     write_json_strict(output/'result_quality.json',report)
@@ -190,7 +192,7 @@ def write_report(location, field_spec=None):
                 measurements=[dict(target_id='床体固定标记A到B',point_a_world_m=None,point_b_world_m=None)])] if report['reconstruction'] else []))
     return output/'result_quality.html'
 
-def main():
+def main() -> None:
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('result',type=Path);parser.add_argument('--spec',type=Path)
     args=parser.parse_args();print(write_report(args.result,args.spec))

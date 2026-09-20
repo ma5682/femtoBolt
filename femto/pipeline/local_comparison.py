@@ -5,6 +5,8 @@ child process; neither this module nor its worker reads a camera. Source data,
 accepted frame identities and W0 are checked before and after the run.
 """
 from __future__ import annotations
+from typing import Any, Callable
+
 
 import argparse
 import copy
@@ -28,14 +30,14 @@ SCHEMA = 'femto-local-comparison-v1'
 VARIANTS = ('A_online_raw', 'B_refined_raw', 'C_refined_filtered')
 
 
-def read_rows(path):
+def read_rows(path: Any) -> Any:
     rows = load_jsonl(path)
     if any(not isinstance(r, dict) for r in rows):
         raise ValueError('Expected JSON row objects')
     return rows
 
 
-def sha256(path):
+def sha256(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open('rb') as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b''):
@@ -43,12 +45,12 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def fingerprints(paths):
+def fingerprints(paths: Any) -> dict[Any, Any]:
     return {str(Path(p).resolve()): sha256(p) if Path(p).is_file() else None
             for p in sorted({Path(p).resolve() for p in paths}, key=str)}
 
 
-def changed_files(snapshot):
+def changed_files(snapshot: Any) -> list[Any]:
     return [p for p, digest in snapshot.items()
             if (sha256(p) if Path(p).is_file() else None) != digest]
 
@@ -125,7 +127,7 @@ def _validate_selected_frames(dataset, frames, raw, tracked, raw_index, expected
     return poses
 
 
-def validate_comparison_input(dataset, *, max_views=20, allow_synthetic=False):
+def validate_comparison_input(dataset: str | Path, *, max_views: int=20, allow_synthetic: bool=False) -> dict[str, Any]:
     """Validate an original online posed dataset, without writing validation to it."""
     import numpy as np
     from femto.dataset.scene_data_kind import classify_dataset_data_kind
@@ -246,7 +248,7 @@ def validate_comparison_input(dataset, *, max_views=20, allow_synthetic=False):
             'femto/tracking/local_stability.py', 'femto/io_utils.py')))
 
 
-def validate_variant_input(baseline, dataset, *, allow_masks=False):
+def validate_variant_input(baseline: Any, dataset: str | Path, *, allow_masks: bool=False) -> dict[str, Any]:
     """Forbid frame substitution, changed W0, or a mask reused on another RGB-D image."""
     import numpy as np
     from femto.dataset.local_reference import calibration_identity, validate_reference_provenance
@@ -338,7 +340,7 @@ def _replace_root(value, old, new):
     return value
 
 
-def copy_unchanged_model(source, output):
+def copy_unchanged_model(source: str | Path, output: str | Path) -> Any:
     """Copy this run's geometry byte-for-byte, and rebind report paths to its new version."""
     source, output = Path(source).resolve(), Path(output).resolve()
     shutil.copytree(source, output)
@@ -440,7 +442,7 @@ class _WindowsJob:
             self.close()
             raise ctypes.WinError(ctypes.get_last_error())
 
-    def attach_and_resume(self, process):
+    def attach_and_resume(self, process: Any) -> None:
         ctypes, wintypes, kernel = self.ctypes, self.wintypes, self.kernel
         if not kernel.AssignProcessToJobObject(self.handle, wintypes.HANDLE(int(process._handle))):
             raise ctypes.WinError(ctypes.get_last_error())
@@ -483,14 +485,14 @@ class _WindowsJob:
         finally:
             kernel.CloseHandle(snapshot)
 
-    def peak_memory(self):
+    def peak_memory(self) -> int:
         result = self.Extended()
         if not self.kernel.QueryInformationJobObject(self.handle, 9, self.ctypes.byref(result),
                                                      self.ctypes.sizeof(result), None):
             raise self.ctypes.WinError(self.ctypes.get_last_error())
         return int(result.PeakJobMemoryUsed)
 
-    def close(self):
+    def close(self) -> None:
         if self.handle:
             self.kernel.CloseHandle(self.handle)  # Terminates the complete job, including launcher descendants.
             self.handle = None
@@ -524,7 +526,7 @@ def _rss_bytes(process):
         return 0
 
 
-def supervise(command, log_path, *, timeout_s, memory_mb, cancelled=lambda: False, progress=None):
+def supervise(command: Any, log_path: str | Path, *, timeout_s: float, memory_mb: float, cancelled: Callable[..., Any]=lambda: False, progress: Any=None) -> Any:
     """Run only this task's process group; Windows uses a hard job memory limit."""
     started, peak, last_update = time.monotonic(), 0, 0.
     log_path = Path(log_path)
@@ -592,9 +594,9 @@ def _business_indices(raw):
     return result
 
 
-def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=20,
-                   stage_timeout_s=300., memory_mb=3072., render_width=640,
-                   allow_synthetic=False, cancel_file=None, progress=None, latest_paths=None, cancelled=None):
+def run_comparison(dataset: str | Path, output: str | Path, *, voxel_m: float=.005, sdf_trunc_m: float=.02, max_views: int=20,
+                   stage_timeout_s: float=300., memory_mb: float=3072., render_width: int=640,
+                   allow_synthetic: bool=False, cancel_file: str | Path | None=None, progress: Any=None, latest_paths: Any=None, cancelled: Any=None) -> dict[str, Any]:
     """Synchronous supervisor API; a GUI must invoke it off its Tk thread or as a CLI."""
     dataset, output = Path(dataset).resolve(), Path(output).resolve()
     if output.exists():
@@ -728,7 +730,7 @@ def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=
     return report
 
 
-def main(argv=None):
+def main(argv: Any=None) -> Any:
     parser = argparse.ArgumentParser(description='Independent same-source local A/B/C replay; never writes a business latest index')
     parser.add_argument('dataset', nargs='?', type=Path)
     parser.add_argument('output', nargs='?', type=Path)

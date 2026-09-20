@@ -1,4 +1,7 @@
 """Recoverable metadata drafts. Never adopt cached paths or substitute source geometry."""
+from __future__ import annotations
+from typing import Any
+
 from femto.paths import OUTPUTS_ROOT
 import copy
 import hashlib
@@ -13,13 +16,13 @@ SCHEMA='femto-planning-draft-v1'
 ROOT=OUTPUTS_ROOT/'planning_drafts'
 
 
-def source_binding(model):
+def source_binding(model: Any) -> dict[str, Any]:
     return dict(geometry_sha256=model.store.digest,view_reference=model.view_reference,
                 origin_reference=model.store.origin_reference,local_context=model.store.local_context,
                 coordinate_frame='world_rdf',unit='metre')
 
 
-def snapshot(viewer):
+def snapshot(viewer: Any) -> Any:
     return copy.deepcopy(dict(schema=SCHEMA,created_at=time.time(),source=source_binding(viewer.model),
         regions=viewer.model.store.regions,points=viewer.model.store.points,parameters=viewer._requests,
         polygon=viewer.polygon,exclusion_target=viewer.exclusion_target,
@@ -28,7 +31,7 @@ def snapshot(viewer):
         path_policy='not_restored_regenerate_required'))
 
 
-def read(path,model):
+def read(path: str | Path,model: Any) -> dict[Any, Any]:
     path=Path(path)
     if path.stat().st_size>50*1024*1024:raise ValueError('草稿超过50MB预算')
     data=json.loads(path.read_text(encoding='utf-8'))
@@ -87,7 +90,7 @@ class Journal:
         self.lock=threading.RLock();self.sequence=0;self.pending=None;self.worker=None
         self.error=None;self.saved_at=None
 
-    def submit(self,data):
+    def submit(self,data: Any) -> None:
         with self.lock:
             self.sequence+=1;self.pending=(self.sequence,copy.deepcopy(data))
             if self.worker is None or not self.worker.is_alive():
@@ -114,11 +117,11 @@ class Journal:
             finally:
                 if temporary is not None:temporary.unlink(missing_ok=True)
 
-    def discard(self):
+    def discard(self) -> None:
         with self.lock:
             self.sequence+=1;self.pending=None
             self.path.unlink(missing_ok=True)
 
-    def wait(self):
+    def wait(self) -> None:
         worker=self.worker
         if worker:worker.join(5)

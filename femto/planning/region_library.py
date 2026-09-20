@@ -1,4 +1,7 @@
 """Rebuildable region library; metadata operations never remove source assets."""
+from __future__ import annotations
+from typing import Any, Callable
+
 import hashlib
 import json
 import os
@@ -9,7 +12,7 @@ import zipfile
 SCHEMA = 'femto-region-library-v1'
 
 
-def digest(path, check=lambda: None):
+def digest(path: str | Path, check: Callable[..., Any]=lambda: None) -> str:
     h = hashlib.sha256()
     with Path(path).open('rb') as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b''):
@@ -17,11 +20,11 @@ def digest(path, check=lambda: None):
     return h.hexdigest()
 
 
-def identity(value):
+def identity(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def read_index(root):
+def read_index(root: str | Path) -> Any:
     path = Path(root) / 'region_library.json'
     if not path.exists():
         return dict(schema=SCHEMA, records={})
@@ -31,7 +34,7 @@ def read_index(root):
     return data
 
 
-def write_index(root, data, commit=None):
+def write_index(root: str | Path, data: Any, commit: Any=None) -> None:
     root = Path(root); root.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix='.library_', dir=root)
     try:
@@ -45,7 +48,7 @@ def write_index(root, data, commit=None):
         if Path(temporary).exists(): Path(temporary).unlink()
 
 
-def project_metadata(path, check=lambda:None, verify=False):
+def project_metadata(path: Any, check: Callable[..., Any]=lambda:None, verify: bool=False) -> Any:
     with zipfile.ZipFile(path) as archive:
         if archive.getinfo('project.json').file_size > 100 * 1024**2:
             raise ValueError('工程清单超出预算')
@@ -69,7 +72,7 @@ def project_metadata(path, check=lambda:None, verify=False):
     return data
 
 
-def enrich(rows, root, check=lambda: None):
+def enrich(rows: Any, root: Any, check: Callable[..., Any]=lambda: None) -> Any:
     """Relations require region ID AND source geometry/origin, never a name."""
     index = read_index(root)
     for row in rows:
@@ -160,7 +163,7 @@ def enrich(rows, root, check=lambda: None):
     return rows
 
 
-def edit_records(root, rows, *, hidden=None, note=None, check=lambda:None,commit=None):
+def edit_records(root: Any, rows: Any, *, hidden: Any=None, note: str | None=None, check: Callable[..., Any]=lambda:None,commit: Any=None) -> None:
     """Validate whole selection first; one atomic index change, no file deletion."""
     from femto.planning.export_history import scan_exports
     current = {r['key']: r for r in scan_exports(root, include_hidden=True,check=check)}
@@ -174,7 +177,7 @@ def edit_records(root, rows, *, hidden=None, note=None, check=lambda:None,commit
     check(); write_index(root, data,commit)
 
 
-def relocate(root, row, candidate, check=lambda:None,commit=None):
+def relocate(root: Any, row: Any, candidate: str | Path, check: Callable[..., Any]=lambda:None,commit: Any=None) -> None:
     """A lost old file without a prior digest cannot be identified by its name."""
     from femto.planning.export_history import scan_exports
     current = next((r for r in scan_exports(root, include_hidden=True,check=check) if r['key'] == row['key']), None)
@@ -202,7 +205,7 @@ def relocate(root, row, candidate, check=lambda:None,commit=None):
     check();write_index(root, data,commit)
 
 
-def rebuild(root, check=lambda:None,commit=None):
+def rebuild(root: Any, check: Callable[..., Any]=lambda:None,commit: Any=None) -> Any:
     """Discovery cache is optional; preserve user notes/hides and relocation."""
     from femto.planning.export_history import scan_exports
     data = read_index(root)
@@ -218,7 +221,7 @@ def rebuild(root, check=lambda:None,commit=None):
     return rows
 
 
-def discover_projects(root, directory, check=lambda:None):
+def discover_projects(root: Any, directory: str | Path, check: Callable[..., Any]=lambda:None) -> dict[str, Any]:
     """Explicit, bounded directory discovery rebuilds external project references."""
     from femto.planning.export_history import register_project
     found=[]; skipped=[]; count=0
@@ -234,7 +237,7 @@ def discover_projects(root, directory, check=lambda:None):
     return dict(found=found,skipped=skipped)
 
 
-def repair_index(root):
+def repair_index(root: str | Path) -> Any:
     """Keep unreadable bytes as a separate backup before rediscovery."""
     import uuid
     path=Path(root)/'region_library.json'

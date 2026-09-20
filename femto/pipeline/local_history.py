@@ -1,4 +1,7 @@
 """Read-only local-session catalogue. Never updates current-session/latest markers."""
+from __future__ import annotations
+from typing import Any, Callable
+
 import json
 import math
 from pathlib import Path
@@ -7,7 +10,7 @@ from femto.io_utils import load_json_object, write_json
 from femto.local.local_processing import result_quality, empty_report
 
 
-def deleted_records(outputs):
+def deleted_records(outputs: str | Path) -> Any:
     path=Path(outputs)/'local_history_deleted.json'
     if not path.exists():return {}
     data=load_json_object(path)
@@ -16,7 +19,7 @@ def deleted_records(outputs):
     return data['records']
 
 
-def set_records_deleted(rows,datasets,outputs,deleted=True):
+def set_records_deleted(rows: Any,datasets: Any,outputs: str | Path,deleted: bool=True) -> None:
     """Atomically change catalogue visibility for one or more records.
 
     This never moves or erases capture/model evidence.  Validating the whole
@@ -48,12 +51,12 @@ def set_records_deleted(rows,datasets,outputs,deleted=True):
     )
 
 
-def set_record_deleted(row,datasets,outputs,deleted=True):
+def set_record_deleted(row: Any,datasets: Any,outputs: Any,deleted: bool=True) -> None:
     """Compatibility wrapper for a single catalogue record."""
     set_records_deleted([row],datasets,outputs,deleted)
 
 
-def publication_status(result,session_id):
+def publication_status(result: str | Path,session_id: str) -> Any:
     """Legacy results have no receipt; new results require explicit publication."""
     result=Path(result).resolve();receipt=result/'publication.json'
     summary_path=result/'demo_summary.json'
@@ -68,7 +71,7 @@ def publication_status(result,session_id):
     return data.get('status') if data.get('status') in ('pending','published','cancelled','failed') else 'invalid'
 
 
-def fixed_reference_eligibility(reconstruction,metadata,report,check=lambda:None):
+def fixed_reference_eligibility(reconstruction: str | Path,metadata: Any,report: Any,check: Callable[..., Any]=lambda:None) -> tuple[bool, str | None, list[Any], list[Any]]:
     """Read-only eligibility. The launched viewer still validates actual geometry."""
     from femto.annotation.scene_annotations import AnnotationStore
     reconstruction=Path(reconstruction)
@@ -107,7 +110,7 @@ def fixed_reference_eligibility(reconstruction,metadata,report,check=lambda:None
     return True,None,required,[]
 
 
-def comparison_source_files(report,raw_source,check=lambda:None):
+def comparison_source_files(report: Any,raw_source: str | Path,check: Callable[..., Any]=lambda:None) -> Any:
     """Cheap file availability only; the comparison worker resolves online poses."""
     dataset=Path(report['source_dataset']);raw_source=Path(raw_source)
     files=[dataset/'manifest.json',dataset/'frames.jsonl',raw_source/'manifest.json',raw_source/'frames.jsonl']
@@ -123,7 +126,7 @@ def comparison_source_files(report,raw_source,check=lambda:None):
     return sorted({str(path) for path in files})
 
 
-def scan_history(datasets,outputs,*,cancel=None,seconds=30):
+def scan_history(datasets: str | Path,outputs: str | Path,*,cancel: Any=None,seconds: float=30) -> Any:
     deleted=deleted_records(outputs)
     deadline=time.monotonic()+seconds
     def check():
@@ -213,7 +216,7 @@ def _source_files_unchanged(row):
     except OSError:return False
 
 
-def existing_actions(row):
+def existing_actions(row: Any) -> dict[str, Any]:
     fixed=bool(row.get('fixed') and row.get('mesh') and Path(row['mesh']).is_file() and _source_files_unchanged(row))
     return dict(fixed=fixed,
                 compare=bool(fixed and row.get('compare') and row.get('state')=='model'

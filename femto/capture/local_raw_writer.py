@@ -3,6 +3,9 @@
 Admission and preview wait for the receipt. There is no detached save backlog;
 the next frame cannot be submitted until the previous frame has committed.
 """
+from __future__ import annotations
+from typing import Any
+
 from concurrent.futures import ThreadPoolExecutor
 import time
 
@@ -13,7 +16,7 @@ class RawFrameWriter:
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='LocalRawWriter')
         self.pending = None
 
-    def submit(self, scan, frame, index):
+    def submit(self, scan: Any, frame: Any, index: int) -> None:
         if self.pending is not None:
             raise RuntimeError('Previous raw frame receipt has not been consumed')
         self.pending = self.pool.submit(self._write, scan, frame, index)
@@ -29,7 +32,7 @@ class RawFrameWriter:
                     color_timestamp_us=int(frame.color_timestamp_us), depth_timestamp_us=int(frame.depth_timestamp_us),
                     write_ms=(time.perf_counter()-started)*1000)
 
-    def commit(self, record):
+    def commit(self, record: Any) -> Any:
         if self.pending is None:
             raise RuntimeError('No pending raw frame')
         try:
@@ -41,5 +44,5 @@ class RawFrameWriter:
             raise ValueError('RGB-D write receipt / pose timestamp mismatch')
         return receipt
 
-    def close(self):
+    def close(self) -> None:
         self.pool.shutdown(wait=True)

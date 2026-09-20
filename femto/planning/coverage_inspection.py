@@ -1,4 +1,7 @@
 """Versioned, evidence-based coverage inspection; unknown geometry has no area."""
+from __future__ import annotations
+from typing import Any, Callable
+
 import copy
 import numpy as np
 import cv2
@@ -24,7 +27,7 @@ EVIDENCE={
  'no_geometry':'圈内参考像素无可信第一可见表面支持；只能定位图像，未知三维面积，不参与分母。'}
 
 
-def pixel_runs(mask):
+def pixel_runs(mask: Any) -> list[Any]:
     runs=[]
     for y,row in enumerate(mask):
         edges=np.flatnonzero(np.diff(np.r_[False,row,False].astype(np.int8)))
@@ -32,7 +35,7 @@ def pixel_runs(mask):
     return runs
 
 
-def face_graph(mesh,ids):
+def face_graph(mesh: Any,ids: Any) -> tuple[list[Any], dict[Any, Any]]:
     faces=np.asarray(mesh.triangles)[ids];edge_faces={};pairs=[]
     for i,face in enumerate(faces):
         for a,b in ((face[0],face[1]),(face[1],face[2]),(face[2],face[0])):
@@ -44,7 +47,7 @@ def face_graph(mesh,ids):
     return graph,edge_faces
 
 
-def component_labels(graph,nodes=None):
+def component_labels(graph: Any,nodes: Any=None) -> np.ndarray:
     nodes=list(range(len(graph))) if nodes is None else list(nodes)
     allowed=set(nodes);labels={}
     for node in nodes:
@@ -57,7 +60,7 @@ def component_labels(graph,nodes=None):
     return np.asarray([labels[node] for node in nodes],int)
 
 
-def pixel_mask(projection,polygon,check):
+def pixel_mask(projection: Any,polygon: Any,check: Any) -> np.ndarray:
     shape=(projection.height,projection.width)
     if not polygon:return np.ones(shape,bool)
     mask=np.zeros(shape,bool)
@@ -67,7 +70,7 @@ def pixel_mask(projection,polygon,check):
     return mask
 
 
-def inspect_coverage(projection,mesh,region,allowed,plan,check=lambda:None):
+def inspect_coverage(projection: Any,mesh: Any,region: Any,allowed: Any,plan: Any,check: Callable[..., Any]=lambda:None) -> tuple[Any, dict[str, Any]]:
     """Immutable report derived from final retained path; no repair or hole filling."""
     width=plan['coverage_parameters']['width_mm'];margin=plan['coverage_parameters']['boundary_margin_mm']/1000
     ids=np.asarray(allowed['triangle_indices'],int);faces=np.asarray(mesh.triangles);vertices=np.asarray(mesh.vertices)
@@ -208,7 +211,7 @@ def inspect_coverage(projection,mesh,region,allowed,plan,check=lambda:None):
             '只检查模拟半径包络，非真实接触、碰撞或临床精度验证。'],full_surface_coverage_verified=False)
 
 
-def check_document_budget(plan,check=lambda:None,limit=60_000_000):
+def check_document_budget(plan: Any,check: Callable[..., Any]=lambda:None,limit: int=60_000_000) -> None:
     # Leave space for source metadata and indentation inside the 100 MB replay limit.
     import json
     total=0
@@ -219,7 +222,7 @@ def check_document_budget(plan,check=lambda:None,limit=60_000_000):
 
 
 @versioned
-def inspected_serpentine_plan(projection,mesh,region,width_mm=10.,overlap_percent=20.,check=lambda:None,*,boundary_margin_mm=1.,direction='horizontal',start_corner='top_left'):
+def inspected_serpentine_plan(projection: Any,mesh: Any,region: Any,width_mm: float=10.,overlap_percent: float=20.,check: Callable[..., Any]=lambda:None,*,boundary_margin_mm: float=1.,direction: str='horizontal',start_corner: str='top_left') -> Any:
     from femto.planning.serpentine_path import serpentine_plan
     from femto.planning.region_exclusions import allowed_region
     from femto.planning.region_path_guard import constrain_path

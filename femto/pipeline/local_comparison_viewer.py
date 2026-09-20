@@ -4,6 +4,8 @@ This is an offline diagnostic renderer, not another measurement or annotation
 surface. Existing W0 vertices are read as stored and are never transformed again.
 """
 from __future__ import annotations
+from typing import Any
+
 
 import html
 import json
@@ -36,7 +38,7 @@ def _mesh_scene(mesh):
     return scene
 
 
-def sampled_depth_metrics(scene, depth_mm, k, pose, minimum=.25, maximum=2.21, budget=4096):
+def sampled_depth_metrics(scene: Any, depth_mm: Any, k: Any, pose: Any, minimum: float=.25, maximum: float=2.21, budget: int=4096) -> dict[str, Any]:
     """Sample valid raw pixel ordinals deterministically; absent hits stay in the denominator.
 
     A ray direction has camera Z=1, so its hit parameter is camera depth in metres.
@@ -68,7 +70,7 @@ def sampled_depth_metrics(scene, depth_mm, k, pose, minimum=.25, maximum=2.21, b
         point_to_mesh=_summary(nearest))
 
 
-def render_fixed_surface(mesh, k, reference_depth_mm, width=640, image_valid=None):
+def render_fixed_surface(mesh: Any, k: Any, reference_depth_mm: Any, width: int=640, image_valid: Any=None) -> tuple[Any, dict[str, Any]]:
     """First-hit W0 projection with the same initial raw-depth occlusion gate as fixed RGB."""
     import numpy as np
     import cv2
@@ -96,7 +98,7 @@ def render_fixed_surface(mesh, k, reference_depth_mm, width=640, image_valid=Non
         definition='Fixed initial RGB camera; nearest supported mesh hit with original 10 mm reference-depth consistency gate. Not ROI hole-filling coverage.')
 
 
-def render_raw_cloud(cloud, k, height, width, display_width=640):
+def render_raw_cloud(cloud: Any, k: Any, height: int, width: int, display_width: int=640) -> Any:
     """Display stored W0 points from the original reference only; no transform or point repair."""
     import numpy as np
     import cv2
@@ -119,7 +121,7 @@ def render_raw_cloud(cloud, k, height, width, display_width=640):
     return cv2.resize(image, (display_width, max(1, round(height*display_width/width))), interpolation=cv2.INTER_AREA)
 
 
-def evaluate_and_render(baseline, dataset, reconstruction, *, width=640):
+def evaluate_and_render(baseline: Any, dataset: str | Path, reconstruction: str | Path, *, width: int=640) -> dict[str, Any]:
     import numpy as np
     import cv2
     import open3d as o3d
@@ -250,7 +252,7 @@ def _label(value):
     return _dual(*labels[value]) if value in labels else _recorded(value)
 
 
-def write_comparison_html(output, report):
+def write_comparison_html(output: str | Path, report: Any) -> Any:
     """Self-contained offline controls; matching projections retain equal scales in both layouts."""
     output = Path(output)
     cards, options = [], []

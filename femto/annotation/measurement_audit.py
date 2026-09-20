@@ -1,4 +1,7 @@
 """Read-only evidence audit and manual distance experiments, never clinical certification."""
+from __future__ import annotations
+from typing import Any
+
 import csv
 import hashlib
 import json
@@ -12,7 +15,7 @@ import numpy as np
 from femto.io_utils import write_json_strict
 
 
-def fingerprint(path):
+def fingerprint(path: str | Path) -> dict[str, Any]:
     path = Path(path)
     if not path.is_file():
         return dict(path=str(path), status='missing')
@@ -23,7 +26,7 @@ def fingerprint(path):
     return dict(path=str(path.resolve()), status='present', sha256=digest.hexdigest())
 
 
-def layer_contract(store):
+def layer_contract(store: Any) -> dict[str, Any]:
     """A role declaration; support metadata is evidence, not a physical accuracy claim."""
     return dict(schema='femto-data-layers-v1',
         coordinate_frame='world_rdf', unit='metre', axes='+X right, +Y down, +Z forward',
@@ -37,7 +40,7 @@ def layer_contract(store):
         physical_accuracy_verified=False, execution_ready=False)
 
 
-def build_audit(model):
+def build_audit(model: Any) -> dict[str, Any]:
     root = model.reconstruction
     contract = layer_contract(model.store)
     evidence = {}
@@ -135,8 +138,8 @@ def build_audit(model):
             'Distance tests cannot certify absolute XYZ, surface normals, contact safety or clinical targeting.'])
 
 
-def distance_record(model, points, *, test_id, reference_mm, reference_uncertainty_mm,
-                    tolerance_mm, instrument, conditions):
+def distance_record(model: Any, points: Any, *, test_id: str, reference_mm: float, reference_uncertainty_mm: float,
+                    tolerance_mm: float, instrument: str, conditions: str) -> dict[str, Any]:
     for name, value in (('reference_mm', reference_mm), ('reference_uncertainty_mm', reference_uncertainty_mm),
                         ('tolerance_mm', tolerance_mm)):
         if type(value) not in (int, float) or not math.isfinite(value) or value < 0 or (name != 'reference_uncertainty_mm' and value == 0):
@@ -172,7 +175,7 @@ def distance_record(model, points, *, test_id, reference_mm, reference_uncertain
         physical_accuracy_verified=False, scope='two_point_distance_only_not_absolute_XYZ_or_clinical_validation')
 
 
-def summarize(records):
+def summarize(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Never pool different reference targets, geometry versions or test conditions."""
     groups = {}
     for row in records:
@@ -194,7 +197,7 @@ def summarize(records):
     return result
 
 
-def save_record(model, row):
+def save_record(model: Any, row: dict[str, Any]) -> Path:
     folder = model.reconstruction / 'measurement_validation' / 'records'
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / (uuid.uuid4().hex + '.json')
@@ -202,7 +205,7 @@ def save_record(model, row):
     return path
 
 
-def save_report(model):
+def save_report(model: Any) -> Path:
     parent = model.reconstruction / 'measurement_validation'
     audit = build_audit(model)
     records, invalid = [], []

@@ -1,4 +1,7 @@
 """Local annotation on a locked reference photograph; geometry stays in W0."""
+from __future__ import annotations
+from typing import Any
+
 from femto.paths import REPO_ROOT
 import argparse
 from pathlib import Path
@@ -191,8 +194,8 @@ class FixedRGBViewer:
         self.work(lambda:load_source(result,cancel=self.operation_cancel(),progress=self.operation_progress),self.loaded)
         self.timer=root.after(80,self.poll)
 
-    def t(self,zh,en):return zh if self.language=='zh' else en
-    def error_text(self,error):
+    def t(self,zh: str,en: str) -> str:return zh if self.language=='zh' else en
+    def error_text(self,error: Any) -> Any:
         translations={
             'Geometry task cancelled':'几何任务已取消',
             'Geometry operation exceeded its 120 s budget':'几何操作超过 120 秒预算',
@@ -214,13 +217,13 @@ class FixedRGBViewer:
             'Initial color-camera origin cannot be verified; use the advanced viewer for this model.':'无法验证初始彩色相机原点，请使用高级三维查看器检查此模型。',
         }
         return translations.get(error,error) if self.language=='zh' else error
-    def action(self,parent,zh,en,fn):
+    def action(self,parent: Any,zh: str,en: str,fn: Any) -> Any:
         b=ttk.Button(parent,text=self.t(zh,en),command=fn);b.pack(fill='x',pady=3);self.widgets.append(b)
         name=getattr(fn,'__name__','')
         if name in ('plan_region_path','plan_metric_path','plan_surface_spacing','plan_coverage_path','present_region_path','export_region_path','load_region_path','clear_path_preview','save_region_project'):
             self._plan_buttons[name]=b
         return b
-    def work(self,fn,done):
+    def work(self,fn: Any,done: Any) -> None:
         if self.busy or self.closed:return
         if getattr(self,'_draft_ready',False):
             self._draft_due=0;self.poll_draft()
@@ -258,18 +261,18 @@ class FixedRGBViewer:
         # its current file write before exiting, and publishes JSON only last.
         self.worker=threading.Thread(target=run,daemon=self.operation not in ('save','export'),name='FixedRGBGeometry')
         self.worker.start()
-    def operation_progress(self,stage):
+    def operation_progress(self,stage: str) -> None:
         control=self.operation_cancel()
         if hasattr(control,'progress'):control.progress(stage)
 
-    def operation_commit(self,action):
+    def operation_commit(self,action: Any) -> Any:
         control=self.operation_cancel()
         if hasattr(control,'publish'):return control.publish(action)
         return action()
 
-    def operation_cancel(self):
+    def operation_cancel(self) -> Any:
         return getattr(self._task_local,'cancel',self.task_cancel)
-    def poll(self):
+    def poll(self) -> None:
         if self.closed:return
         if self.busy:
             self.task_feedback.set(f'{getattr(self.task_cancel,"stage",self.operation)} · {time.monotonic()-self.task_started:.1f} 秒'+(' · 正在取消' if self.task_cancel.is_set() else ''))
@@ -308,7 +311,7 @@ class FixedRGBViewer:
             self.update_save_state()
         except queue.Empty:pass
         self.timer=self.root.after(80,self.poll)
-    def loaded(self,model):
+    def loaded(self,model: Any) -> None:
         if (model.store.local_context or {}).get('capture_scope') == 'interrupted_prefix':
             self.root.title(self.t('Femto · 中断前数据建模 · 固定 RGB 选区',
                                    'Femto · Interrupted-prefix reconstruction · Fixed RGB'))
@@ -361,9 +364,9 @@ class FixedRGBViewer:
         self._draft_ready=True
         if 'project_management' not in PRODUCT_HIDDEN_FEATURES:self.offer_recovery()
 
-    def fit(self):
+    def fit(self) -> None:
         self.zoom=1.;self.pan=np.zeros(2);self.draw()
-    def draw(self):
+    def draw(self) -> None:
         if self.model is None:return
         selected_items=set(self.selected_annotations())
         if not selected_items and self.focus is not None:selected_items.add(self.focus)
@@ -427,7 +430,7 @@ class FixedRGBViewer:
         if not selected_regions:self.draw_brush_overlay(affine,w,h)
         self.draw_brush_cursor()
 
-    def draw_coordinate_guides(self,w,h):
+    def draw_coordinate_guides(self,w: int,h: int) -> None:
         # W0 is the reference camera centre (Z=0), which cannot be projected.
         # The crosshair is the calibrated principal point, never a surface origin.
         if self.show_optical_axis.get():
@@ -457,9 +460,9 @@ class FixedRGBViewer:
             c.create_text(150,80,text=self.t('+Z 向前\n进入画面','+Z forward\ninto image'),anchor='w',fill='#7fbdff',tags=tag)
             c.create_text(24,120,anchor='nw',text=self.t('原点在初始相机光心','W0: initial camera optical centre'),fill='#a4bdcf',tags=tag)
 
-    def image_pixel(self,x,y):
+    def image_pixel(self,x: Any,y: Any) -> Any:
         return (np.array([x,y])-self.offset)/self.scale
-    def wheel(self,e):
+    def wheel(self,e: Any) -> None:
         self.brush_end()
         if self.model is None:return
         pixel=self.image_pixel(e.x,e.y);old=self.zoom
@@ -468,23 +471,23 @@ class FixedRGBViewer:
         center=np.array([self.canvas.winfo_width(),self.canvas.winfo_height()])/2
         self.pan=np.array([e.x,e.y])-center-(self.offset+pixel*self.scale-center-self.pan)*ratio
         self.draw()
-    def pan_start(self,e):
+    def pan_start(self,e: Any) -> None:
         self.brush_end();self.drag=np.array([e.x,e.y])
-    def pan_move(self,e):
+    def pan_move(self,e: Any) -> None:
         here=np.array([e.x,e.y]);self.pan+=here-getattr(self,'drag',here);self.drag=here;self.draw()
-    def pending_edits(self):
+    def pending_edits(self) -> Any:
         if self.model is None or self.focus is None:return False
         kind,i=self.focus
         items=self.model.store.points if kind=='point' else self.model.store.regions
         if i>=len(items):return False
         item=items[i]
         return self.name.get().strip()!=item.get('name','') or self.note.get().strip()!=item.get('note','')
-    def cancel_planning(self):
+    def cancel_planning(self) -> None:
         if self.busy:
             self.task_cancel.set()
             self.status.set('结果已完整发布，取消已不适用。' if getattr(self.task_cancel,'committed',False) else '正在取消任务；保留原有有效文件和未保存内容。')
 
-    def poll_draft(self):
+    def poll_draft(self) -> None:
         if not getattr(self,'_draft_ready',False) or self.model is None:return
         journal=self.draft_journal
         if journal.error:
@@ -505,7 +508,7 @@ class FixedRGBViewer:
         if digest!=self._draft_signature:
             self._draft_signature=digest;journal.submit(data);self.draft_feedback.set('正在写入可恢复草稿…')
 
-    def offer_recovery(self):
+    def offer_recovery(self) -> None:
         if self.model is None or self.busy:return
         if not self.draft_journal.path.exists():
             self.draft_feedback.set('草稿：修改后自动保存');return
@@ -548,16 +551,16 @@ class FixedRGBViewer:
             self.draft_feedback.set('已恢复草稿，尚未保存正式方案；路径需重新生成')
         self.operation='restore_draft';self.work(restore,done)
 
-    def planning_region(self):
+    def planning_region(self) -> Any:
         if self.model is None or not self.focus or self.focus[0]!='region':return None
         if not 0<=self.focus[1]<len(self.model.store.regions):return None
         return self.model.store.regions[self.focus[1]]
 
-    def planning_region_id(self):
+    def planning_region_id(self) -> Any:
         region=self.planning_region()
         return region['annotation_id'] if region else None
 
-    def planning_state(self):
+    def planning_state(self) -> Any:
         from femto.planning.planning_state import state
         region=self.planning_region();key=self.planning_region_id()
         return state(region,self._plans.get(key),dirty=bool(self.model and self.model.store.dirty) or self.plan_unsaved(),
@@ -565,13 +568,13 @@ class FixedRGBViewer:
             error=self._plan_errors.get(key),request=self._requests.get(key),
             geometry_digest=self.model.store.digest if self.model else None,draft=self.has_selection_draft())
 
-    def plan_unsaved(self):
+    def plan_unsaved(self) -> Any:
         from femto.planning.region_path import signature
         if self._requests!=self._saved_requests:return True
         return any(signature(plan)!=self._saved_plans.get(key) for key,plan in self._plans.items()) or any(
             key not in self._plans for key in self._saved_plans)
 
-    def update_save_state(self):
+    def update_save_state(self) -> None:
         if self._syncing_fields or not hasattr(self,'save_state'):return
         state=self.planning_state()
         labels={'saved':'没有未保存的更改','dirty':'区域/方案更改尚未保存','pending':'区域待保存：请先完成涂抹或应用名称 / 备注'}
@@ -590,7 +593,7 @@ class FixedRGBViewer:
         demo=getattr(self.root,'_route_demo_window',None)
         if demo is not None and demo.winfo_exists() and not demo.plan_is_current():demo.close_demo()
 
-    def confirm_pending_edits(self):
+    def confirm_pending_edits(self) -> bool:
         if not self.pending_edits():return True
         kind,i=self.focus
         if PRODUCT_SINGLE_REGION and kind=='region':
@@ -606,20 +609,20 @@ class FixedRGBViewer:
         self._syncing_fields=True;self.name.set(item.get('name',''));self.note.set(item.get('note',''));self._syncing_fields=False
         self._annotations_dirty=self.model.store.dirty;self.update_save_state()
         return True
-    def confirm_discard(self,action):
+    def confirm_discard(self,action: Any) -> Any:
         if self.model is not None:self._annotations_dirty=self.model.store.dirty
         self.update_save_state()
         if not (self._annotations_dirty or self.plan_unsaved() or self.pending_edits() or self.has_selection_draft()):return True
         return messagebox.askokcancel(self.t('尚有未保存内容','Unsaved work'),
             self.save_state.get()+'\n\n'+self.t(f'{action}会放弃这些未保存内容。继续？',f'{action} will discard this unsaved work. Continue?'),parent=self.root)
-    def change_mode(self):
+    def change_mode(self) -> None:
         if self.has_selection_draft() and not messagebox.askokcancel(self.t('涂抹尚未完成','Unfinished painting'),
             self.t('切换模式将放弃当前涂抹草稿。继续？','Changing mode discards the current polygon draft. Continue?'),parent=self.root):
             self.mode.set(self.active_mode);return
         if not self.confirm_pending_edits():self.mode.set(self.active_mode);return
         self.exclusion_target=None
         self.active_mode=self.mode.get();self.polygon=[];self.reset_brush();self.clear_readout();self.update_save_state();self.draw()
-    def change_selection_method(self):
+    def change_selection_method(self) -> None:
         self.brush_end();method=self.selection_method.get()
         self._selection_polygons[self.active_selection_method]=[p[:] for p in self.polygon]
         self.active_selection_method=method;self.exclusion_target=None
@@ -632,13 +635,13 @@ class FixedRGBViewer:
             '当前涂抹：禁止区域（红色）。可以随时切换到工作区域，已有标记会保留。',
             'Painting work area (orange). You may switch roles without losing marks.' if method=='work' else
             'Painting forbidden area (red). You may switch roles without losing marks.'))
-    def clear_readout(self):
+    def clear_readout(self) -> None:
         self.focus=None;self.readout.set('X —  Y —  Z —');self.items.selection_clear(0,'end')
-    def clear_selection(self):
+    def clear_selection(self) -> None:
         if self.busy or not self.confirm_pending_edits():return
         self.clear_readout();self.update_save_state();self.draw()
         self.status.set(self.t('已清除当前选中项；已有标记保留。','Current selection cleared; annotations retained.'))
-    def click(self,e):
+    def click(self,e: Any) -> None:
         if self.model is None or self.busy:return
         if self.show_axes.get() and 12<=e.x<=268 and 12<=e.y<=142:return
         if not self.confirm_pending_edits():return
@@ -661,18 +664,18 @@ class FixedRGBViewer:
             else:self.refresh_items(('point',item['annotation_id']));self.status.set(self.t('已映射到三维表面。','Mapped to 3D surface.'))
         except Exception as exc:self.status.set(self.error_text(str(exc)))
         self.update_save_state();self.draw()
-    def reset_brush(self):
+    def reset_brush(self) -> None:
         self.cancel_brush_frame()
         self._brush_history=[];self._brush_mask=None;self._brush_last=None
         self._selection_polygons={'work':[],'forbidden':[]}
         self._brush_mask_cache={}
 
-    def cancel_brush_frame(self):
+    def cancel_brush_frame(self) -> None:
         frame=getattr(self,'_brush_frame',None)
         if frame is not None:
             self.root.after_cancel(frame);self._brush_frame=None
 
-    def cached_brush_mask(self,role,polygon):
+    def cached_brush_mask(self,role: Any,polygon: Any) -> Any:
         from femto.annotation.square_brush import polygon_mask
         if not hasattr(self,'_brush_mask_cache'):self._brush_mask_cache={}
         key=(self.base.size,tuple(map(tuple,polygon)))
@@ -681,23 +684,23 @@ class FixedRGBViewer:
             cached=(key,polygon_mask(polygon,self.base.size));self._brush_mask_cache[role]=cached
         return cached[1]
 
-    def selection_polygons(self):
+    def selection_polygons(self) -> dict[Any, Any]:
         result={key:[p[:] for p in value] for key,value in self._selection_polygons.items()}
         role=self.selection_method.get() if hasattr(self,'selection_method') else 'work'
         result[role]=[p[:] for p in self.polygon]
         return result
 
-    def has_selection_draft(self):
+    def has_selection_draft(self) -> bool:
         return any(self.selection_polygons().values())
 
-    def brush_resize(self,value):
+    def brush_resize(self,value: Any) -> None:
         self.brush_size_label.configure(text=str(round(float(value))))
         self.draw_brush_cursor()
 
-    def brush_hover(self,e):
+    def brush_hover(self,e: Any) -> None:
         self._brush_cursor=(e.x,e.y);self.draw_brush_cursor()
 
-    def draw_brush_cursor(self):
+    def draw_brush_cursor(self) -> None:
         self.canvas.delete('brush_cursor')
         cursor=getattr(self,'_brush_cursor',None)
         if not cursor or self.busy or self.mode.get()!='region':return
@@ -722,7 +725,7 @@ class FixedRGBViewer:
             self.canvas.create_oval(x-1.5,y-1.5,x+1.5,y+1.5,fill=color,
                 outline='#243340',width=1,tags='brush_cursor')
 
-    def draw_brush_overlay(self,affine,w,h,only_role=None):
+    def draw_brush_overlay(self,affine: Any,w: int,h: int,only_role: Any=None) -> None:
         active=self.selection_method.get();polygons=self.selection_polygons()
         if only_role is None:self._brush_photos={}
         for role,color in [('work','#ffc14d'),('forbidden','#ff5353')]:
@@ -741,7 +744,7 @@ class FixedRGBViewer:
             self.canvas.create_image(0,0,image=photo,anchor='nw',tags=('brush_draft',role,tag))
         self.canvas.tag_raise('brush_layer_forbidden')
 
-    def paint_brush_frame(self):
+    def paint_brush_frame(self) -> None:
         self._brush_frame=None
         if self.closed or self._brush_last is None:return
         w,h=max(1,self.canvas.winfo_width()),max(1,self.canvas.winfo_height())
@@ -749,7 +752,7 @@ class FixedRGBViewer:
         self.draw_brush_overlay(affine,w,h,only_role=self.selection_method.get())
         self.draw_brush_cursor()
 
-    def brush_start(self,e):
+    def brush_start(self,e: Any) -> None:
         self.brush_end()
         self._brush_selection_before=self.selection_polygons()
         self._brush_before=[p[:] for p in self.polygon]
@@ -760,7 +763,7 @@ class FixedRGBViewer:
         self.draw()
         self.brush_move(e)
 
-    def brush_move(self,e):
+    def brush_move(self,e: Any) -> None:
         self._brush_cursor=(e.x,e.y)
         if self.busy or self._brush_last is None:return
         from femto.annotation.square_brush import stroke
@@ -775,7 +778,7 @@ class FixedRGBViewer:
         if getattr(self,'_brush_frame',None) is None:
             self._brush_frame=self.root.after(33,self.paint_brush_frame)
 
-    def brush_end(self,e=None):
+    def brush_end(self,e: Any=None) -> None:
         if getattr(self,'_brush_last',None) is None:return
         if e is not None:self.brush_move(e)
         self.cancel_brush_frame()
@@ -794,7 +797,7 @@ class FixedRGBViewer:
             self.polygon=self._brush_before;self.status.set(str(error))
         self._brush_mask=None;self.update_save_state();self.draw()
 
-    def finish_polygon(self):
+    def finish_polygon(self) -> None:
         self.brush_end()
         if self.model is None or self.busy:return
         selections=self.selection_polygons()
@@ -851,7 +854,7 @@ class FixedRGBViewer:
         self.work(lambda:model.region(polygon,name,note,cancel=self.operation_cancel(),
             replace_existing=PRODUCT_SINGLE_REGION),done)
 
-    def begin_exclusion(self):
+    def begin_exclusion(self) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
             self.status.set('请先在列表中单选一个已完成的主圈选区域。');return
@@ -861,14 +864,14 @@ class FixedRGBViewer:
         self.status.set('按住左键涂抹禁区，随后点击“完成涂抹”；可勾选擦除修正，禁区只作用于选定主区域。')
         self.draw()
 
-    def clear_exclusions(self):
+    def clear_exclusions(self) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:return
         i=self.focus[1];item=self.model.store.set_exclusions(i,[])
         self.exclusion_target=None
         self.refresh_items(('region',item['annotation_id']));self.draw()
         self.status.set('已清除该区域全部禁区，可撤销；请重新生成路径。')
-    def refresh_items(self,focus=None):
+    def refresh_items(self,focus: Any=None) -> None:
         self.items.delete(0,'end');self.index=[]
         for kind,items in [('point',self.model.store.points),('region',self.model.store.regions)]:
             for i,item in enumerate(items):
@@ -881,10 +884,10 @@ class FixedRGBViewer:
                 item=(self.model.store.points if kind=='point' else self.model.store.regions)[i]
                 if (kind,item['annotation_id'])==focus:self.items.selection_set(n);self.select();break
         self.update_save_state()
-    def selected_annotations(self):
+    def selected_annotations(self) -> list[Any]:
         return [self.index[n] for n in self.items.curselection() if n<len(getattr(self,'index',[]))]
 
-    def record_distance_test(self):
+    def record_distance_test(self) -> None:
         if self.model is None or self.busy:return
         selected=self.selected_annotations()
         if len(selected)!=2 or any(kind!='point' for kind,_ in selected):
@@ -923,7 +926,7 @@ class FixedRGBViewer:
         ttk.Button(window,text=self.t('保存实验记录','Save experiment'),command=commit).grid(row=8,column=0,padx=12,pady=12)
         ttk.Button(window,text=self.t('取消','Cancel'),command=window.destroy).grid(row=8,column=1,pady=12)
 
-    def open_measurement_records(self):
+    def open_measurement_records(self) -> None:
         if self.model is None or self.busy:return
         import os
         folder=self.model.reconstruction/'measurement_validation'
@@ -932,7 +935,7 @@ class FixedRGBViewer:
         try:os.startfile(str(folder))
         except OSError as exc:self.status.set(str(exc))
 
-    def local_geometry_diagnostics(self):
+    def local_geometry_diagnostics(self) -> None:
         if self.model is None or self.busy:return
         points=[self.model.store.points[i] for kind,i in self.selected_annotations() if kind=='point']
         if len(points)!=1:
@@ -945,7 +948,7 @@ class FixedRGBViewer:
             self.status.set('局部诊断完成：'+report['support_kind']+'；支持帧数不是精度，未修改模型或融合参数。')
         self.work(lambda:diagnose(model,point,check=GeometryBudget(self.operation_cancel()).check,progress=self.operation_progress),done)
 
-    def measurement_report(self):
+    def measurement_report(self) -> None:
         if self.model is None or self.busy:return
         from femto.annotation.measurement_audit import save_report
         model=self.model;self.operation='measurement_audit'
@@ -959,12 +962,12 @@ class FixedRGBViewer:
             self.status.set(self.t('报告已保存：','Report saved: ')+str(folder))
         self.work(lambda:save_report(model),done)
 
-    def select_all(self,event=None):
+    def select_all(self,event: Any=None) -> str:
         if self.model is not None and not self.busy:
             self.items.selection_set(0,'end');self.select()
         return 'break'
 
-    def select(self,event=None):
+    def select(self,event: Any=None) -> None:
         if self.busy or self.model is None or not self.items.curselection():return
         selection=self.items.curselection()
         if len(selection)>1:
@@ -1013,19 +1016,19 @@ class FixedRGBViewer:
             else:text+='\n'+self.t('图像几何支持：未记录（旧区域）','Image geometry support: not recorded (legacy region)')
             self.readout.set(text+'\nX —  Y —  Z —')
         self.update_save_state();self.draw()
-    def edit(self):
+    def edit(self) -> None:
         if self.focus is None or self.busy:return
         kind,i=self.focus
         item=self.model.store.update_annotation(kind,i,name=self.name.get().strip(),note=self.note.get().strip())
         self.refresh_items((kind,item['annotation_id']))
         self.status.set(self.t('名称与备注已应用；请保存标记。','Name and note applied; save the annotations.'))
-    def delete(self):
+    def delete(self) -> None:
         if self.model is None or self.busy:return
         selection=self.selected_annotations() or ([self.focus] if self.focus else [])
         if not selection or not self.confirm_pending_edits():return
         self.model.store.delete_annotations(selection);self.refresh_items();self.draw()
         self.status.set(self.t(f'已删除 {len(selection)} 项，一次撤销可恢复整批；请保存更改。',f'Deleted {len(selection)} annotations. Undo restores the batch; save changes.'))
-    def undo(self):
+    def undo(self) -> None:
         if self.model is None or self.busy or not self.confirm_pending_edits():return
         if getattr(self,'_brush_history',[]):
             self._selection_polygons=self._brush_history.pop()
@@ -1042,20 +1045,20 @@ class FixedRGBViewer:
                 self.work(lambda:model.prepare_display(cancel=self.operation_cancel()),done)
             else:self.refresh_items(focus)
         self.update_save_state();self.draw()
-    def current_region_path(self):
+    def current_region_path(self) -> Any:
         return self._plans.get(self.planning_region_id()) if self.planning_state()['can_use'] else None
 
-    def clear_path_preview(self):
+    def clear_path_preview(self) -> None:
         key=self.planning_region_id()
         self._plans.pop(key,None);self._requests.pop(key,None);self._plan_errors.pop(key,None)
         self.update_save_state();self.draw()
 
-    def export_history(self):
+    def export_history(self) -> None:
         if self.model is None or self.busy:return
         from femto.planning.export_history import show_history
         show_history(self.root,self.model.reconstruction)
 
-    def save_region_project(self,save_as=False):
+    def save_region_project(self,save_as: bool=False) -> None:
         if self.model is None or self.busy:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
             self.status.set('请先单选需要保存的主圈选区域。');return
@@ -1076,7 +1079,7 @@ class FixedRGBViewer:
             planning_parameters=request,progress=self.operation_progress,commit=self.operation_commit,expected_digest=expected),
             lambda saved:self.project_saved(saved,region,plan))
 
-    def project_saved(self,path,region,plan):
+    def project_saved(self,path: str | Path,region: Any,plan: Any) -> None:
         from femto.planning.region_path import signature
         self._project_region_id=region['annotation_id']
         previous_path=self.project_path
@@ -1108,18 +1111,18 @@ class FixedRGBViewer:
             self.draft_journal=Journal(self.project_path);self._draft_signature=None;self._draft_due=0
         self.status.set(getattr(self.model,'last_save_warning',None) or '方案已保存（参考图、几何、禁区和有效路线）：'+str(path))
 
-    def open_region_project(self):
+    def open_region_project(self) -> None:
         if self.busy:return
         path=filedialog.askopenfilename(parent=self.root,title='打开已有方案',filetypes=[('Region project','*.zip')])
         if path:
             from femto.planning.planning_workspace import open_workspace
             open_workspace(self.root,path,language=self.language)
 
-    def parameter_default(self,kind,key,default):
+    def parameter_default(self,kind: str,key: str,default: Any) -> Any:
         request=self._requests.get(self.planning_region_id(),{})
         return request.get('values',{}).get(key,default) if request.get('kind')==kind else default
 
-    def plan_region_path(self):
+    def plan_region_path(self) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
             self.status.set(self.t('请单选一个已完成的圈选区域。','Select one completed region.'));return
@@ -1142,7 +1145,7 @@ class FixedRGBViewer:
         self.work(lambda:raster_path(model.projection,model.store.mesh,region,spacing,max_step,
             check=GeometryBudget(self.operation_cancel()).check),done)
 
-    def show_region_path(self,model,plan):
+    def show_region_path(self,model: Any,plan: Any) -> None:
         if self.model is not model:return
         from femto.planning.region_path import path_summary
         summary=path_summary(plan)
@@ -1161,7 +1164,7 @@ class FixedRGBViewer:
             self.status.set(self.t(f"网格距离近似间距 {plan['spacing_mm']:g} mm；", 
                 f"Approximate mesh-distance spacing {plan['spacing_mm']:g} mm; ")+self.status.get())
 
-    def plan_metric_path(self,after=None):
+    def plan_metric_path(self,after: Any=None) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
             self.status.set(self.t('请单选一个已完成的圈选区域。','Select one completed region.'));return
@@ -1182,7 +1185,7 @@ class FixedRGBViewer:
         self.work(lambda:metric_path(model.projection,model.store.mesh,region,spacing,step,
             check=GeometryBudget(self.operation_cancel()).check),done)
 
-    def plan_surface_spacing(self):
+    def plan_surface_spacing(self) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
             self.status.set('请单选一个已完成区域。');return
@@ -1201,7 +1204,7 @@ class FixedRGBViewer:
             self.status.set('三维表面模式已生成；'+('采样间距上下界满足容差。' if plan['spacing_report']['status']=='within_sampled_bounds' else '间距未完全满足或无法证实，请查看表面间距报告；未切换RGB模式。'))
         self.work(lambda:surface_spacing_plan(model.projection,model.store.mesh,region,check=GeometryBudget(self.operation_cancel()).check,progress=self.operation_progress,**values),done)
 
-    def route_preferences(self):
+    def route_preferences(self) -> Any:
         window=tk.Toplevel(self.root);window.title('往返方向与起点偏好');window.transient(self.root);window.grab_set()
         directions={'水平往返':'horizontal','垂直往返':'vertical'}
         corners={'左上':'top_left','右上':'top_right','左下':'bottom_left','右下':'bottom_right'}
@@ -1219,7 +1222,7 @@ class FixedRGBViewer:
         self.root.wait_window(window)
         return result[0] if result else None
 
-    def plan_coverage_path(self,after=None):
+    def plan_coverage_path(self,after: Any=None) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
             self.status.set(self.t('请单选一个已完成的圈选区域。','Select one completed region.'));return
@@ -1245,7 +1248,7 @@ class FixedRGBViewer:
         self.work(lambda:coverage_plan(model.projection,model.store.mesh,region,width,overlap,
             check=GeometryBudget(self.operation_cancel()).check,boundary_margin_mm=margin,direction=direction,start_corner=start_corner),done)
 
-    def load_region_path(self):
+    def load_region_path(self) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
             self.status.set(self.t('请单选要回读路径的圈选区域。','Select one region to load its path.'));return
@@ -1263,7 +1266,7 @@ class FixedRGBViewer:
         self.work(lambda:load_path(path,model.store,model.projection,region,
             check=GeometryBudget(self.operation_cancel()).check),accepted)
 
-    def export_region_path(self):
+    def export_region_path(self) -> None:
         if self.busy:return
         plan=self.current_region_path()
         if plan is None:
@@ -1277,7 +1280,7 @@ class FixedRGBViewer:
             progress=self.operation_progress,commit=self.operation_commit),
             lambda folder:self.status.set(self.t('路径已导出：','Path exported: ')+str(folder)))
 
-    def present_region_path(self):
+    def present_region_path(self) -> None:
         if self.busy:return
         plan=self.current_region_path()
         if plan is None:
@@ -1287,7 +1290,7 @@ class FixedRGBViewer:
         show_presentation(self.root,self.model,copy.deepcopy(self.model.store.regions[self.focus[1]]),copy.deepcopy(plan),
             is_current=lambda:self.current_region_path() is plan)
 
-    def save(self):
+    def save(self) -> None:
         if self.model is None or self.busy:return
         if self.has_selection_draft():self.status.set(self.t('请先完成或撤销涂抹。','Finish or undo the polygon first.'));return
         if not self.confirm_pending_edits():return
@@ -1302,7 +1305,7 @@ class FixedRGBViewer:
             self.status.set(self.t('已保存：','Saved: ')+str(path))
         self.operation='save';self.status.set(self.t('正在保存标记与区域…','Saving annotations and regions…'))
         self.work(lambda:store.save(folder,check=GeometryBudget(self.operation_cancel()).check),saved)
-    def load(self):
+    def load(self) -> None:
         if self.model is None or self.busy:return
         path=filedialog.askopenfilename(parent=self.root,initialdir=self.model.reconstruction,filetypes=[('Annotations','*.json')])
         if not path:return
@@ -1318,9 +1321,9 @@ class FixedRGBViewer:
         self.operation='load_annotations'
         self.status.set(self.t('正在核对模型来源并回读；失败时保留当前内容…','Validating model provenance and loading; current work is retained on failure…'))
         self.work(lambda:model.load(path,cancel=self.operation_cancel()),done)
-    def advanced(self):
+    def advanced(self) -> None:
         subprocess.Popen([sys.executable,'-m','femto.viewer.scene_demo_viewer',str(self.result),'--lang',self.language],cwd=REPO_ROOT)
-    def close(self,force=False):
+    def close(self,force: bool=False) -> None:
         if self.closed:return
         if not force:
             if self.busy:

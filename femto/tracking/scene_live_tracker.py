@@ -6,6 +6,8 @@ against keyframes accepted in the same session; the reference frame (W0)
 is never reset and a seed transform never becomes a pose by itself.
 """
 from __future__ import annotations
+from typing import Any
+
 
 import time
 from datetime import datetime, timezone
@@ -45,7 +47,7 @@ class PreparedRGBD:
         return iter((self.rgbd, self.intrinsic, self.cloud))
 
 
-def display_pose(transform):
+def display_pose(transform: Any) -> dict[str, Any]:
     """R=Rz(roll) Ry(yaw) Rx(pitch); translation is camera origin in W0."""
     error = validate_pose(np.asarray(transform))
     if error:
@@ -82,7 +84,7 @@ class PairEstimator:
         self.intrinsic = o3d.camera.PinholeCameraIntrinsic(
             *self.size, k[0, 0]*.25, k[1, 1]*.25, k[0, 2]*.25, k[1, 2]*.25)
 
-    def prepare(self, frame):
+    def prepare(self, frame: Any) -> Any:
         mx, my, k, width, height = self.maps
         if frame.color_bgr.shape[:2] != (height, width) or frame.depth_mm.shape != (height, width):
             raise ValueError('Frame dimensions changed during local capture')
@@ -99,7 +101,7 @@ class PairEstimator:
             rgbd.depth, self.intrinsic, depth_scale=1., depth_trunc=self.maximum+.0005).voxel_down_sample(.02)
         return PreparedRGBD(rgbd, self.intrinsic, cloud, color, depth)
 
-    def features(self, prepared):
+    def features(self, prepared: Any) -> Any:
         """Lazily detect ORB features on the tracking-resolution image; cached on the frame."""
         if prepared.features is None:
             gray = cv2.cvtColor(prepared.color_bgr, cv2.COLOR_BGR2GRAY)
@@ -108,7 +110,7 @@ class PairEstimator:
             prepared.features = (keypoints or (), descriptors)
         return prepared.features
 
-    def feature_seed_transform(self, previous, current):
+    def feature_seed_transform(self, previous: Any, current: Any) -> tuple[np.ndarray | None, dict[str, Any]]:
         """Sparse ORB + raw depth + PnP proposal for T_current_previous, or None.
 
         The proposal is only ever used as an initial guess for the dense
@@ -238,8 +240,8 @@ class PairEstimator:
             raise PairEstimationError('pair_quality', metrics)
         return forward, metrics
 
-    def estimate(self, previous, current, *, initial_transform=None, initial_name='previous_valid_step',
-                 allow_feature_seed=True):
+    def estimate(self, previous: Any, current: Any, *, initial_transform: Any=None, initial_name: str='previous_valid_step',
+                 allow_feature_seed: bool=True) -> tuple[Any, dict[Any, Any]]:
         """Bounded retries from verified evidence only, within the live chain.
 
         Seeds are never pose results: identity, then the caller's verified seed
@@ -344,10 +346,10 @@ class LiveTracker:
         self.lost_frames = 0
 
     @property
-    def relocalizing(self):
+    def relocalizing(self) -> Any:
         return self.relocalizing_since is not None and not self.lost
 
-    def add_keyframe(self, prepared, pose, frame_id):
+    def add_keyframe(self, prepared: Any, pose: Any, frame_id: int) -> bool:
         """Remember an accepted view for anchoring/relocalization; never changes W0."""
         if (not (self.keyframe_anchor or self.relocalization) or self.lost or self.relocalizing
                 or prepared is not self.previous or frame_id != self.last_valid_frame_id
@@ -359,7 +361,7 @@ class LiveTracker:
         del self.keyframes[:-MAX_KEYFRAMES]
         return True
 
-    def options(self):
+    def options(self) -> dict[str, Any]:
         return dict(keyframe_anchor=self.keyframe_anchor, relocalization=self.relocalization,
                     relocalization_window_s=self.relocalization_window_s,
                     relocalization_confirmations=self.relocalization_confirmations,
@@ -369,7 +371,7 @@ class LiveTracker:
                     agreement_rotation_deg=RELOCALIZATION_POLICY['agreement_rotation_deg'],
                     keyframes_remembered=len(self.keyframes))
 
-    def relocalization_remaining_s(self, now):
+    def relocalization_remaining_s(self, now: float) -> Any:
         if self.relocalizing_since is None or self.lost:
             return None
         return max(0., self.relocalization_window_s-(now-self.relocalizing_since))
@@ -385,7 +387,7 @@ class LiveTracker:
             consecutive_failures=self.failures, preceding_rejection=self.last_rejection,
             max_gap_s=self.max_gap_s, max_tracking_gap_frames=POLICY['max_tracking_gap_frames'])
 
-    def mark_lost(self, reason, *, received=None, frame_id=None):
+    def mark_lost(self, reason: str, *, received: float | None=None, frame_id: int | None=None) -> Any:
         """Latch the original loss cause, including watchdogs with no RGB-D row."""
         self.lost = True
         if self.loss_context is None:
@@ -400,7 +402,7 @@ class LiveTracker:
                     frames_attempted=self.lost_frames, original_reason=self.relocalization_context['reason']))
         return self.loss_context
 
-    def watchdog(self, reason='tracking_gap'):
+    def watchdog(self, reason: str='tracking_gap') -> Any:
         now=self.clock();record=dict(T_WC=None,reference_frame_id=self.reference_id)
         if self.relocalizing:
             if self.relocalization_remaining_s(now)<=0:record['loss_context']=self.mark_lost('relocalization_timeout')
@@ -585,7 +587,7 @@ class LiveTracker:
             remaining_window_s=None if self.lost else self.relocalization_remaining_s(self.clock()))
         return record
 
-    def process(self, frame, frame_id, received):
+    def process(self, frame: Any, frame_id: int, received: float) -> Any:
         record = dict(frame_id=frame_id, camera_frame_index=int(frame.frame_index),
             capture_timestamp_us=int(frame.timestamp_us), received_monotonic=received,
             color_timestamp_us=int(frame.color_timestamp_us), depth_timestamp_us=int(frame.depth_timestamp_us),

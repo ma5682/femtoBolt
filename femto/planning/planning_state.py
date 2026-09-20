@@ -1,7 +1,10 @@
 """Versioned planning provenance and a single UI state decision, independent of rendering."""
+from __future__ import annotations
+from typing import Any, Callable
+
 from functools import wraps
 from copy import deepcopy
-def signature(value):
+def signature(value: Any) -> str:
     from femto.planning.region_path import signature as digest
     return digest(value)
 
@@ -10,13 +13,13 @@ ALGORITHMS = {'raster': 'raster-v1', 'metric': 'mesh-contours-v1',
               'coverage': 'mesh-coverage-v1', 'serpentine': 'serpentine-v1', 'serpentine_v2':'serpentine-v2', 'serpentine_v3':'serpentine-v3', 'serpentine_v4':'serpentine-v4', 'surface_spacing':'mesh-surface-spacing-v1'}
 
 
-def region_signature(region):
+def region_signature(region: Any) -> str:
     # Metadata and portable asset locations are not planning inputs.
     return signature({k: v for k, v in region.items() if k not in
         ('name', 'note', 'created_at', 'updated_at', 'source_mesh', 'boundary_world_m')})
 
 
-def parameters(plan):
+def parameters(plan: dict[str, Any]) -> dict[str, Any]:
     if 'coverage_parameters' in plan:
         return dict(kind='surface_spacing' if plan['coverage_parameters'].get('pattern')=='surface_spacing_v1' else 'serpentine_v4' if plan['coverage_parameters'].get('pattern')=='serpentine_v4' else 'serpentine_v3' if plan['coverage_parameters'].get('pattern')=='serpentine_v3' else 'serpentine_v2' if plan['coverage_parameters'].get('pattern')=='serpentine_v2' else 'serpentine' if plan['coverage_parameters'].get('pattern') == 'serpentine_v1' else 'coverage',
                     values=deepcopy(plan['coverage_parameters']))
@@ -25,7 +28,7 @@ def parameters(plan):
     return dict(kind='raster', values=dict(row_step_px=plan['row_step_px'], max_step_mm=plan['max_step_mm']))
 
 
-def binding(mesh, region, plan):
+def binding(mesh: Any, region: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
     from femto.annotation.scene_annotations import mesh_digest
     params = parameters(plan)
     return dict(schema=BINDING_VERSION, region_id=region['annotation_id'],
@@ -35,7 +38,7 @@ def binding(mesh, region, plan):
                     (('segments', 'coverage', 'boundary_check', 'image_support', 'exclusions','chain_breaks','start_selection','route_order','motion_demo',*(['coverage_inspection'] if params['kind'] in ('serpentine_v3','serpentine_v4','surface_spacing') else []),*(['route_quality'] if params['kind']=='serpentine_v4' else []),*(['surface_mode','spacing_report'] if params['kind']=='surface_spacing' else [])) if params['kind'] in ('serpentine_v2','serpentine_v3','serpentine_v4','surface_spacing') else ('segments', 'coverage', 'boundary_check', 'image_support', 'exclusions'))}))
 
 
-def versioned(fn):
+def versioned(fn: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(fn)
     def generate(projection, mesh, region, *args, **kwargs):
         plan = fn(projection, mesh, region, *args, **kwargs)
@@ -45,14 +48,14 @@ def versioned(fn):
     return generate
 
 
-def validate(plan, mesh, region):
+def validate(plan: Any, mesh: Any, region: Any) -> None:
     if plan.get('plan_binding') != binding(mesh, region, plan):
         raise ValueError('Path samples/source/report mismatch：方案来源、几何、参数或算法版本不匹配；请重新生成路径')
     if plan.get('region_signature') != region_signature(region):
         raise ValueError('Region changed; regenerate path')
 
 
-def state(region, plan, *, dirty=False, pending=False, busy=False, error=None, request=None, geometry_digest=None, draft=False):
+def state(region: Any, plan: Any, *, dirty: bool=False, pending: bool=False, busy: bool=False, error: Any=None, request: Any=None, geometry_digest: str | None=None, draft: bool=False) -> dict[str, Any]:
     valid = bool(region and plan and plan.get('plan_binding') and
                  plan['plan_binding'].get('schema') == BINDING_VERSION and
                  plan['plan_binding'].get('algorithm_version') == ALGORITHMS.get(parameters(plan)['kind']) and

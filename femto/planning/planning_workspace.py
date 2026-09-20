@@ -1,4 +1,7 @@
 """One managed planning window per source in the current GUI process."""
+from __future__ import annotations
+from typing import Any
+
 from pathlib import Path
 import queue
 import threading
@@ -7,7 +10,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 
-def open_workspace(parent,path,language='zh',region_index=None,on_open=None):
+def open_workspace(parent: Any,path: str | Path,language: str='zh',region_index: int | None=None,on_open: Any=None) -> Any:
     root=parent._root()
     windows=getattr(root,'_planning_windows',None)
     if windows is None:windows={};root._planning_windows=windows
@@ -58,7 +61,7 @@ def open_workspace(parent,path,language='zh',region_index=None,on_open=None):
     return window
 
 
-def close_workspaces(root,force=False):
+def close_workspaces(root: Any,force: bool=False) -> bool:
     """Return False before host shutdown if any workspace declines closing."""
     windows=getattr(root,'_planning_windows',{})
     # Test doubles and partially initialized roots may synthesize attributes.

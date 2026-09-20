@@ -1,4 +1,7 @@
 """Portable region/planning workspace. ZIP assets are verified before extraction."""
+from __future__ import annotations
+from typing import Any, Callable
+
 from femto.paths import OUTPUTS_ROOT
 import hashlib
 import json
@@ -15,14 +18,14 @@ ASSETS={'scene_tsdf_mesh_m.ply','rgb.png','depth.npy','image_valid.npy',
         'mesh_triangle_uv.npy','texture_multiview.png','project.json'}
 
 
-def digest(path):
+def digest(path: str | Path) -> str:
     h=hashlib.sha256()
     with Path(path).open('rb') as stream:
         for block in iter(lambda:stream.read(1024*1024),b''):h.update(block)
     return h.hexdigest()
 
 
-def save_project(model,region,path,plan=None,check=lambda:None,*,planning_parameters=None,progress=lambda stage:None,commit=None,expected_digest=None):
+def save_project(model: Any,region: Any,path: str | Path,plan: Any=None,check: Callable[..., Any]=lambda:None,*,planning_parameters: Any=None,progress: Callable[..., Any]=lambda stage:None,commit: Any=None,expected_digest: str | None=None) -> Path:
     """Keep full source geometry as occlusion context; select only one editable ROI."""
     from femto.annotation.scene_annotations import mesh_digest
     from femto.planning.region_path import signature
@@ -183,7 +186,7 @@ def _open_project(path,workspace=None,cancel=None,progress=lambda stage:None):
     return model
 
 
-def open_project(path,workspace=None,cancel=None,progress=lambda stage:None):
+def open_project(path: Any,workspace: str | Path | None=None,cancel: Any=None,progress: Callable[..., Any]=lambda stage:None) -> Any:
     parent=Path(workspace) if workspace else OUTPUTS_ROOT/'region_workspaces'
     parent.mkdir(parents=True,exist_ok=True)
     root=parent/uuid.uuid4().hex
@@ -203,7 +206,7 @@ def open_project(path,workspace=None,cancel=None,progress=lambda stage:None):
 from femto.annotation.fixed_rgb_geometry import FixedRGBModel
 
 class PortableRegionModel(FixedRGBModel):
-    def load(self,path,*,cancel=None):
+    def load(self,path: str | Path,*,cancel: Any=None) -> Any:
         # Existing annotations exported inside this workspace retain its source binding.
         old_state=self.store.__dict__.copy();old_cache=self._overlay_cache.copy()
         try:
@@ -216,12 +219,12 @@ class PortableRegionModel(FixedRGBModel):
             raise
 
 
-def load_source(path,cancel=None,progress=lambda stage:None):
+def load_source(path: str | Path,cancel: Any=None,progress: Callable[..., Any]=lambda stage:None) -> Any:
     progress('加载参考来源')
     return open_project(path,cancel=cancel,progress=progress) if Path(path).is_file() else FixedRGBModel(path,cancel=cancel)
 
 
-def project_from_annotations(source,index,cancel=None,progress=lambda stage:None):
+def project_from_annotations(source: str | Path,index: int,cancel: Any=None,progress: Callable[..., Any]=lambda stage:None) -> Any:
     source=Path(source).resolve()
     if source.name!='annotations.json' or source.parent.parent.name!='annotations':
         raise ValueError('请选择当前模型的历史区域标记记录。')

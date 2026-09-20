@@ -1,4 +1,7 @@
 """Read-only coverage layers and omission localization from a bound inspection."""
+from __future__ import annotations
+from typing import Any, Callable
+
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw,ImageFont,ImageTk
@@ -9,19 +12,19 @@ COLORS={'selection':(230,180,245),'effective_geometry':(80,160,175),'forbidden':
         'boundary_margin':(75,125,255),'selection_limit':(175,150,65),'no_geometry':(180,65,205),'covered':(40,235,110),'uncovered':(255,150,40)}
 
 
-def font(size=17):
+def font(size: int=17) -> Any:
     path=Path('C:/Windows/Fonts/msyh.ttc')
     return ImageFont.truetype(str(path),size) if path.exists() else ImageFont.load_default()
 
 
-def crop_bounds(report,item):
+def crop_bounds(report: Any,item: Any) -> tuple[int, int, int, int]:
     width,height=report['reference_image_size']
     if item is None:return (0,0,width,height)
     x0,y0,x1,y1=item['bbox_pixel'];padding=max(18,.2*max(x1-x0,y1-y0))
     return (max(0,int(x0-padding)),max(0,int(y0-padding)),min(width,int(x1+padding)+1),min(height,int(y1+padding)+1))
 
 
-def render_map(rgb,plan,enabled=None,item=None,zoom=False,header=True):
+def render_map(rgb: Any,plan: Any,enabled: Any=None,item: Any=None,zoom: bool=False,header: bool=True) -> Any:
     report=plan['coverage_inspection'];enabled=set(LAYER_NAMES) if enabled is None else set(enabled)
     base=(np.asarray(rgb)*.30).astype(np.uint8)
     # Pixel layers are display evidence only, never a filled surface coverage claim.
@@ -59,7 +62,7 @@ def render_map(rgb,plan,enabled=None,item=None,zoom=False,header=True):
     return canvas
 
 
-def show_inspector(parent,model,plan,is_current=lambda:True):
+def show_inspector(parent: Any,model: Any,plan: Any,is_current: Callable[..., Any]=lambda:True) -> Any:
     import tkinter as tk
     from tkinter import ttk
     from femto.planning.region_path_guard import coverage_report_text

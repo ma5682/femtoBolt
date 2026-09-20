@@ -1,4 +1,7 @@
 """Bounded ordering over already certified polyline edges; no new surface shortcuts."""
+from __future__ import annotations
+from typing import Any, Callable
+
 import copy,heapq
 import numpy as np
 from femto.planning.planning_state import versioned
@@ -9,15 +12,15 @@ class OptimizationBudget(ValueError):pass
 
 class Budget:
     def __init__(self,check,limit=2000000):self.check=check;self.limit=limit;self.expanded=0
-    def step(self):
+    def step(self) -> None:
         self.expanded+=1
         if self.expanded%256==0:self.check()
         if self.expanded>self.limit:raise OptimizationBudget('优化搜索超过200万节点展开预算；停止搜索，保留已核验折线')
 
 
-def key(p):return (*p['xyz_m'],*p['pixel'],p['triangle_index'])
+def key(p: dict[str, Any]) -> tuple[Any, ...]:return (*p['xyz_m'],*p['pixel'],p['triangle_index'])
 
-def reorder_chain(chain,budget,greedy):
+def reorder_chain(chain: list[dict[str, Any]],budget: Budget,greedy: bool) -> list[dict[str, Any]]:
     nodes={};samples=[];graph=[]
     def node(p):
         k=key(p)
@@ -68,7 +71,7 @@ def reorder_chain(chain,budget,greedy):
     return output
 
 
-def restore_support_edges(original,candidate,budget):
+def restore_support_edges(original: list[dict[str, Any]],candidate: list[dict[str, Any]],budget: Budget) -> list[dict[str, Any]]:
     """Restore omitted certified edges via explicit round trips, then compare costs."""
     samples={key(p):p for p in original};missing={}
     used={tuple(sorted((key(a),key(b)))) for a,b in zip(candidate,candidate[1:])}
@@ -93,7 +96,7 @@ def restore_support_edges(original,candidate,budget):
     return output
 
 
-def metrics_not_worse(before,after):
+def metrics_not_worse(before: Any,after: Any) -> Any:
     return (abs(before['scan_length_m']-after['scan_length_m'])<=1e-9 and
         before['chain_count']==after['chain_count'] and
         after['connector_length_m']<=before['connector_length_m']+1e-9 and
@@ -101,14 +104,14 @@ def metrics_not_worse(before,after):
         after['total_length_m']<before['total_length_m']-1e-9)
 
 
-def coverage_not_worse(old,new):
+def coverage_not_worse(old: Any,new: Any) -> bool:
     if old['denominator']!=new['denominator'] or len(old['samples'])!=len(new['samples']):return False
     return all((a['triangle_index'],a['sample_index'],a['eligible'])==(b['triangle_index'],b['sample_index'],b['eligible']) and
                (not a['covered'] or b['covered']) for a,b in zip(old['samples'],new['samples']))
 
 
 @versioned
-def optimized_serpentine_plan(projection,mesh,region,width_mm=10.,overlap_percent=20.,check=lambda:None,*,boundary_margin_mm=1.,direction='horizontal',start_corner='top_left'):
+def optimized_serpentine_plan(projection: Any,mesh: Any,region: Any,width_mm: float=10.,overlap_percent: float=20.,check: Callable[..., Any]=lambda:None,*,boundary_margin_mm: float=1.,direction: str='horizontal',start_corner: str='top_left') -> Any:
     from femto.planning.region_path_guard import constrain_path
     from femto.planning.region_exclusions import allowed_region
     baseline=inspected_serpentine_plan(projection,mesh,region,width_mm,overlap_percent,check,

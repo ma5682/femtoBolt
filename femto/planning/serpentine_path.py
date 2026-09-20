@@ -1,4 +1,7 @@
 """Fixed-reference configurable serpentine sweeps joined by surface-grid routes, demo only."""
+from __future__ import annotations
+from typing import Any, Callable
+
 import heapq
 import cv2
 import numpy as np
@@ -62,7 +65,7 @@ def _finish_plan(projection,mesh,region,allowed,removed,chains,runs,breaks,faces
     return plan
 
 
-def serpentine_plan(projection,mesh,region,width_mm=10.,overlap_percent=20.,check=lambda:None,*,boundary_margin_mm=1.,direction=None,start_corner=None):
+def serpentine_plan(projection: Any,mesh: Any,region: Any,width_mm: float=10.,overlap_percent: float=20.,check: Callable[..., Any]=lambda:None,*,boundary_margin_mm: float=1.,direction: Any=None,start_corner: Any=None) -> Any:
     for value,lo,hi in ((width_mm,.2,100),(overlap_percent,0,90),(boundary_margin_mm,0,50)):
         if type(value) not in (int,float) or not np.isfinite(value) or not lo<=value<=hi:raise ValueError('Invalid serpentine parameters')
     modern=direction is not None or start_corner is not None

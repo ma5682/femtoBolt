@@ -1,4 +1,7 @@
 """Fixed-reference route diagrams for product demonstration, not execution."""
+from __future__ import annotations
+from typing import Any, Callable
+
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageTk
@@ -6,8 +9,8 @@ from femto.planning.region_path import path_summary
 from femto.planning.route_motion import MotionPlayer, statistics
 
 
-def render_diagram(rgb, ids, region, plan, show_region=True, show_path=True, segment_index=None,
-                   show_coverage=False, cursor=None, show_turns=True):
+def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool=True, show_path: bool=True, segment_index: int | None=None,
+                   show_coverage: bool=False, cursor: Any=None, show_turns: bool=True) -> Any:
     height,width=rgb.shape[:2];scale=min(8. if plan.get('route_quality') or plan.get('surface_mode') else 1.,1400/width,900/height)
     size=(max(1,int(width*scale)),max(1,int(height*scale)))
     mask=np.isin(ids,region['triangle_indices'])
@@ -120,7 +123,7 @@ def render_diagram(rgb, ids, region, plan, show_region=True, show_path=True, seg
     return canvas
 
 
-def motion_position(plan,elapsed,speed_mm_s=20.,gap_seconds=.5):
+def motion_position(plan: Any,elapsed: float,speed_mm_s: float=20.,gap_seconds: float=.5) -> tuple[Any, Any, str]:
     """Legacy stateless API only; the interactive player uses MotionPlayer and stops at breaks."""
     for index,segment in enumerate(plan['segments']):
         xyz=np.asarray([p['xyz_m'] for p in segment]);uv=np.asarray([p['pixel'] for p in segment])
@@ -138,7 +141,7 @@ def motion_position(plan,elapsed,speed_mm_s=20.,gap_seconds=.5):
     return len(plan['segments'])-1,None,'finished'
 
 
-def show_presentation(parent,model,region,plan,is_current=lambda:True):
+def show_presentation(parent: Any,model: Any,region: Any,plan: Any,is_current: Callable[..., Any]=lambda:True) -> None:
     import tkinter as tk
     import time
     from tkinter import ttk,filedialog,messagebox

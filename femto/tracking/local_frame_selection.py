@@ -1,5 +1,7 @@
 """View admission evidence in fixed W0, separate from acquisition/fusion pixels."""
 from __future__ import annotations
+from typing import Any
+
 from dataclasses import dataclass
 import cv2
 import numpy as np
@@ -25,7 +27,7 @@ class ViewEvidence:
     sampling_stride: int
 
 
-def view_evidence(prepared, record):
+def view_evidence(prepared: Any, record: dict[str, Any]) -> ViewEvidence:
     if validate_pose(record.get('T_WC')):
         raise ValueError('Invalid W0 view pose')
     depth = np.asarray(prepared.depth_mm)
@@ -45,7 +47,7 @@ def view_evidence(prepared, record):
     return ViewEvidence(record['frame_id'], pose.copy(), k.copy(), depth.copy(), world, stride)
 
 
-def assess_view(candidate, previous):
+def assess_view(candidate: ViewEvidence, previous: list[ViewEvidence]) -> dict[str, Any]:
     policy = SELECTION_POLICY
     count = len(candidate.points)
     report = dict(policy=dict(policy), sample_count=count, sampling_stride=candidate.sampling_stride,
@@ -108,13 +110,13 @@ class ViewSelector:
     def __init__(self):
         self.views = []
 
-    def evaluate(self, prepared, record):
+    def evaluate(self, prepared: Any, record: dict[str, Any]) -> tuple[ViewEvidence | None, dict[str, Any]]:
         if len(self.views) >= SELECTION_POLICY['max_views']:
             return None, dict(state='quality_insufficient', reason='view_evidence_budget', geometry_evaluated=True)
         view = view_evidence(prepared, record)
         return view, assess_view(view, self.views)
 
-    def accept(self, view):
+    def accept(self, view: ViewEvidence | None) -> None:
         if view is not None:
             self.views.append(view)
 
@@ -123,7 +125,7 @@ LOCAL_RADIUS_M = .03  # Acquisition envelope, not measurement accuracy.
 
 LOCAL_ROTATION_DEG = 10.0  # Total rotation relative to W0, not per Euler axis.
 
-def local_workspace(transform):
+def local_workspace(transform: Any) -> dict[str, Any]:
     transform=np.asarray(transform,dtype=float)
     radius=float(np.linalg.norm(transform[:3,3]));angle=rotation_deg(transform)
     return dict(radius_m=radius,limit_m=LOCAL_RADIUS_M,rotation_deg=angle,

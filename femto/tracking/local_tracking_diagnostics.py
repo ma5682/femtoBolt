@@ -1,12 +1,14 @@
 """Evidence-based tracking diagnostics. Suspected scene causes are not truth labels."""
 from __future__ import annotations
+from typing import Any
+
 
 from collections import Counter
 import cv2
 import numpy as np
 
 
-def distribution(values):
+def distribution(values: Any) -> dict[str, Any]:
     values = np.asarray([v for v in values if isinstance(v, (float, int)) and np.isfinite(v)], float)
     return dict(count=len(values), mean=float(values.mean()) if len(values) else None,
                 p50=float(np.percentile(values, 50)) if len(values) else None,
@@ -14,7 +16,7 @@ def distribution(values):
                 maximum=float(values.max()) if len(values) else None)
 
 
-def image_diagnostics(color, depth, minimum_mm, maximum_mm):
+def image_diagnostics(color: Any, depth: Any, minimum_mm: float, maximum_mm: float) -> dict[str, Any]:
     """Small image/coverage probes; no image mutation or semantic classification."""
     size = (min(480, color.shape[1]), max(1, round(color.shape[0]*min(1., 480/color.shape[1]))))
     gray = cv2.cvtColor(cv2.resize(color, size, interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
@@ -40,7 +42,7 @@ def image_diagnostics(color, depth, minimum_mm, maximum_mm):
                 interpretation='texture and depth evidence; blur, occlusion and object identity are not independently proven')
 
 
-def classify(record):
+def classify(record: Any) -> dict[str, Any]:
     """Return observable failures separately from unproven physical causes."""
     reasons = []
     reason = record.get('rejection_reason')
@@ -66,7 +68,7 @@ def classify(record):
                     if type(record.get('color_timestamp_us')) is int and type(record.get('depth_timestamp_us')) is int else None))
 
 
-def summarize(records, duration_s=None, dropped=None):
+def summarize(records: Any, duration_s: float | None=None, dropped: Any=None) -> dict[str, Any]:
     valid = [r for r in records if r.get('state') == 'tracking']
     failures = [r for r in records if r.get('state') != 'tracking']
     first = failures[0] if failures else None
@@ -92,7 +94,7 @@ def summarize(records, duration_s=None, dropped=None):
                              'Consistency and repeatability only; no independent physical ground truth.'])
 
 
-def quality_text(record, language='zh'):
+def quality_text(record: Any, language: str='zh') -> Any:
     quality = (record or {}).get('quality', {})
     depth, sharpness = quality.get('valid_depth_fraction'), quality.get('sharpness')
     if depth is None or sharpness is None:
@@ -108,7 +110,7 @@ def quality_text(record, language='zh'):
     return text
 
 
-def current_feedback(record, accepted, now, active=True):
+def current_feedback(record: Any, accepted: Any, now: float, active: bool=True) -> dict[str, Any]:
     """Current-frame status only; historical attempt errors never override recovery."""
     r=record or {};received=r.get('received_monotonic')
     age=max(0.,now-received) if isinstance(received,(int,float)) else None
@@ -122,7 +124,7 @@ def current_feedback(record, accepted, now, active=True):
         updated_at=r.get('status_updated_at'),frame_age_s=age,reference_frame_id=r.get('reference_frame_id'))
 
 
-def feedback_text(record,accepted,now,active=True,language='zh'):
+def feedback_text(record: Any,accepted: Any,now: float,active: bool=True,language: str='zh') -> Any:
     d=current_feedback(record,accepted,now,active);zh=language=='zh'
     stamp=d['updated_at'] or ('未记录' if zh else 'unrecorded')
     reason=d['current_reason'] or ('无' if zh else 'none')

@@ -1,4 +1,7 @@
 """Five-frame stationary support masks; selected depth values never averaged."""
+from __future__ import annotations
+from typing import Any, Sequence
+
 import argparse
 import hashlib
 import json
@@ -189,7 +192,7 @@ def _validate_mask_source(dataset,frame,depth,spec,mask_path):
                          'rebuild masks in a new derived directory: '+str(error)) from error
 
 
-def support_mask(depths,reference_index,motion_mask,minimum=250,maximum=2210):
+def support_mask(depths: Sequence[np.ndarray] | np.ndarray,reference_index: int,motion_mask: np.ndarray,minimum: float=250,maximum: float=2210) -> np.ndarray:
     if len(depths)!=5 or not 0<=reference_index<5:raise ValueError('Five frames required')
     shape=depths[0].shape
     if any(d.shape!=shape or d.dtype!=np.uint16 for d in depths) or motion_mask.shape!=shape:
@@ -205,12 +208,12 @@ def support_mask(depths,reference_index,motion_mask,minimum=250,maximum=2210):
     return keep
 
 
-def stationary_window(records,frame_id):
+def stationary_window(records: Any,frame_id: int) -> Any:
     from femto.tracking.local_stability import find_window
     return find_window(records, frame_id)
 
 
-def filtered_depth(dataset,frame,depth):
+def filtered_depth(dataset: str | Path,frame: Any,depth: np.ndarray) -> np.ndarray:
     spec=frame.get('local_temporal_support')
     if not spec:return depth
     path=(Path(dataset)/spec['mask']).resolve()
@@ -222,7 +225,7 @@ def filtered_depth(dataset,frame,depth):
     return np.where(mask>0,depth,0).astype(np.uint16)
 
 
-def prepare(dataset,output):
+def prepare(dataset: str | Path,output: str | Path) -> tuple[Path, dict[str, Any]]:
     dataset,output=Path(dataset).resolve(),Path(output).resolve()
     if output==dataset or dataset in output.parents:raise ValueError('Output cannot modify source dataset')
     manifest=json.loads((dataset/'manifest.json').read_text(encoding='utf-8-sig'))

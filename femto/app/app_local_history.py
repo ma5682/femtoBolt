@@ -1,4 +1,7 @@
 """Independent history window: browse completed models and unsuccessful sessions."""
+from __future__ import annotations
+from typing import Any
+
 from femto.paths import REPO_ROOT
 from datetime import datetime
 from pathlib import Path
@@ -64,12 +67,12 @@ class LocalHistoryWindow:
         ttk.Label(self.window,textvariable=self.status,padding=(12,0,12,12),wraplength=880).pack(fill='x')
         self.refresh();self.timer=self.window.after(100,self.poll)
 
-    def t(self,zh,en):return zh if self.language=='zh' else en
-    def resize(self,event):
+    def t(self,zh: str,en: str) -> str:return zh if self.language=='zh' else en
+    def resize(self,event: Any) -> None:
         if event.widget is self.window:
             for w in self.window.winfo_children():
                 if isinstance(w,ttk.Label):w.configure(wraplength=max(300,event.width-30))
-    def refresh(self):
+    def refresh(self) -> None:
         if self.loading or self.closed:return
         current=self.current()
         self.selected_key=current['key'] if current else self.selected_key
@@ -85,7 +88,7 @@ class LocalHistoryWindow:
                 try:self.mailbox.put_nowait((generation,rows,error))
                 except queue.Full:pass
         threading.Thread(target=worker,name='LocalHistory',daemon=True).start()
-    def poll(self):
+    def poll(self) -> None:
         if self.closed:return
         try:
             generation,rows,error=self.mailbox.get_nowait()
@@ -111,10 +114,10 @@ class LocalHistoryWindow:
             self.selected()
         except queue.Empty:pass
         self.timer=self.window.after(100,self.poll)
-    def current(self):
+    def current(self) -> Any:
         selection=self.tree.selection()
         return self.rows[int(selection[0])] if selection and int(selection[0])<len(self.rows) else None
-    def selected_rows(self):
+    def selected_rows(self) -> list[Any]:
         """Return all valid selected records in display order."""
         result=[]
         for item in self.tree.selection():
@@ -122,7 +125,7 @@ class LocalHistoryWindow:
             except (TypeError,ValueError):continue
             if 0<=index<len(self.rows):result.append(self.rows[index])
         return result
-    def selected(self):
+    def selected(self) -> None:
         selected_rows=self.selected_rows();row=selected_rows[0] if selected_rows else None
         enabled=existing_actions(row) if row else {}
         enabled['delete']=bool(selected_rows and not self.loading)
@@ -162,7 +165,7 @@ class LocalHistoryWindow:
         else:
             self.details.set('')
             if not self.loading:self.status.set(self.t('请先选中一条或多条历史记录。','Select one or more history records first.'))
-    def open(self,key):
+    def open(self,key: str) -> None:
         if key=='delete':self.delete_record();return
         row=self.current()
         if not row or not existing_actions(row).get(key):
@@ -177,10 +180,10 @@ class LocalHistoryWindow:
             else:os.startfile(row['report'] if key=='report' else row['result'] or row['source'])
         except (OSError,ValueError,RuntimeError,ImportError) as exc:
             self.status.set(self.t('无法打开：','Could not open: ')+str(exc));self.selected()
-    def delete_key(self,event=None):
+    def delete_key(self,event: Any=None) -> str:
         self.delete_record()
         return 'break'
-    def delete_record(self):
+    def delete_record(self) -> None:
         if self.loading:return
         rows=self.selected_rows()
         if not rows:
@@ -196,7 +199,7 @@ class LocalHistoryWindow:
             self.deleted_stack.append([dict(row) for row in rows]);self.selected_key=None;self.refresh()
         except (OSError,ValueError) as exc:self.status.set(self.t('删除失败：','Delete failed: ')+str(exc))
 
-    def undo_delete(self):
+    def undo_delete(self) -> None:
         if self.loading or not self.deleted_stack:return
         rows=self.deleted_stack[-1]
         try:
@@ -205,7 +208,7 @@ class LocalHistoryWindow:
             self.selected_key=rows[0]['key'] if rows else None;self.refresh()
         except (OSError,ValueError) as exc:self.status.set(self.t('恢复失败：','Restore failed: ')+str(exc))
 
-    def close(self):
+    def close(self) -> None:
         self.closed=True;self.generation+=1;self.cancel.set()
         if hasattr(self,'timer'):self.window.after_cancel(self.timer)
         self.window.destroy()

@@ -1,4 +1,7 @@
 """Read-only export catalog and standalone preview entry points."""
+from __future__ import annotations
+from typing import Any, Callable
+
 from femto.paths import REPO_ROOT
 from datetime import datetime
 import json
@@ -7,7 +10,7 @@ from pathlib import Path
 from femto.io_utils import write_json
 
 
-def register_project(reconstruction,path,check=lambda:None):
+def register_project(reconstruction: str | Path,path: str | Path,check: Callable[..., Any]=lambda:None) -> Any:
     """Index a portable project without unpacking or modifying it."""
     import zipfile
     import hashlib
@@ -27,14 +30,14 @@ def register_project(reconstruction,path,check=lambda:None):
     return path
 
 
-def local_asset(folder, name):
+def local_asset(folder: Any, name: str) -> Any:
     if not isinstance(name,str) or not name:return None
     path=(folder/name).resolve()
     if not path.is_relative_to(folder.resolve()):return None
     return path if path.is_file() else None
 
 
-def scan_region_exports(reconstruction, check=lambda:None):
+def scan_region_exports(reconstruction: str | Path, check: Callable[..., Any]=lambda:None) -> Any:
     """Read only concrete region exports; ignore projects, routes and library index."""
     root=Path(reconstruction);rows=[]
     for source in (root/'annotations').glob('*/annotations.json'):
@@ -53,7 +56,7 @@ def scan_region_exports(reconstruction, check=lambda:None):
     return sorted(rows,key=lambda row:row['stamp'],reverse=True)
 
 
-def scan_exports(reconstruction, include_hidden=False, check=lambda:None):
+def scan_exports(reconstruction: str | Path, include_hidden: bool=False, check: Callable[..., Any]=lambda:None) -> Any:
     root=Path(reconstruction);rows=[]
     sources=list((root/'annotations').glob('*/annotations.json'))+list((root/'region_paths').glob('*/path.json'))
     for source in sources:
@@ -157,7 +160,7 @@ def _render_library_rows(tree,rows,show_hidden,search,kind_filter):
         tree.insert(version,'end',iid=str(i),text='已移除' if row.get('hidden') else '记录',values=[row[k] for k in ('time','kind','name','status')])
 
 
-def show_region_library(parent,reconstruction):
+def show_region_library(parent: Any,reconstruction: Any) -> Any:
     import os
     import queue
     import subprocess
@@ -306,7 +309,7 @@ def show_region_library(parent,reconstruction):
     return window
 
 
-def show_history(parent,reconstruction):
+def show_history(parent: Any,reconstruction: Any) -> Any:
     """Product view: browse actual exported region assets only."""
     import os
     import queue

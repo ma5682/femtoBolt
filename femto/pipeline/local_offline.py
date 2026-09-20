@@ -4,6 +4,8 @@ The child has no camera and never publishes a business index. The capture worker
 commits only completed, source-bound results while holding its cancellation lock.
 """
 from __future__ import annotations
+from typing import Any, Callable
+
 
 import argparse
 import copy
@@ -28,7 +30,7 @@ class PublicationError(RuntimeError):
         self.status = status
 
 
-def publish_result(result, outputs, session_id, *, cancelled=lambda: False):
+def publish_result(result: str | Path, outputs: str | Path, session_id: str, *, cancelled: Callable[..., Any]=lambda: False) -> Any:
     """Commit indexes after all work; rollback only values written by this commit.
 
     Caller serializes cancellation against this short commit. Two index files
@@ -184,7 +186,7 @@ class LocalOfflineJob:
             raise ValueError('Offline result publication ownership mismatch')
         return receipt
 
-    def run(self):
+    def run(self) -> Any:
         from femto.pipeline.local_comparison import StageStopped, supervise
         request = dict(dataset=str(self.dataset), output=str(self.output), outputs=str(self.outputs),
                        session_id=self.session_id)
@@ -229,7 +231,7 @@ class LocalOfflineJob:
             write_json_strict(self.result / 'processing_report.json', self.report)
             write_html(self.result / 'processing_report.html', self.report)
 
-    def terminal(self, status, error):
+    def terminal(self, status: str, error: Any) -> list[Any]:
         """Reporting failures cannot suppress the caller's terminal event."""
         failures = []
         try:
@@ -274,7 +276,7 @@ def _source_paths(dataset):
     return paths
 
 
-def worker(request_file):
+def worker(request_file: Any) -> Any:
     from femto.pipeline.local_comparison import changed_files, fingerprints
     from femto.local.local_processing import LocalProcessing
     request = load_json_object(request_file)

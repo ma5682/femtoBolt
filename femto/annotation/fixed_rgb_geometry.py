@@ -1,4 +1,7 @@
 """Fixed, undistorted reference RGB -> existing W0 mesh. No inferred depth."""
+from __future__ import annotations
+from typing import Any
+
 import hashlib
 import json
 from pathlib import Path
@@ -32,7 +35,7 @@ class GeometryBudget:
         self.cancel = cancel
         self.deadline = time.monotonic() + seconds
 
-    def check(self):
+    def check(self) -> None:
         if self.cancel is not None and self.cancel.is_set():
             raise GeometryTaskCancelled('Geometry task cancelled')
         if time.monotonic() > self.deadline:
@@ -60,7 +63,7 @@ def _mesh_budget_before_load(path):
         raise ValueError('Fixed RGB mesh exceeds the 4000000 triangle memory budget')
 
 
-def region_vertex_summary(mesh, triangle_indices):
+def region_vertex_summary(mesh: Any, triangle_indices: Any) -> dict[str, Any]:
     """Vertices of the selected mesh, in its unchanged W0 metre coordinates."""
     indices=np.unique(np.asarray(mesh.triangles)[triangle_indices].ravel())
     points=np.asarray(mesh.vertices)[indices]
@@ -69,7 +72,7 @@ def region_vertex_summary(mesh, triangle_indices):
                 maximum_distance_mm=float(distances.max()))
 
 
-def vertex_cloud_view(mesh,projection):
+def vertex_cloud_view(mesh: Any,projection: Any) -> dict[str, Any]:
     """Display actual mesh vertices supported by the reference nearest surface."""
     points=np.asarray(mesh.vertices)
     uv=projection.project(points)
@@ -86,7 +89,7 @@ def vertex_cloud_view(mesh,projection):
     return dict(uv=uv[indices],z=points[indices,2],distance_mm=distances,limits=limits)
 
 
-def render_vertex_cloud(view,width,height,scale,offset,distance=False):
+def render_vertex_cloud(view: Any,width: int,height: int,scale: Any,offset: Any,distance: bool=False) -> tuple[np.ndarray, np.ndarray]:
     image=np.full((height,width,3),[8,18,28],np.uint8)
     pixels=np.floor(view['uv']*scale+offset+.5).astype(np.int64)
     valid=(pixels[:,0]>=0)&(pixels[:,0]<width)&(pixels[:,1]>=0)&(pixels[:,1]<height)
@@ -104,7 +107,7 @@ def render_vertex_cloud(view,width,height,scale,offset,distance=False):
     return image,mask
 
 
-def selected_surface_mask(projection, triangle_indices, width, height, scale, offset):
+def selected_surface_mask(projection: Any, triangle_indices: Any, width: int, height: int, scale: Any, offset: Any) -> Any:
     """Viewport mask of nearest supported hits belonging to selected triangles.
 
     No polygon fill across holes, and no selection of surfaces behind the hit.
@@ -119,7 +122,7 @@ def selected_surface_mask(projection, triangle_indices, width, height, scale, of
     return np.isin(hits,triangle_indices)&inside_y[:,None]&inside_x[None,:]&(hits>=0)
 
 
-def polygon_contains(points, polygon):
+def polygon_contains(points: Any, polygon: Any) -> np.ndarray:
     polygon = np.asarray(polygon, float)
     if (polygon.ndim != 2 or polygon.shape[1:] != (2,) or not 3 <= len(polygon) <= MAX_POLYGON_CORNERS
             or not np.isfinite(polygon).all()):
@@ -176,7 +179,7 @@ class FixedProjection:
         self.new_support=self.valid & ~((self.depth>=minimum*1000)&(self.depth<=maximum*1000))
         check()
 
-    def pixel_reason(self,x,y):
+    def pixel_reason(self,x: Any,y: Any) -> Any:
         if not np.isfinite([x,y]).all():return 'invalid_pixel'
         if not (0<=x<self.width and 0<=y<self.height):return 'outside_image'
         ix,iy=int(np.floor(x+.5)),int(np.floor(y+.5))
@@ -184,7 +187,7 @@ class FixedProjection:
         if hasattr(self,'image_valid') and not self.image_valid[iy,ix]:return 'no_source_pixel'
         return {0:'supported',1:'no_surface',2:'outside_depth_range',3:'depth_conflict',4:'no_source_pixel'}[int(self.reasons[iy,ix])]
 
-    def pixel(self,x,y):
+    def pixel(self,x: Any,y: Any) -> dict[str, Any] | None:
         if self.pixel_reason(x,y)!='supported':return None
         if not np.isfinite([x,y]).all() or not (0<=x<self.width and 0<=y<self.height):return None
         ix,iy=int(np.floor(x+.5)),int(np.floor(y+.5))
@@ -195,13 +198,13 @@ class FixedProjection:
             source='fixed_reference_rgb_mesh_ray',reference_pixel=[ix,iy],
             scale_validation='not_physically_validated')
 
-    def project(self,xyz):
+    def project(self,xyz: Any) -> Any:
         p=np.asarray(xyz,float)
         with np.errstate(divide='ignore',invalid='ignore'):
             return np.column_stack((p[:,0]*self.k[0,0]/p[:,2]+self.k[0,2],
                                     p[:,1]*self.k[1,1]/p[:,2]+self.k[1,2]))
 
-    def visible(self,xyz,*,check=None):
+    def visible(self,xyz: Any,*,check: Any=None) -> Any:
         """Occlusion uses the first continuous ray hit, not the 10 mm depth gate."""
         check = _check_function(check)
         points=np.asarray(xyz,float);uv=self.project(points)
@@ -225,7 +228,7 @@ class FixedProjection:
                              &(~measured | (np.abs(z-raw)<=.01)))
         return valid
 
-    def region(self,polygon,*,check=None):
+    def region(self,polygon: Any,*,check: Any=None) -> Any:
         check = _check_function(check)
         check()
         centers=np.asarray(self.mesh.vertices)[np.asarray(self.mesh.triangles)].mean(axis=1)
@@ -250,7 +253,7 @@ class FixedProjection:
         if hasattr(self,'image_valid'):valid &= self.image_valid[pix[:,1],pix[:,0]]
         return ids[valid].tolist()
 
-    def region_support(self,polygon,*,check=None):
+    def region_support(self,polygon: Any,*,check: Any=None) -> dict[str, Any]:
         """Count integer reference-image pixels. This is not a surface area."""
         check = _check_function(check)
         polygon_contains(np.empty((0,2)),polygon)
@@ -273,7 +276,7 @@ class FixedProjection:
                     reference_depth_missing_supported_pixels=missing_depth,
                     support_ratio=supported/requested if requested else None)
 
-    def visible_boundary(self,boundary,*,check=None):
+    def visible_boundary(self,boundary: Any,*,check: Any=None) -> Any:
         """Clip display-only boundary lines at occlusion; stored W0 edges stay intact.
 
         Samples are at most one reference-image pixel apart. A run is drawn only
@@ -368,7 +371,7 @@ class FixedRGBModel:
             return self.projection.project(p)[0].tolist() if self.projection.visible(p,check=check)[0] else None
         return self.projection.visible_boundary(item['boundary_world_m'],check=check)
 
-    def display_for(self,kind,item):
+    def display_for(self,kind: str,item: Any) -> Any:
         key=(kind,item['annotation_id'])
         if not hasattr(self,'_overlay_cache'):self._overlay_cache={}
         if key not in self._overlay_cache and kind=='point':
@@ -385,7 +388,7 @@ class FixedRGBModel:
         if extra is not None:total+=np.asarray(extra).nbytes+256
         if total>MAX_OVERLAY_BYTES:raise ValueError('Annotation overlays exceed the 64 MiB display memory budget')
 
-    def prepare_display(self,*,cancel=None):
+    def prepare_display(self,*,cancel: Any=None) -> None:
         budget=GeometryBudget(cancel);cache=self._current_cache()
         for kind,items in (('point',self.store.points),('region',self.store.regions)):
             for item in items:
@@ -394,7 +397,7 @@ class FixedRGBModel:
                 self._check_overlay_budget(cache)
         budget.check();self._overlay_cache=cache
 
-    def pick(self,x,y,name,note):
+    def pick(self,x: Any,y: Any,name: str,note: str) -> Any:
         if len(self.store.points)+len(self.store.regions)>=MAX_ANNOTATIONS:
             raise ValueError('Annotation count exceeds the 2000 item memory budget')
         hit=self.projection.pixel(x,y)
@@ -410,7 +413,7 @@ class FixedRGBModel:
         cache[('point',item['annotation_id'])]=overlay;self._overlay_cache=cache
         return item
 
-    def region(self,polygon,name,note,*,cancel=None,replace_existing=False):
+    def region(self,polygon: Any,name: str,note: str,*,cancel: Any=None,replace_existing: bool=False) -> Any:
         budget=GeometryBudget(cancel)
         if len(self.store.points)+len(self.store.regions)>=MAX_ANNOTATIONS:
             raise ValueError('Annotation count exceeds the 2000 item memory budget')
@@ -428,7 +431,7 @@ class FixedRGBModel:
         cache[('region',item['annotation_id'])]=overlay;self._overlay_cache=cache
         return item
 
-    def load(self,path,*,cancel=None):
+    def load(self,path: str | Path,*,cancel: Any=None) -> Any:
         budget=GeometryBudget(cancel);budget.check()
         if Path(path).stat().st_size>64*1024*1024:
             raise ValueError('Annotation file exceeds the 64 MiB input budget')

@@ -5,6 +5,8 @@ for point conversion or UI rendering. Preview voxel cells retain actual samples
 (not averaged/inferred surface points), including their source frame IDs.
 """
 from __future__ import annotations
+from typing import Any
+
 
 import copy
 import json
@@ -34,7 +36,7 @@ class ObservedAccumulator:
         self.initial = None
         self.limited = False
 
-    def add(self, points, colors, frame_id, transform):
+    def add(self, points: Any, colors: Any, frame_id: int, transform: Any) -> dict[str, Any]:
         transform = np.asarray(transform, dtype=np.float64)
         error = validate_pose(transform)
         if error:
@@ -68,7 +70,7 @@ class ObservedAccumulator:
         return dict(frame_id=frame_id, added_samples=len(novel), point_count=len(self.points),
                     highlighted_from=start, budget_limited=self.limited)
 
-    def snapshot(self, record, *, display_budget=30000):
+    def snapshot(self, record: Any, *, display_budget: int=30000) -> dict[str, Any]:
         # Display subset only; source-frame association remains explicit.
         ids = np.arange(len(self.points))
         if len(ids) > display_budget:
@@ -92,7 +94,7 @@ class LivePreviewWorker:
         self.thread = threading.Thread(target=self._run, name='FemtoObservedPreview', daemon=False)
         self.thread.start()
 
-    def submit(self, record):
+    def submit(self, record: Any) -> Any:
         if self.closing.is_set() or self.failed:
             return False
         if record.get('state') != 'tracking' or not record.get('selected_for_fusion'):
@@ -107,10 +109,10 @@ class LivePreviewWorker:
             self.publish(dict(status='error',error='preview_backlog'))
             return False
 
-    def close(self):
+    def close(self) -> None:
         self.closing.set()
 
-    def publish(self, data):
+    def publish(self, data: Any) -> None:
         data = dict(session_id=self.session_id, **data)
         with self.publish_lock:
             try:
@@ -119,7 +121,7 @@ class LivePreviewWorker:
                 pass
             self.mailbox.put_nowait(data)
 
-    def read_samples(self, frame_id, maps):
+    def read_samples(self, frame_id: int, maps: Any) -> tuple[np.ndarray, Any]:
         mx, my, k, width, height = maps
         stem = f'{frame_id:06d}'
         rgb = imread_unicode(self.dataset/'rgb'/f'{stem}.png', cv2.IMREAD_COLOR)

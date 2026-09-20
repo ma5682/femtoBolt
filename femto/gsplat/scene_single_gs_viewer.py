@@ -1,5 +1,7 @@
 """Fixed optical centre and orientation; zoom changes only the image crop/K."""
 from __future__ import annotations
+from typing import Any
+
 from femto.paths import REPO_ROOT
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
@@ -11,7 +13,7 @@ from femto.io_utils import load_json, write_json, write_json_strict
 from femto.gsplat.scene_single_gs import SCHEMA, MARKER, SingleConfig
 
 
-def enable_native_dpi():
+def enable_native_dpi() -> None:
     """Opt this viewer process into physical pixels before creating Tk windows."""
     if os.name != 'nt': return
     import ctypes
@@ -26,7 +28,7 @@ def enable_native_dpi():
         pass
 
 
-def native_render_size(width, height):
+def native_render_size(width: int, height: int) -> tuple[Any, Any]:
     """Use source detail even in a small window; never derive from virtual Tk size."""
     if width <= 0 or height <= 0: raise ValueError('Invalid source dimensions')
     scale=min(1.,1920/width,1080/height)
@@ -39,30 +41,30 @@ class FixedViewport:
     cx: float = .5
     cy: float = .5
 
-    def constrain(self):
+    def constrain(self) -> None:
         if not np.isfinite([self.zoom,self.cx,self.cy]).all(): raise ValueError('Invalid viewport')
         self.zoom=float(np.clip(self.zoom,1,16))
         radius=.5/self.zoom
         self.cx=float(np.clip(self.cx,radius,1-radius))
         self.cy=float(np.clip(self.cy,radius,1-radius))
 
-    def source_point(self, x, y):
+    def source_point(self, x: Any, y: Any) -> tuple[Any, Any]:
         return self.cx+(x-.5)/self.zoom, self.cy+(y-.5)/self.zoom
 
-    def zoom_at(self, factor, x=.5, y=.5):
+    def zoom_at(self, factor: float, x: float=.5, y: float=.5) -> None:
         sx,sy=self.source_point(x,y)
         self.zoom=float(np.clip(self.zoom*factor,1,16))
         self.cx=sx-(x-.5)/self.zoom; self.cy=sy-(y-.5)/self.zoom
         self.constrain()
 
-    def select(self,x0,y0,x1,y1):
+    def select(self,x0: Any,y0: Any,x1: Any,y1: Any) -> None:
         x0,x1=sorted(np.clip([x0,x1],0,1)); y0,y1=sorted(np.clip([y0,y1],0,1))
         if min(x1-x0,y1-y0)<.01: return
         self.cx,self.cy=self.source_point((x0+x1)/2,(y0+y1)/2)
         self.zoom=min(16,self.zoom/max(x1-x0,y1-y0))
         self.constrain()
 
-    def intrinsic(self, K, source_width, source_height, width, height):
+    def intrinsic(self, K: Any, source_width: int, source_height: int, width: int, height: int) -> Any:
         self.constrain()
         result=np.array(K,dtype=np.float32).copy()
         result[0,2]-=(self.cx-.5/self.zoom)*source_width
@@ -72,7 +74,7 @@ class FixedViewport:
         return result
 
 
-def load_model_metadata(output):
+def load_model_metadata(output: str | Path) -> Any:
     output=Path(output)
     meta=load_json(output/'single_report.json')
     if meta.get('schema')!=SCHEMA or not meta.get('completed') or not meta.get('fixed_view'):
@@ -87,7 +89,7 @@ class ViewportModelMismatch(ValueError):
     pass
 
 
-def load_viewport(path, meta):
+def load_viewport(path: Any, meta: Any) -> Any:
     saved=load_json(path)
     if not isinstance(saved,dict): raise ValueError('Invalid saved region')
     if saved.get('model_sha256')!=meta['model_sha256'] or saved.get('source_fingerprint')!=meta['source_fingerprint']:
@@ -130,44 +132,44 @@ class SingleViewer:
         self.root.protocol('WM_DELETE_WINDOW',self.close)
         self.root.after(100,self.poll)
 
-    def text(self,zh,en): return zh if self.language=='zh' else en
-    def request(self): self.dirty=True
-    def reset(self): self.view=FixedViewport(); self.request()
-    def zoom(self,factor,x=.5,y=.5): self.view.zoom_at(factor,x,y); self.request()
+    def text(self,zh: str,en: str) -> str: return zh if self.language=='zh' else en
+    def request(self) -> None: self.dirty=True
+    def reset(self) -> None: self.view=FixedViewport(); self.request()
+    def zoom(self,factor: float,x: float=.5,y: float=.5) -> None: self.view.zoom_at(factor,x,y); self.request()
 
-    def display_rect(self):
+    def display_rect(self) -> tuple[Any, Any, Any, Any]:
         cw,ch=max(1,self.canvas.winfo_width()),max(1,self.canvas.winfo_height())
         scale=min(cw/self.meta['width'],ch/self.meta['height'])
         w,h=max(1,round(scale*self.meta['width'])),max(1,round(scale*self.meta['height']))
         return (cw-w)/2,(ch-h)/2,w,h
 
-    def normalized(self,event):
+    def normalized(self,event: Any) -> tuple[Any, Any]:
         x,y,w,h=self.display_rect()
         return (event.x-x)/w,(event.y-y)/h
 
-    def press(self,event):
+    def press(self,event: Any) -> None:
         if self.future is not None or self.dirty: return
         x,y=self.normalized(event)
         if 0<=x<=1 and 0<=y<=1: self.start=(x,y,event.x,event.y)
 
-    def drag(self,event):
+    def drag(self,event: Any) -> None:
         if self.start is None: return
         if self.box: self.canvas.delete(self.box)
         self.box=self.canvas.create_rectangle(self.start[2],self.start[3],event.x,event.y,outline='#50ecaa',width=2)
 
-    def release(self,event):
+    def release(self,event: Any) -> None:
         if self.start is not None:
             self.view.select(*self.start[:2],*self.normalized(event)); self.request()
         self.start=None
         if self.box: self.canvas.delete(self.box); self.box=None
 
-    def wheel(self,event):
+    def wheel(self,event: Any) -> None:
         if self.future is not None or self.dirty: return
         x,y=self.normalized(event)
         if 0<=x<=1 and 0<=y<=1 and event.delta:
             self.zoom(1.2 if event.delta>0 else 1/1.2,x,y)
 
-    def save(self):
+    def save(self) -> None:
         temporary=None
         try:
             payload=dict(model_sha256=self.meta['model_sha256'],source_fingerprint=self.meta['source_fingerprint'],
@@ -182,7 +184,7 @@ class SingleViewer:
                 try: temporary.unlink(missing_ok=True)
                 except OSError: pass
 
-    def load(self):
+    def load(self) -> None:
         try:
             loaded=load_viewport(self.output/'viewport.json',self.meta)
         except FileNotFoundError:
@@ -205,7 +207,7 @@ class SingleViewer:
         self.request()
         self.status.set(self.text('已恢复保存的区域','Saved region restored'))
 
-    def render(self,K,w,h):
+    def render(self,K: Any,w: int,h: int) -> Any:
         from femto.gsplat.scene_gsplat_guard import guard_cuda
         from femto.gsplat.scene_gsplat_viewer import TrainedGaussianRenderer
         guard_cuda('cuda:0',SingleConfig())
@@ -213,7 +215,7 @@ class SingleViewer:
             self.renderer=TrainedGaussianRenderer(self.output/'model.ply',initial_width=w,initial_height=h,max_render_pixels=1920*1080)
         return self.renderer.render(np.eye(4,dtype=np.float32),K,w,h)
 
-    def poll(self):
+    def poll(self) -> None:
         if self.closed: return
         if self.future is not None and self.future.done():
             try:
@@ -235,13 +237,13 @@ class SingleViewer:
             self.future=self.pool.submit(self.render,K,w,h)
         self.root.after(100,self.poll)
 
-    def close(self):
+    def close(self) -> None:
         self.closed=True; self.pool.shutdown(wait=False,cancel_futures=True); self.root.destroy()
 
-    def run(self): self.root.mainloop()
+    def run(self) -> None: self.root.mainloop()
 
 
-def open_viewer(output,language='zh'):
+def open_viewer(output: str | Path,language: str='zh') -> Any:
     import subprocess, os
     from femto.gsplat.gsplat_backend import runtime_environment,runtime_python
     output=Path(output); load_model_metadata(output)

@@ -6,6 +6,8 @@ after the session ends (local_temporal_support). This module never reads the
 camera SDK and never creates frames or windows that the records do not contain.
 """
 from __future__ import annotations
+from typing import Any
+
 
 import numpy as np
 
@@ -23,7 +25,7 @@ RULE = ('five consecutive trusted frames within 1 mm / 0.2 deg of the selected f
 CHECK = 'pose_only_candidate'
 
 
-def frame_trusted(record):
+def frame_trusted(record: Any) -> bool:
     """A tracking record with a valid rigid pose, integer timestamp and synchronized RGB-D."""
     return bool(isinstance(record, dict) and record.get('state') == 'tracking'
                 and not validate_pose(record.get('T_WC'))
@@ -33,7 +35,7 @@ def frame_trusted(record):
                 and abs(record['color_timestamp_us']-record['depth_timestamp_us']) <= MAX_RGBD_SYNC_US)
 
 
-def frame_still(record, reference):
+def frame_still(record: Any, reference: Any) -> bool:
     """Trusted and within the stillness tolerance relative to the reference record."""
     if not frame_trusted(record) or not frame_trusted(reference):
         return False
@@ -44,12 +46,12 @@ def frame_still(record, reference):
                 and rotation_deg(relative) <= STILL_ROTATION_DEG)
 
 
-def adjacent(earlier, later):
+def adjacent(earlier: Any, later: Any) -> bool:
     a, b = earlier.get('capture_timestamp_us'), later.get('capture_timestamp_us')
     return type(a) is int and type(b) is int and a < b <= a+MAX_ADJACENT_GAP_US
 
 
-def window_valid(group, reference):
+def window_valid(group: Any, reference: Any) -> bool:
     """The single definition shared by the offline filter and the online hint."""
     if len(group) != WINDOW_FRAMES or not all(frame_still(r, reference) for r in group):
         return False
@@ -58,7 +60,7 @@ def window_valid(group, reference):
     return group[-1]['capture_timestamp_us']-group[0]['capture_timestamp_us'] <= MAX_SPAN_US
 
 
-def find_window(records, frame_id):
+def find_window(records: list[dict[str, Any]], frame_id: int) -> tuple[list[dict[str, Any]], int] | None:
     """Find an actual consecutive window containing the admitted anchor."""
     indices = [i for i, r in enumerate(records) if r.get('frame_id') == frame_id]
     if len(indices) != 1:
@@ -86,7 +88,7 @@ def _stop_reason(record, reference, previous, forward):
     return 'moved'
 
 
-def candidate_status(records, anchor_index):
+def candidate_status(records: list[dict[str, Any]], anchor_index: int) -> dict[str, Any]:
     """Maximal stationary run containing the anchor, capped at the window size.
 
     ``candidate_frames`` counts actual records only. ``satisfied`` requires a
@@ -137,7 +139,7 @@ def candidate_status(records, anchor_index):
     return status
 
 
-def all_stationary_windows(records):
+def all_stationary_windows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     result=[]
     for start in range(0,max(0,len(records)-WINDOW_FRAMES+1)):
         group=records[start:start+WINDOW_FRAMES];reference=group[WINDOW_FRAMES//2]
@@ -147,7 +149,7 @@ def all_stationary_windows(records):
     return result
 
 
-def window_seconds_estimate(processed_fps):
+def window_seconds_estimate(processed_fps: float | None) -> float | None:
     """Real-rate estimate of one five-frame window; informational only."""
     if not processed_fps or not np.isfinite(processed_fps) or processed_fps <= 0:
         return None

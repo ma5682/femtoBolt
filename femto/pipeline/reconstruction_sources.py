@@ -1,4 +1,7 @@
 """Independent, validated reconstruction sources for the two GS workflows."""
+from __future__ import annotations
+from typing import Any
+
 import json
 from pathlib import Path
 
@@ -6,7 +9,7 @@ MARKERS = {'keyframe': 'latest_keyframe_reconstruction.txt',
            'moving': 'latest_moving_reconstruction.txt'}
 
 
-def mode_of(root):
+def mode_of(root: str | Path) -> str | None:
     root = Path(root).resolve()
     try:
         data = json.loads((root / 'demo_summary.json').read_text(encoding='utf-8-sig'))
@@ -37,7 +40,7 @@ def mode_of(root):
     return None
 
 
-def remember(outputs, root):
+def remember(outputs: str | Path, root: str | Path) -> Any:
     root = Path(root).resolve()
     mode = mode_of(root)
     if mode:
@@ -48,7 +51,7 @@ def remember(outputs, root):
     return mode
 
 
-def restore(outputs):
+def restore(outputs: str | Path) -> Any:
     """Recover old installations and CLI-created results without trusting folder names."""
     outputs = Path(outputs)
     candidates = set(p.parent for p in outputs.glob('*/demo_summary.json'))
@@ -73,7 +76,7 @@ def restore(outputs):
     return result
 
 
-def describe(root):
+def describe(root: str | Path) -> Any:
     if not root:
         return '-'
     try:

@@ -1,4 +1,7 @@
 """Read-only, point-local raw observation evidence, separate from texture and fusion."""
+from __future__ import annotations
+from typing import Any, Callable
+
 from femto.paths import OUTPUTS_ROOT
 import json,hashlib
 from pathlib import Path
@@ -9,10 +12,10 @@ from femto.io_utils import load_json, load_jsonl
 from femto.dataset.scene_dataset_validator import validate_pose
 
 
-def digest(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def digest(path: str | Path) -> str:return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def sample_view(xyz,pose,k,depth,minimum,maximum):
+def sample_view(xyz: Any,pose: Any,k: Any,depth: Any,minimum: float,maximum: float) -> dict[str, Any]:
     inverse=np.linalg.inv(pose);camera=np.asarray(xyz)@inverse[:3,:3].T+inverse[:3,3];z=camera[:,2]
     uv=camera[:,:2]/np.maximum(z[:,None],1e-12)*[k[0,0],k[1,1]]+[k[0,2],k[1,2]]
     pix=np.rint(uv).astype(int);inside=(z>0)&(pix[:,0]>=0)&(pix[:,0]<depth.shape[1])&(pix[:,1]>=0)&(pix[:,1]<depth.shape[0])
@@ -23,7 +26,7 @@ def sample_view(xyz,pose,k,depth,minimum,maximum):
         all_observed=bool(valid.all()),max_abs_residual_m=float(np.abs(raw-z).max()) if valid.all() else None)
 
 
-def diagnose(model,point,check=lambda:None,progress=lambda stage:None):
+def diagnose(model: Any,point: Any,check: Callable[..., Any]=lambda:None,progress: Callable[..., Any]=lambda stage:None) -> dict[str, Any]:
     check();progress('核对局部模型、参考系与来源')
     xyz=point['point_world_m'];tid=int(point['triangle_index']);mesh=model.mesh
     tri=np.asarray(mesh.vertices)[np.asarray(mesh.triangles)[tid]];samples=np.vstack([xyz,tri,tri.mean(axis=0)])
@@ -114,7 +117,7 @@ def diagnose(model,point,check=lambda:None,progress=lambda stage:None):
     return report
 
 
-def render_comparison(model,report):
+def render_comparison(model: Any,report: Any) -> Any:
     from PIL import Image,ImageDraw,ImageFont
     x,y=np.rint(report['reference_pixel']).astype(int);h,w=model.rgb.shape[:2]
     x0=max(0,min(w-96,x-48));y0=max(0,min(h-96,y-48));x1=min(w,x0+96);y1=min(h,y0+96)
@@ -141,7 +144,7 @@ def render_comparison(model,report):
     return canvas
 
 
-def show_diagnostics(parent,model,report):
+def show_diagnostics(parent: Any,model: Any,report: Any) -> Any:
     import tkinter as tk
     from tkinter import ttk
     from PIL import ImageTk
@@ -162,7 +165,7 @@ def show_diagnostics(parent,model,report):
     return w
 
 
-def save_diagnostics(report,image,parent=None):
+def save_diagnostics(report: Any,image: Any,parent: str | Path | None=None) -> Any:
     import tempfile,os,uuid
     root=Path(parent) if parent else OUTPUTS_ROOT/'local_geometry_diagnostics'
     root.mkdir(parents=True,exist_ok=True);root=root.resolve();target=root/('diagnostic_'+uuid.uuid4().hex)

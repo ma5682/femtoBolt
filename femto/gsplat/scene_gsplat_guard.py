@@ -1,9 +1,12 @@
 """Bound growth before allocation and stop cleanly on observed CUDA pressure."""
+from __future__ import annotations
+from typing import Any
+
 class ResourceLimitError(RuntimeError):
     pass
 
 
-def cuda_memory_snapshot(device):
+def cuda_memory_snapshot(device: Any) -> dict[str, float]:
     import torch
     free, total = torch.cuda.mem_get_info(device)
     return dict(cuda_allocated_mib=round(torch.cuda.memory_allocated(device)/2**20, 1),
@@ -12,20 +15,20 @@ def cuda_memory_snapshot(device):
                 cuda_free_mib=round(free/2**20, 1), cuda_total_mib=round(total/2**20, 1))
 
 
-def check_memory(snapshot, config):
+def check_memory(snapshot: dict[str, float], config: Any) -> None:
     if snapshot['cuda_reserved_mib'] >= config.max_cuda_reserved_mib:
         raise ResourceLimitError(f"CUDA reserved {snapshot['cuda_reserved_mib']} MiB reached limit {config.max_cuda_reserved_mib} MiB")
     if snapshot['cuda_free_mib'] < config.min_cuda_free_mib:
         raise ResourceLimitError(f"CUDA free {snapshot['cuda_free_mib']} MiB below reserve {config.min_cuda_free_mib} MiB")
 
 
-def guard_cuda(device, config):
+def guard_cuda(device: Any, config: Any) -> dict[str, float]:
     snapshot = cuda_memory_snapshot(device)
     check_memory(snapshot, config)
     return snapshot
 
 
-def bounded_strategy_class(base):
+def bounded_strategy_class(base: type[Any]) -> type[Any]:
     """Wrap pinned gsplat 1.5.3 growth, preserving its pruning/optimizer logic.
 
     Each selected parent can append at most two rows during split (before the

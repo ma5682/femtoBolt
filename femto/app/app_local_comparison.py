@@ -1,5 +1,7 @@
 """Independent A/B/C replay controls; worker events stay within this dialog."""
 from __future__ import annotations
+from typing import Any
+
 
 import os
 from pathlib import Path
@@ -13,7 +15,7 @@ import uuid
 from femto.io_utils import load_json_object
 
 
-def comparison_source(result_or_dataset):
+def comparison_source(result_or_dataset: str | Path) -> Any:
     """Resolve recorded ancestry, never infer a new origin or overwrite a model."""
     root = Path(result_or_dataset).resolve()
     if root.name == 'reconstruction':
@@ -50,7 +52,7 @@ def comparison_source(result_or_dataset):
     raise ValueError('Comparison source ancestry exceeds the eight-level budget')
 
 
-def progress_text(report, language='zh'):
+def progress_text(report: Any, language: str='zh') -> Any:
     zh = language == 'zh'
     choose = lambda a, b: a if zh else b
     labels = {'running': choose('执行中', 'Running'), 'complete': choose('已完成', 'Complete'),
@@ -147,7 +149,7 @@ class ComparisonWindow:
         self.window.bind('<Destroy>', self._destroyed)
         self.timer = self.window.after(100, self.poll)
 
-    def t(self, zh, en):
+    def t(self, zh: str, en: str) -> str:
         return zh if self.language == 'zh' else en
 
     def _text(self, value):
@@ -169,7 +171,7 @@ class ComparisonWindow:
             pass
         self.mailbox.put_nowait((generation, report, terminal))
 
-    def start(self):
+    def start(self) -> None:
         if self.closed or self.running:
             return
         self.generation += 1
@@ -195,13 +197,13 @@ class ComparisonWindow:
         self.thread = threading.Thread(target=worker, name='FemtoComparison', daemon=False)
         self.thread.start()
 
-    def cancel(self):
+    def cancel(self) -> None:
         if self.running:
             self.cancel_event.set()
             self.status.set(self.t('正在取消本次对照；等待任务确认终止。', 'Cancelling this comparison; waiting for task termination.'))
             self._buttons()
 
-    def poll(self):
+    def poll(self) -> None:
         # A direct refresh must consume the old token too, otherwise it creates
         # another timer whose callback outlives this dialog after close.
         self._cancel_poll()
@@ -221,14 +223,14 @@ class ComparisonWindow:
                 self._buttons()
         self.timer = self.window.after(100, self.poll)
 
-    def open_report(self):
+    def open_report(self) -> None:
         path = self.result / 'comparison_report.html' if self.result else None
         if path and path.is_file():
             os.startfile(path)
         else:
             self.status.set(self.t('对照报告尚未生成或文件缺失。', 'Comparison report is not generated or is missing.'))
 
-    def open_folder(self):
+    def open_folder(self) -> None:
         if self.result and self.result.is_dir():
             os.startfile(self.result)
 
@@ -242,7 +244,7 @@ class ComparisonWindow:
                 # Parent destruction may already have removed the Tcl command.
                 pass
 
-    def close(self):
+    def close(self) -> None:
         self._cancel_poll()
         if self.closed:return
         self.cancel_event.set()

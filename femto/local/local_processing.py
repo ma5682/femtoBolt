@@ -1,5 +1,7 @@
 """Result-bound local optimization evidence; no geometry or latest-index writes."""
 from __future__ import annotations
+from typing import Any
+
 
 import copy
 import html
@@ -46,13 +48,13 @@ WARNINGS = (
 )
 
 
-def empty_report():
+def empty_report() -> dict[str, Any]:
     return dict(schema=SCHEMA, state='not_recorded', actual_pose_source=None,
                 actual_dataset=None, refinement=dict(status='not_recorded'),
                 temporal=dict(status='not_recorded'), physical_accuracy_verified=False)
 
 
-def temporal_summary(report):
+def temporal_summary(report: Any) -> dict[str, Any]:
     rows = report.get('frames')
     if not isinstance(rows, list) or not rows or any(not isinstance(r,dict) or type(r.get('applied')) is not bool for r in rows):
         return dict(status='not_recorded', accepted_views=None, windows_found=None,
@@ -102,13 +104,13 @@ class LocalProcessing:
             physical_accuracy_verified=False)
         self.publish()
 
-    def publish(self):
+    def publish(self) -> None:
         write_json_strict(self.path, self.report)
         write_html(self.output / 'processing_report.html', self.report)
         if self.progress:
             self.progress(copy.deepcopy(self.report))
 
-    def run(self):
+    def run(self) -> Any:
         from femto.local.local_pose_refinement import refine
         from femto.local.local_temporal_support import prepare
         stage = 'refinement'
@@ -152,13 +154,13 @@ class LocalProcessing:
                 self.report['reporting_error'] = str(report_error)
             raise
 
-    def reconstruction(self, status, error=None):
+    def reconstruction(self, status: str, error: Any=None) -> None:
         self.report['reconstruction'] = dict(status=status, error=error)
         self.report['state'] = 'running' if status == 'running' else status
         self.publish()
 
 
-def result_quality(result):
+def result_quality(result: str | Path) -> Any:
     """Read only reports explicitly bound to this geometry version; never guess from newer attempts."""
     root = Path(result).resolve()
     if root.name == 'reconstruction':
@@ -241,7 +243,7 @@ def _validate_temporal_binding(temporal, actual):
         raise ValueError('Temporal adoption / actual mask input mismatch')
 
 
-def format_quality(report, language='zh'):
+def format_quality(report: Any, language: str='zh') -> Any:
     zh = language == 'zh'
     choose = lambda a, b: a if zh else b
     missing = choose('未记录', 'Not recorded')
@@ -313,7 +315,7 @@ def format_quality(report, language='zh'):
     return '\n'.join(lines)
 
 
-def write_html(path, report):
+def write_html(path: str | Path, report: Any) -> None:
     sections = []
     for lang, heading in [('zh', '局部优化与质量'), ('en', 'Local processing quality')]:
         sections.append('<h2>' + heading + '</h2><pre>' + html.escape(format_quality(report, lang)) + '</pre>')

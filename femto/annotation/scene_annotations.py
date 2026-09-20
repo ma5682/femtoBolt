@@ -1,4 +1,7 @@
 """Derived surface annotations, bound to the exact source mesh (metres/RDF)."""
+from __future__ import annotations
+from typing import Any
+
 import hashlib
 import json
 import math
@@ -15,7 +18,7 @@ from femto.io_utils import write_json_strict
 STATUS = 'not_physically_validated'
 
 
-def world_point_m(xyz):
+def world_point_m(xyz: Any) -> np.ndarray:
     """Validate stored model/world coordinates; never apply a camera transform."""
     try:
         point = np.asarray(xyz, dtype=np.float64)
@@ -26,7 +29,7 @@ def world_point_m(xyz):
     return point
 
 
-def distance_to_origin_m(xyz):
+def distance_to_origin_m(xyz: Any) -> Any:
     """Euclidean distance to the origin of the point's existing coordinate frame."""
     distance = math.hypot(*world_point_m(xyz))
     if not math.isfinite(distance):
@@ -34,7 +37,7 @@ def distance_to_origin_m(xyz):
     return distance
 
 
-def point_readout_mm(xyz):
+def point_readout_mm(xyz: Any) -> tuple[Any, Any]:
     point = world_point_m(xyz)
     with np.errstate(over='ignore'):
         point_mm = point * 1000.0
@@ -44,21 +47,21 @@ def point_readout_mm(xyz):
     return point_mm.tolist(), distance_mm
 
 
-def mesh_digest(mesh):
+def mesh_digest(mesh: Any) -> str:
     h = hashlib.sha256()
     h.update(np.asarray(mesh.vertices, dtype='<f8').tobytes())
     h.update(np.asarray(mesh.triangles, dtype='<i8').tobytes())
     return h.hexdigest()
 
 
-def distance_m(a, b):
+def distance_m(a: Any, b: Any) -> Any:
     distance = math.dist(world_point_m(a['point_world_m']), world_point_m(b['point_world_m']))
     if not math.isfinite(distance):
         raise ValueError('Non-finite distance between points')
     return distance
 
 
-def visible_region(mesh, polygon, view, projection, width, height):
+def visible_region(mesh: Any, polygon: Any, view: Any, projection: Any, width: int, height: int) -> Any:
     """Select whole triangles whose visible centroid is inside the screen polygon."""
     polygon = np.asarray(polygon, float)
     if len(polygon) < 3:
@@ -88,7 +91,7 @@ def visible_region(mesh, polygon, view, projection, width, height):
     return ids[hits['primitive_ids'].numpy() == ids].tolist()
 
 
-def region_mesh(mesh, ids):
+def region_mesh(mesh: Any, ids: Any) -> Any:
     result = o3d.geometry.TriangleMesh(mesh)
     keep = np.zeros(len(mesh.triangles), bool)
     keep[ids] = True
@@ -97,7 +100,7 @@ def region_mesh(mesh, ids):
     return result
 
 
-def region_boundary(mesh, ids):
+def region_boundary(mesh: Any, ids: Any) -> Any:
     """Boundary segments of selected triangles, including holes; never bridge gaps."""
     triangles = np.asarray(mesh.triangles)[ids]
     edges = np.concatenate((triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]))
@@ -157,7 +160,7 @@ class AnnotationStore:
         self.mark_saved()
 
     @staticmethod
-    def source_origin_reference(source, context):
+    def source_origin_reference(source: str | Path, context: Any) -> Any:
         """Require matching local-capture evidence, not just an RDF/identity pose.
 
         Older/standalone models remain usable, but their origin is not asserted
@@ -235,7 +238,7 @@ class AnnotationStore:
         except (OSError, ValueError, TypeError, KeyError, IndexError, StopIteration):
             return unknown
 
-    def normalized_point(self, point):
+    def normalized_point(self, point: Any) -> dict[Any, Any]:
         """Copy a surface point and recompute derived values from its stored XYZ."""
         if not isinstance(point, dict):
             raise ValueError('Invalid surface point')
@@ -270,14 +273,14 @@ class AnnotationStore:
                     distance_to_origin_m=distance_to_origin_m(xyz),
                     coordinate_frame='world_rdf', unit='metre', scale_validation=STATUS)
 
-    def add_point(self, hit, *, name='', note=''):
+    def add_point(self, hit: Any, *, name: str='', note: str='') -> Any:
         point = self.normalized_point(dict(hit, **_new_item_metadata(), name=name, note=note,
                                           source_mesh=self.source))
         focus = ('point', self.points[-1]['annotation_id']) if self.points else None
         self._commit(self.points + [point], self.regions, focus)
         return point
 
-    def normalized_region(self, region):
+    def normalized_region(self, region: Any) -> dict[Any, Any]:
         if not isinstance(region, dict):
             raise ValueError('Invalid surface region')
         validate_exclusions(region.get('exclusion_polygons',[]))
@@ -309,13 +312,13 @@ class AnnotationStore:
                     source_mesh=self.source, coordinate_frame='world_rdf', unit='metre',
                     scale_validation=STATUS)
 
-    def add_region(self, region, *, replace_existing=False):
+    def add_region(self, region: Any, *, replace_existing: bool=False) -> Any:
         region = self.normalized_region(dict(region, **_new_item_metadata()))
         focus = ('region', self.regions[-1]['annotation_id']) if self.regions else None
         self._commit(self.points, [region] if replace_existing else self.regions + [region], focus)
         return region
 
-    def set_exclusions(self,index,polygons):
+    def set_exclusions(self,index: int,polygons: Any) -> Any:
         import copy
         region=self.normalized_region(dict(self.regions[index],exclusion_polygons=copy.deepcopy(polygons),
             updated_at=datetime.now().astimezone().isoformat(timespec='microseconds')))
@@ -342,7 +345,7 @@ class AnnotationStore:
         self._history = self._history[-100:]
         self.points, self.regions = points, regions
 
-    def content_signature(self):
+    def content_signature(self) -> str:
         """Fingerprint annotation content, not undo depth or a file's existence.
 
         Derived fields are included because a successful import/save normalizes
@@ -353,18 +356,18 @@ class AnnotationStore:
                              sort_keys=True, allow_nan=False, separators=(',', ':'))
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
-    def mark_saved(self):
+    def mark_saved(self) -> None:
         self._saved_signature = self.content_signature()
 
     @property
-    def dirty(self):
+    def dirty(self) -> Any:
         return self.content_signature() != self._saved_signature
 
     @property
-    def can_undo(self):
+    def can_undo(self) -> bool:
         return bool(self._history)
 
-    def undo(self):
+    def undo(self) -> Any:
         if not self._history:
             return None
         self.points, self.regions, focus = self._history.pop()
@@ -378,7 +381,7 @@ class AnnotationStore:
             raise ValueError('Invalid annotation selection')
         return items
 
-    def update_annotation(self, kind, index, *, name, note):
+    def update_annotation(self, kind: str, index: int, *, name: str, note: str) -> Any:
         items = self._items(kind, index)
         item = items[index]
         if not isinstance(name, str) or not isinstance(note, str):
@@ -392,13 +395,13 @@ class AnnotationStore:
                      changed if kind == 'region' else self.regions, (kind, item['annotation_id']))
         return updated
 
-    def delete_annotation(self, kind, index):
+    def delete_annotation(self, kind: str, index: int) -> None:
         items = self._items(kind, index)
         changed = items[:index] + items[index + 1:]
         self._commit(changed if kind == 'point' else self.points,
                      changed if kind == 'region' else self.regions, (kind, items[index]['annotation_id']))
 
-    def delete_annotations(self, selection):
+    def delete_annotations(self, selection: Any) -> None:
         """Validate the entire batch, then record one undo step."""
         chosen=set(selection)
         for kind,index in chosen:self._items(kind,index)
@@ -408,11 +411,11 @@ class AnnotationStore:
         self._commit([p for i,p in enumerate(self.points) if ('point',i) not in chosen],
                      [r for i,r in enumerate(self.regions) if ('region',i) not in chosen],focus)
 
-    def clear_annotations(self, focus=None):
+    def clear_annotations(self, focus: Any=None) -> None:
         if self.points or self.regions:
             self._commit([], [], focus)
 
-    def save(self, parent, *, check=None):
+    def save(self, parent: str | Path, *, check: Any=None) -> Any:
         from femto.annotation.measurement_audit import layer_contract
         check = check or (lambda: None)
         check()
@@ -486,7 +489,7 @@ class AnnotationStore:
         self.mark_saved()
         return path
 
-    def load(self, path):
+    def load(self, path: str | Path) -> Any:
         from femto.annotation.measurement_audit import layer_contract
         data = json.loads(Path(path).read_text(encoding='utf-8-sig'))
         if isinstance(data, dict) and 'data_layers' in data and data['data_layers'] != layer_contract(self):
@@ -518,7 +521,7 @@ class AnnotationStore:
                      scale_validation=STATUS) for i in range(len(points) - 1)]
 
 
-def validate_exclusions(polygons):
+def validate_exclusions(polygons: Any) -> Any:
     if not isinstance(polygons,list) or len(polygons)>32:raise ValueError('最多支持32个禁止区域')
     for polygon in polygons:
         p=np.asarray(polygon,float)

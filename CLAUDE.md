@@ -229,6 +229,7 @@ CLI `scene_capture.py`（`near` 档、JPEG）与 GUI 采集（`wide_detail`、�
 
 ## 测试约定
 
+- 公开接口类型标注使用 `from __future__ import annotations`；签名采用 `Path`、数组、现代容器与可空联合类型，不确定处使用 `Any`，不增加运行时检查或为标注引入重型模块。2026-09-20 任务 D 后，同口径标注为 965/1368（70.54%），零标注文件为 0；详见 `doc/历史开发记录/公开函数类型标注交付记录_20260920.md`。
 - `tests/` 没有 `__init__.py`，也没有 conftest。必须从根目录 `python -m unittest discover -s tests`（不要 `-t .`、不要进 `tests/` 里跑、不要点分模块名）：7 个文件用 `from tests.test_x import …`，5 个用裸 `from test_x import …`，只有这种跑法两种都能解析。产品代码一律 `from femto.<pkg>.<module> import …`；`mock.patch` 的字符串目标也必须是完整包路径（如 `"femto.temporal.scene_temporal_fusion.imwrite_unicode"`）。`outputs/*_validation/run_regression.py` 是交付轮留下的子集跑法（同时把根目录和 `tests/` 塞进 sys.path）。
 - 8 个跳过是结构性的（`test_gsplat_guard` 6 个 + `test_depth_confidence_integration` 2 个，缺 torch）；`.venv` 里跳过数 ≠8 说明环境变了。
 - 大量测试会打开真实 Tk 窗口并按 1120×720 / 1000×720 / 760×520 / 600×400 断言布局，不要在无桌面会话跑，跑时别碰鼠标键盘；`test_local_comparison` 与 `test_planning_recovery` 会真正起子进程。Tk 测试结束前要 `after_cancel` 所有定时器再 `destroy` + `gc.collect()`。

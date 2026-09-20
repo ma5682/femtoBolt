@@ -1,4 +1,7 @@
 """Research-only fixed-view raster paths on supported mesh samples."""
+from __future__ import annotations
+from typing import Any, Callable
+
 import csv
 import hashlib
 import json
@@ -8,7 +11,7 @@ import numpy as np
 from femto.io_utils import write_json, write_json_strict
 
 
-def raster_path(projection, mesh, region, row_step_px=10, max_step_mm=5., check=lambda: None):
+def raster_path(projection: Any, mesh: Any, region: Any, row_step_px: int=10, max_step_mm: float=5., check: Callable[..., Any]=lambda: None) -> dict[str, Any]:
     """Sample every pixel along scan rows; never join separate rows or holes.
 
     Row spacing is image pixels, NOT constant surface spacing. Samples are
@@ -58,11 +61,11 @@ def raster_path(projection, mesh, region, row_step_px=10, max_step_mm=5., check=
         execution_ready=False,physical_accuracy_verified=False)
 
 
-def signature(region):
+def signature(region: Any) -> str:
     return hashlib.sha256(json.dumps(region,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
-def path_summary(plan):
+def path_summary(plan: Any) -> dict[Any, Any]:
     lengths = [float(np.linalg.norm(np.diff(np.asarray([p['xyz_m'] for p in segment]), axis=0), axis=1).sum())
                for segment in plan['segments']]
     from femto.planning.route_motion import statistics
@@ -71,7 +74,7 @@ def path_summary(plan):
                 length_semantics='sum_of_sample_chords_excludes_transition_moves')
 
 
-def load_path(path, store, projection, region, check=lambda: None):
+def load_path(path: str | Path, store: Any, projection: Any, region: Any, check: Callable[..., Any]=lambda: None) -> Any:
     """Reproduce a saved plan against current geometry before accepting it."""
     path = Path(path)
     if path.stat().st_size > 100_000_000:raise ValueError('Path file exceeds 100 MB')
@@ -233,7 +236,7 @@ def _export_path(plan, store, parent, region=None, presentation=None,check=lambd
     return folder
 
 
-def export_path(plan,store,parent,region=None,presentation=None,check=lambda:None,progress=lambda stage:None,commit=None):
+def export_path(plan: Any,store: Any,parent: str | Path,region: Any=None,presentation: Any=None,check: Callable[..., Any]=lambda:None,progress: Callable[..., Any]=lambda stage:None,commit: Any=None) -> Any:
     from femto.planning.planning_io import publish,durable,windows_file_retry,staging_directory
     # Staging is a sibling of the history folder, never an apparent path_* result.
     parent=Path(parent);parent.parent.mkdir(parents=True,exist_ok=True)

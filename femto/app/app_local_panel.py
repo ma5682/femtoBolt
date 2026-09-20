@@ -1,4 +1,7 @@
 """Local workflow UI. Existing tools remain in the second notebook tab."""
+from __future__ import annotations
+from typing import Any
+
 from femto.paths import REPO_ROOT
 from pathlib import Path
 import json
@@ -125,7 +128,7 @@ TEXT = {
 }
 
 
-def read_review_clouds(result, include_initial=True):
+def read_review_clouds(result: str | Path, include_initial: bool=True) -> dict[Any, Any]:
     """Read bounded display copies off the Tk thread; never touch source geometry."""
     from femto.reports.scene_scale_validation import read_geometry_safe
     clouds = {}
@@ -235,14 +238,14 @@ class LocalPanel:
         note=tk.Label(side,bg='#111e2b',fg='#9fb4c7',wraplength=280,justify='left');note.pack(anchor='w',pady=6);self.labels.append((note,'note'))
         self.refresh(); self.tick()
 
-    def text(self,key,**values):
+    def text(self,key: str,**values: Any) -> Any:
         return TEXT.get(key,(key,key))[0 if self.app.language=='zh' else 1].format(**values)
 
-    def button(self,parent,key,command):
+    def button(self,parent: Any,key: str,command: Any) -> Any:
         b=tk.Button(parent,command=command,bg='#1e4559' if key in ('start','finish','view') else '#233444',fg='#edf5fa',activebackground='#285870',activeforeground='white',relief='flat',padx=10,pady=6)
         self.buttons[key]=b;return b
 
-    def refresh(self):
+    def refresh(self) -> None:
         for label,key in self.labels:label.configure(text=self.text(key))
         for key,b in self.buttons.items():b.configure(text=self.text('resume' if key=='pause' and self.paused else key))
         self.buttons['view'].configure(text=self.text('fixed_view'))
@@ -294,13 +297,13 @@ class LocalPanel:
             label.configure(bg=('#77312f' if lost else '#175e73') if i==stage else '#172635',
                             fg='#effaff' if i==stage else '#91a9bd')
 
-    def reason_text(self, reason, metrics=None):
+    def reason_text(self, reason: str, metrics: Any=None) -> Any:
         if reason=='pair_quality' and metrics and metrics.get('rejected_checks'):
             reason=metrics['rejected_checks'][0]
         key='reason_'+str(reason)
         return self.text(key) if key in TEXT else str(reason or self.text('reason_unknown'))
 
-    def refresh_status(self):
+    def refresh_status(self) -> None:
         record=self.record or {}
         from femto.tracking.local_stability_feedback import format_stability
         stability=self.stability
@@ -356,12 +359,12 @@ class LocalPanel:
             self.hint.set(self.hint.get()+'\n'+feedback_text(record,self.count,time.monotonic(),True,self.app.language))
         self.hint_label.configure(bg=color)
 
-    def send(self,command,payload=None):
+    def send(self,command: Any,payload: Any=None) -> None:
         message=dict(session_id=self.session_id,value=payload)
         if command=='local_start':message['cancel_event']=self.cancel_event
         self.app.command_queue.put((command,message))
 
-    def start(self):
+    def start(self) -> None:
         if self.active or self.app.processing or self.app.capturing or self.app.photo_saving or not self.app.camera_ready:return
         self.active=True;self.finishing=False;self.paused=False;self.session_id=uuid.uuid4().hex
         self.cancelling=False
@@ -377,12 +380,12 @@ class LocalPanel:
         self.set_view('live');self.pose.set('X —     Y —     Z —\nRx —    Ry —    Rz —')
         self.send('local_start');self.app._set_action_state();self.refresh()
 
-    def pause(self):
+    def pause(self) -> None:
         if not self.active or self.finishing or self.state=='lost':return
         self.paused=not self.paused;self.stability=dict(state='paused' if self.paused else 'idle',count=0,target=5)
         self.send('local_pause',self.paused);self.refresh()
 
-    def finish(self,reconstruct):
+    def finish(self,reconstruct: Any) -> None:
         if not self.active or self.cancelling or (reconstruct and self.finishing):return
         if reconstruct and self.count<3:
             self.notice='need_more_views';self.notice_until=time.monotonic()+3.
@@ -391,7 +394,7 @@ class LocalPanel:
         if not reconstruct:self.cancel_event.set()
         self.send('local_finish',reconstruct);self.refresh()
 
-    def event(self,kind,payload):
+    def event(self,kind: str,payload: Any) -> None:
         if not self.active or not self.session_id or payload.get('session_id')!=self.session_id:return
         self.source=Path(payload['source']) if payload.get('source') else self.source
         if kind=='local_started':
@@ -426,7 +429,7 @@ class LocalPanel:
                 self.load_clouds()
         self.refresh()
 
-    def tick(self):
+    def tick(self) -> None:
         if not self.frame.winfo_exists():return
         self.consume_review()
         self.consume_preview()
@@ -459,7 +462,7 @@ class LocalPanel:
         else:self.pose.set('X —     Y —     Z —\nRx —    Ry —    Rz —')
         self.app.root.after(150,self.tick)
 
-    def set_view(self,view):
+    def set_view(self,view: Any) -> None:
         if view=='fit':
             self.fit_cloud();return
         self.view=view
@@ -467,7 +470,7 @@ class LocalPanel:
         elif view=='live':self.preview.configure(image='',text=self.text('live_wait'))
         self.refresh()
 
-    def consume_preview(self):
+    def consume_preview(self) -> None:
         if self.preview_mailbox is None:return
         try:data=self.preview_mailbox.get_nowait()
         except queue.Empty:return
@@ -485,7 +488,7 @@ class LocalPanel:
         elif self.view in ('live','initial'):self.draw_cloud()
         self.refresh()
 
-    def fit_cloud(self):
+    def fit_cloud(self) -> None:
         key='final' if 'final' in self.clouds else 'live' if 'live' in self.clouds else self.view
         if key not in self.clouds or not len(self.clouds[key][0]):return
         p=self.clouds[key][0]
@@ -493,7 +496,7 @@ class LocalPanel:
         self.span=max(float(np.ptp(p,axis=0).max()),.01)
         self.yaw=0.;self.pitch=0.;self.zoom=1.;self.draw_cloud()
 
-    def load_clouds(self):
+    def load_clouds(self) -> None:
         mailbox=self._review_mailbox=queue.Queue(maxsize=1)
         session,result=self.session_id,self.result
         reuse_initial='initial' in self.clouds
@@ -510,7 +513,7 @@ class LocalPanel:
             mailbox.put_nowait(dict(session_id=session,result=result,quality=quality,**data))
         threading.Thread(target=worker,name='FemtoLocalReview',daemon=True).start()
 
-    def consume_review(self):
+    def consume_review(self) -> None:
         if self._review_mailbox is None:return
         try:data=self._review_mailbox.get_nowait()
         except queue.Empty:return
@@ -525,15 +528,15 @@ class LocalPanel:
             self.state='review_load_error'
         self.app._set_action_state();self.refresh()
 
-    def rotate(self,event):
+    def rotate(self,event: Any) -> None:
         # Local workflow keeps the initial axis orientation. Free orbit is in
         # the advanced model viewer only; zoom/fit remain available here.
         return
 
-    def wheel(self,event):
+    def wheel(self,event: Any) -> None:
         self.zoom=float(np.clip(self.zoom*(1.1 if event.delta>0 else 1/1.1),.25,6));self.draw_cloud()
 
-    def draw_cloud(self):
+    def draw_cloud(self) -> None:
         if self.view not in self.clouds or not hasattr(self,'center'):return
         points,colors=self.clouds[self.view];p=points-self.center
         c,s=np.cos(self.yaw),np.sin(self.yaw)
@@ -553,12 +556,12 @@ class LocalPanel:
             if 0<=x<width and 0<=y<height:draw.ellipse((x,y,x+2,y+2),fill=tuple(cols[i]))
         self.photo=ImageTk.PhotoImage(image);self.preview.configure(image=self.photo,text='')
 
-    def open_model(self):
+    def open_model(self) -> None:
         if not self.result:return
         self.state='mark';self.refresh()
         subprocess.Popen([sys.executable,'-m','femto.planning.fixed_rgb_viewer',str(self.result/'reconstruction'),'--lang',self.app.language],cwd=REPO_ROOT)
 
-    def open_history(self):
+    def open_history(self) -> None:
         from femto.app.app_local_history import LocalHistoryWindow
         from femto.app.femto_control_app import DATASETS_ROOT,OUTPUTS_ROOT
         old=getattr(self,'history_window',None)
@@ -566,13 +569,13 @@ class LocalPanel:
             old.window.lift();old.refresh();return
         self.history_window=LocalHistoryWindow(self.app.root,DATASETS_ROOT,OUTPUTS_ROOT,self.app.language)
 
-    def open_comparison(self):
+    def open_comparison(self) -> None:
         if not self.result or self.active:return
         from femto.app.app_local_comparison import ComparisonWindow
         from femto.app.femto_control_app import OUTPUTS_ROOT
         self.comparison_window=ComparisonWindow(self.app.root,self.result,OUTPUTS_ROOT,self.app.language)
 
-    def open_report(self):
+    def open_report(self) -> None:
         import os
         choices=[]
         if self.result:choices.extend([self.result/'processing_report.html',self.result/'result_quality.html'])

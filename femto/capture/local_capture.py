@@ -1,5 +1,7 @@
 """Bounded, SDK-independent local capture worker; raw evidence stays immutable."""
 from __future__ import annotations
+from typing import Any
+
 import copy
 from datetime import datetime, timezone
 import json
@@ -70,7 +72,7 @@ class LocalCapture:
         self.thread = threading.Thread(target=self._run, name='FemtoLocalCapture', daemon=False)
         self.thread.start()
 
-    def emit(self, kind, **payload):
+    def emit(self, kind: str, **payload: Any) -> None:
         if kind=='pose':payload['record'].setdefault('status_updated_at',datetime.now(timezone.utc).isoformat())
         self.events.put(('local_'+kind, dict(session_id=self.session_id, source=str(self.session), **payload)))
 
@@ -78,7 +80,7 @@ class LocalCapture:
         shutdown=getattr(self,'shutdown_event',None)
         return self.processing_cancel.is_set() or (shutdown is not None and shutdown.is_set())
 
-    def submit(self, frame):
+    def submit(self, frame: Any) -> None:
         from femto.capture.scan_session import copy_frame
         if self.closing.is_set():
             return
@@ -97,7 +99,7 @@ class LocalCapture:
         except queue.Full:
             self.dropped += 1
 
-    def request(self):
+    def request(self) -> None:
         with self.lock:
             if not self.paused and not self.closing.is_set() and self.requested is None:
                 self.requested = time.monotonic()
@@ -111,7 +113,7 @@ class LocalCapture:
             self._last_stability_event=current
             self.emit('stability', stability=current)
 
-    def pause(self, value):
+    def pause(self, value: Any) -> None:
         with self.lock:
             if self.closing.is_set():
                 return
@@ -121,7 +123,7 @@ class LocalCapture:
             self._emit_stability()
         self.emit('pause', paused=value)
 
-    def finish(self, reconstruct=True):
+    def finish(self, reconstruct: bool=True) -> None:
         # Accepted prefix only: queued frames and requests are not accepted on stop.
         with self.lock:
             if not reconstruct and not self.successful_model_published:
@@ -135,7 +137,7 @@ class LocalCapture:
             self.finished_at = time.monotonic()
             self.closing.set()
 
-    def abort(self, reason, detail=None):
+    def abort(self, reason: str, detail: Any=None) -> None:
         """A device failure is an error, not a user cancellation or new origin."""
         with self.lock:
             if self.closing.is_set():

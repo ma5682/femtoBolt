@@ -1,5 +1,7 @@
 """Read-only recorded RGB-D replay. Timing is offline compute, never live FPS."""
 from __future__ import annotations
+from typing import Any
+
 from femto.paths import REPO_ROOT
 import argparse
 import hashlib
@@ -18,7 +20,7 @@ from femto.tracking.local_tracking_diagnostics import distribution, summarize, i
 from femto.tracking.scene_live_tracker import LiveTracker, PairEstimator
 
 
-def frame_from_row(source, row):
+def frame_from_row(source: Any, row: Any) -> Any:
     return SimpleNamespace(color_bgr=imread_unicode(source/row['rgb'], cv2.IMREAD_COLOR),
         depth_mm=imread_unicode(source/row['depth'], cv2.IMREAD_UNCHANGED),
         timestamp_us=row['camera_timestamp_us'], frame_index=row['camera_frame_index'],
@@ -29,7 +31,7 @@ def frame_from_row(source, row):
         frame_metadata=row.get('frame_metadata', {}), native_depth_mm=None)
 
 
-def source_files(source):
+def source_files(source: Any) -> dict[Any, Any]:
     files = [source/'frames.jsonl', source/'manifest.json', source/'derived/live_tracking.jsonl',
              source/'derived/local_capture_report.json', *sorted((source/'calibration').glob('*.json'))]
     for row in load_jsonl(source/'frames.jsonl'):
@@ -49,7 +51,7 @@ LEGACY_FLAT_MODULES = {
 }
 
 
-def load_baseline(directory):
+def load_baseline(directory: str | Path) -> Any:
     import importlib
     for legacy, packaged in LEGACY_FLAT_MODULES.items():
         sys.modules.setdefault(legacy, importlib.import_module(packaged))
@@ -61,7 +63,7 @@ def load_baseline(directory):
     return module
 
 
-def replay(source, output, *, baseline=None, variants=('baseline', 'optimized')):
+def replay(source: str | Path, output: str | Path, *, baseline: Any=None, variants: Any=('baseline', 'optimized')) -> dict[str, Any]:
     source, output = Path(source).resolve(), Path(output).resolve()
     if source == output or source in output.parents:
         raise ValueError('Replay output must be outside original acquisition evidence')
@@ -161,7 +163,7 @@ def replay(source, output, *, baseline=None, variants=('baseline', 'optimized'))
     return report
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('sources', nargs='+', type=Path)
     parser.add_argument('--output', type=Path, required=True)

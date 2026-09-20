@@ -1,4 +1,7 @@
 """Bounded capture feedback using the shared offline/online stillness rules."""
+from __future__ import annotations
+from typing import Any
+
 from collections import deque
 import math
 import numpy as np
@@ -29,7 +32,7 @@ class CandidateStability:
         self.reason_frame_id = None
         self.adjacent_deltas = deque(maxlen=256)
 
-    def reset(self, state='idle', reason=None, *, clear_history=True):
+    def reset(self, state: str='idle', reason: str | None=None, *, clear_history: bool=True) -> None:
         if self.anchor is not None:
             self.last_episode = dict(accepted_frame_id=self.accepted_frame_id, peak_count=self.peak_count,
                                      reason=reason, deviation=self.deviation)
@@ -41,14 +44,14 @@ class CandidateStability:
         self.requested_at = self.anchor = self.deadline = None
         self.accepted_frame_id = None
 
-    def request(self, now):
+    def request(self, now: float) -> None:
         self.reset('waiting', clear_history=False)
         self.peak_count = 0
         self.deviation = None
         self.requested_at = now
         self.deadline = now + 3.0
 
-    def expire(self, now):
+    def expire(self, now: float) -> None:
         if self.deadline is not None and now > self.deadline:
             self.reset('timeout', 'request_timeout' if self.anchor is None else 'window_timeout')
 
@@ -70,7 +73,7 @@ class CandidateStability:
         return None
 
     @staticmethod
-    def descriptor(record):
+    def descriptor(record: Any) -> dict[str, Any]:
         return dict(frame_id=record['frame_id'], session_id=record['session_id'], state='tracking',
                     reference_frame_id=record['reference_frame_id'],
                     capture_timestamp_us=record['capture_timestamp_us'],
@@ -78,7 +81,7 @@ class CandidateStability:
                     received_monotonic=record['received_monotonic'],
                     T_WC=np.asarray(record['T_WC'], dtype=float).copy().tolist())
 
-    def observe(self, record, now, *, accepted=False, paused=False):
+    def observe(self, record: Any, now: float, *, accepted: bool=False, paused: bool=False) -> Any:
         self.current_frame_id=record.get('frame_id') if isinstance(record,dict) else None
         if paused:
             self.reset('paused')
@@ -155,7 +158,7 @@ class CandidateStability:
                 self.reset('reset', 'timestamp_gap')
         return self.snapshot()
 
-    def snapshot(self):
+    def snapshot(self) -> dict[str, Any]:
         count = len(self.frames)
         span = ((self.frames[-1]['capture_timestamp_us'] - self.frames[0]['capture_timestamp_us']) / 1e6
                 if count > 1 else 0.0)
@@ -174,7 +177,7 @@ class CandidateStability:
                     image_depth_audit='pending_offline', keyframes_added_by_monitor=0)
 
 
-def format_stability(value, language='zh'):
+def format_stability(value: Any, language: str='zh') -> Any:
     zh = language == 'zh'
     state = value.get('state', 'idle')
     explanations = {

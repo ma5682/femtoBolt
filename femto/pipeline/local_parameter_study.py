@@ -6,6 +6,8 @@ Existing reports are reusable only while their source and implementation hashes
 still agree. Numerical consistency is never an independent accuracy certificate.
 """
 from __future__ import annotations
+from typing import Any
+
 
 import argparse
 import copy
@@ -62,14 +64,14 @@ class AuditBudget:
         self.json_limit, self.hash_limit, self.hashed_bytes = json_limit, hash_limit, 0
         self.json_total_limit, self.json_read_bytes = json_total_limit, 0
 
-    def check(self):
+    def check(self) -> None:
         if ((self.cancel_file and self.cancel_file.exists()) or
                 (self.cancelled and self.cancelled())):
             raise StudyStopped('cancelled', 'Parameter study cancelled')
         if time.monotonic() - self.started > self.timeout_s:
             raise StudyStopped('failed', 'Parameter study total time budget exceeded')
 
-    def digest(self, path):
+    def digest(self, path: str | Path) -> str:
         self.check()
         path = Path(path)
         digest = hashlib.sha256()
@@ -82,7 +84,7 @@ class AuditBudget:
                 digest.update(block)
         return digest.hexdigest()
 
-    def read(self, path):
+    def read(self, path: str | Path) -> Any:
         self.check()
         path = Path(path)
         if path.stat().st_size > self.json_limit:
@@ -101,7 +103,7 @@ class AuditBudget:
         json.dumps(value, allow_nan=False)
         return value
 
-    def read_frames(self, path):
+    def read_frames(self, path: str | Path) -> list[Any]:
         self.check()
         path = Path(path)
         if path.stat().st_size > self.json_limit:
@@ -128,7 +130,7 @@ def _count(value):
     return type(value) is int and value >= 0
 
 
-def parameter_key(voxel_m, sdf_trunc_m):
+def parameter_key(voxel_m: float, sdf_trunc_m: float) -> str:
     if (not _finite(voxel_m) or not _finite(sdf_trunc_m) or
             not .001 <= voxel_m <= .02 or not voxel_m < sdf_trunc_m <= .1):
         raise ValueError('Invalid finite voxel / truncation parameters')
@@ -482,8 +484,8 @@ def _safe_output(output, records):
     return output
 
 
-def summarize_existing(report_paths, output, *, allow_synthetic=False, cancelled=None,
-                       cancel_file=None, timeout_s=300., progress=None):
+def summarize_existing(report_paths: Any, output: str | Path, *, allow_synthetic: bool=False, cancelled: Any=None,
+                       cancel_file: Any=None, timeout_s: float=300., progress: Any=None) -> dict[str, Any]:
     """Audit 1..8 immutable reports and write a separate, bilingual parameter study.
 
     A complete 5 mm / 20 mm baseline is mandatory. Failed/cancelled cases with
@@ -600,9 +602,9 @@ def summarize_existing(report_paths, output, *, allow_synthetic=False, cancelled
     return report
 
 
-def run_study(dataset, output, *, candidates=DEFAULT_CANDIDATES, reuse_paths=(), allow_synthetic=False,
-              stage_timeout_s=300., memory_mb=3072., render_width=640, max_views=20, total_timeout_s=1800.,
-              cancelled=None, cancel_file=None, progress=None):
+def run_study(dataset: str | Path, output: str | Path, *, candidates: Any=DEFAULT_CANDIDATES, reuse_paths: Any=(), allow_synthetic: bool=False,
+              stage_timeout_s: float=300., memory_mb: float=3072., render_width: int=640, max_views: int=20, total_timeout_s: float=1800.,
+              cancelled: Any=None, cancel_file: Any=None, progress: Any=None) -> dict[str, Any]:
     """Run missing candidates serially with run_comparison, then audit their reports.
 
     Existing reports are not rerun. New outputs and the final summary live in this
@@ -777,7 +779,7 @@ document.getElementById('lang').onchange=e=>{{document.documentElement.lang=e.ta
     (output / 'parameter_study_report.html').write_text(document, encoding='utf-8')
 
 
-def main(argv=None):
+def main(argv: Any=None) -> Any:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     summarize = sub.add_parser('summarize', help='Verify existing reports; no reconstruction')
