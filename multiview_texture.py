@@ -12,12 +12,7 @@ import numpy as np
 from PIL import Image
 import trimesh
 
-
-def read_image(path, flag):
-    result = cv2.imdecode(np.fromfile(path, np.uint8), flag)
-    if result is None:
-        raise ValueError(f'Cannot read texture source: {path}')
-    return result
+from io_utils import imread_unicode as read_image
 
 
 def project_visible(vertices, faces, pose, K, distortion, depth, tolerance_m=.015):

@@ -15,7 +15,8 @@ from typing import Any
 import cv2
 import numpy as np
 
-from scene_dataset_validator import load_json, load_jsonl, resolve_dataset, validate_pose
+from io_utils import imread_unicode, imwrite_unicode, load_json, load_jsonl
+from scene_dataset_validator import resolve_dataset, validate_pose
 from scene_gsplat_split import make_split, file_sha256
 from depth_quality import process_depth_quality
 
@@ -38,22 +39,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed-voxel-mm", type=float, default=DEFAULT_SEED_VOXEL_M * 1000.0)
     parser.add_argument("--max-seed-points", type=int, default=DEFAULT_MAX_SEED_POINTS)
     return parser.parse_args()
-
-
-def imread_unicode(path: Path, flags: int) -> np.ndarray:
-    encoded = np.fromfile(path, dtype=np.uint8)
-    image = cv2.imdecode(encoded, flags)
-    if image is None:
-        raise ValueError(f"Cannot decode image: {path}")
-    return image
-
-
-def imwrite_unicode(path: Path, image: np.ndarray) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ok, encoded = cv2.imencode(path.suffix, image)
-    if not ok:
-        raise ValueError(f"Cannot encode image: {path}")
-    path.write_bytes(encoded.tobytes())
 
 
 def camera_to_opengl(T_WC: np.ndarray) -> np.ndarray:

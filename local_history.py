@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 import os
 import tempfile
+from io_utils import load_json_object as read_json
 from local_processing import result_quality, empty_report
 
 
@@ -53,12 +54,6 @@ def set_records_deleted(rows,datasets,outputs,deleted=True):
 def set_record_deleted(row,datasets,outputs,deleted=True):
     """Compatibility wrapper for a single catalogue record."""
     set_records_deleted([row],datasets,outputs,deleted)
-
-
-def read_json(path):
-    data=json.loads(Path(path).read_text(encoding='utf-8-sig'))
-    if not isinstance(data,dict):raise ValueError('Expected a JSON object')
-    return data
 
 
 def publication_status(result,session_id):

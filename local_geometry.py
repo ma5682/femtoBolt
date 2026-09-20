@@ -2,7 +2,8 @@
 import cv2
 import numpy as np
 import open3d as o3d
-from scene_reconstruction import _read_image, _prepare_rgbd
+from io_utils import imread_unicode as _read_image
+from scene_reconstruction import _prepare_rgbd
 
 
 def filter_small_components(mesh):

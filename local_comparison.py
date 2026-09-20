@@ -20,31 +20,19 @@ import time
 import traceback
 import uuid
 
+from io_utils import load_json_object as read_json, load_jsonl, write_json_strict as write_json
+
 
 ROOT = Path(__file__).resolve().parent
 SCHEMA = 'femto-local-comparison-v1'
 VARIANTS = ('A_online_raw', 'B_refined_raw', 'C_refined_filtered')
 
 
-def read_json(path):
-    value = json.loads(Path(path).read_text(encoding='utf-8-sig'))
-    if not isinstance(value, dict):
-        raise ValueError('Expected a JSON object')
-    return value
-
-
 def read_rows(path):
-    rows = [json.loads(s) for s in Path(path).read_text(encoding='utf-8-sig').splitlines() if s.strip()]
+    rows = load_jsonl(path)
     if any(not isinstance(r, dict) for r in rows):
         raise ValueError('Expected JSON row objects')
     return rows
-
-
-def write_json(path, value):
-    path = Path(path)
-    temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
-    temporary.replace(path)
 
 
 def sha256(path):
@@ -242,7 +230,8 @@ def validate_comparison_input(dataset, *, max_views=20, allow_synthetic=False):
         implementation_sha256=fingerprints(ROOT/name for name in (
             'local_comparison.py', 'local_comparison_viewer.py', 'scene_reconstruction.py',
             'local_pose_refinement.py', 'local_temporal_support.py', 'local_geometry.py',
-            'local_reference.py', 'scene_dataset_validator.py', 'fixed_rgb_geometry.py', 'local_stability.py')))
+            'local_reference.py', 'scene_dataset_validator.py', 'fixed_rgb_geometry.py', 'local_stability.py',
+            'io_utils.py')))
 
 
 def validate_variant_input(baseline, dataset, *, allow_masks=False):
@@ -250,7 +239,7 @@ def validate_variant_input(baseline, dataset, *, allow_masks=False):
     import numpy as np
     from local_reference import calibration_identity, validate_reference_provenance
     from scene_dataset_validator import validate_pose
-    from scene_reconstruction import _read_image
+    from io_utils import imread_unicode as _read_image
     from local_temporal_support import filtered_depth, stationary_window
     import cv2
 

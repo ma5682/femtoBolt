@@ -8,9 +8,8 @@ import numpy as np
 import cv2
 
 from depth_quality import process_depth_quality
+from io_utils import imread_unicode as _read, imwrite_unicode, write_json as json_dump
 from temporal_depth_fusion import confidence_weighted_median
-from scene_static_fusion import _read
-from scene_capture import imwrite_unicode, json_dump
 from scene_temporal_fusion import audit_temporal_motion, _hash, _child
 
 

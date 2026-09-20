@@ -11,8 +11,9 @@ import numpy as np
 import open3d as o3d
 
 from fusion import temporal_median_depth, write_point_cloud_safe
+from io_utils import append_jsonl, imwrite_unicode, write_json as json_dump
 from orbbec_rgbd import AlignedFrame, DEPTH_MODE_SPECS, OrbbecAlignedCamera
-from scene_capture import append_jsonl, imwrite_unicode, json_dump, write_calibration
+from scene_capture import write_calibration
 from scene_pose_estimator import assess_rgb_motion_pair
 
 

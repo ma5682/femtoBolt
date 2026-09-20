@@ -2,15 +2,16 @@
 import argparse
 import json
 from pathlib import Path
+import sys
 from time import perf_counter
 from types import SimpleNamespace
 import cv2
 import numpy as np
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/ scripts import repository-root modules
 from depth_quality import assess_and_fill_depth
+from io_utils import imread_unicode as _read, write_json as json_dump
 from temporal_keyframe import fuse_quality_frames, assess_temporal_scene
 from scene_segmented_capture import depth_cloud
-from scene_static_fusion import _read
-from scene_capture import json_dump
 
 
 def compare_batches(depths, images, intr, distortion, low, high, modes, *, repeats):

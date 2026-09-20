@@ -125,7 +125,8 @@ C:\FemtoGsplatRuntime\Scripts\python.exe -m unittest discover -s tests -p "test_
 | `app_local_*.py` / `local_*.py` / `scene_live_tracker.py` | 局部补采工作台：在线 RGB-D 里程计、W0 参考、视角接纳、实时累计预览、离线收尾（精配准候选、五帧支持 Mask、TSDF、发布凭证）、历史、A/B/C 对照、参数研究、失跟前缀重建、回放诊断 |
 | `app_temporal*.py` / `temporal_*.py` / `scene_temporal_fusion.py` | 固定机位时域 burst（1/5/10/15 帧）：逐帧深度质量 → 连续 confidence → 加权中值 → 关键帧派生数据集。关键帧按钮走这条链，不再是单帧选优 |
 | `depth_quality.py` / `depth_error_check.py` / `depth_confidence_cloud.py` / `depth_debug_viewer.py` | 保守空间补洞与置信度层（1.0 原始 / 0.3 修复 / 0 未知）；每次派生深度都有同名 float32 confidence |
-| `scene_capture.py` / `scene_pose_estimator.py` / `moving_quality.py` / `scene_dataset_validator.py` / `scene_data_kind.py` | 原始数据集写入（也是 `json_dump` / `append_jsonl` / `imwrite_unicode` 等 IO helper 的家）、顺序 Hybrid RGB-D 里程计 + 双向一致性 + 关键帧筛选、背景运动预检、门禁、来源分类（只有原始 manifest `camera.device=="Orbbec Femto Bolt"` 才是 `real_femto`） |
+| `io_utils.py` | 全仓库唯一的 JSON / JSONL / 图片读写实现：`load_json`（utf-8-sig）、`load_json_object`、`load_jsonl`、`write_json`（原子写 + 建父目录，`indent=2`）、`write_json_strict`（另拒绝 NaN）、`write_jsonl`、`append_jsonl`、`imread_unicode`（失败抛 `ImageCodecError`）、`imread_unicode_or_none`（校验器用）、`imwrite_unicode`。`cv2` 只在图片函数内延迟导入，因此 gsplat 运行时也能 import。各模块用 `from io_utils import write_json as json_dump` 之类的别名保留旧名字，测试里的 `mock.patch("<module>.imwrite_unicode")` 仍然有效 |
+| `scene_capture.py` / `scene_pose_estimator.py` / `moving_quality.py` / `scene_dataset_validator.py` / `scene_data_kind.py` | 原始数据集写入（`write_calibration`、`create_session`）、顺序 Hybrid RGB-D 里程计 + 双向一致性 + 关键帧筛选、背景运动预检、门禁、来源分类（只有原始 manifest `camera.device=="Orbbec Femto Bolt"` 才是 `real_femto`） |
 | `scene_reconstruction.py` / `multiview_texture.py` / `single_frame_mesh.py` / `single_frame_quality.py` / `scene_keyframe.py` / `scene_static_fusion.py` | K6 去畸变 → 世界变换 → TSDF（补洞帧 10:3 重复积分）→ Mesh/纹理图集；单帧像素相邻网格；关键帧选优（只被 temporal 链和测试调用）；固定中值融合（只剩测试调用） |
 | `complete_demo.py` / `synthetic_scene_demo.py` / `scene_quality_report.py` / `scene_scale_validation.py` / `reconstruction_sources.py` | 编排：校验 → 位姿 → 重建 → 转换 → HTML/质量报告 → 查看器；合成真值生成；实拍验收 spec；尺度测距（`accepted=null` 除非给容差）；关键帧/移动两类成功来源的 marker |
 | `scene_to_nerfstudio.py` / `scene_gaussian.py` / `scene_gsplat_*.py` / `gsplat_backend.py` / `scene_single_gs*.py` / `scene_3dgs.py` | 3DGS 输入转换（严格 train/val/test 分区）、未训练初值、产品训练器/数据/导出/指标/显存守卫/实验、UI 跨环境控制、单帧固定视角 GS、内部 Splatfacto 对照（不可运行） |
@@ -186,7 +187,7 @@ CLI `scene_capture.py`（`near` 档、JPEG）与 GUI 采集（`wide_detail`、�
 
 仓库路径含中文，新代码沿用同样写法：
 
-- **不要用 `cv2.imread` / `cv2.imwrite`**。用 `scene_capture.imwrite_unicode`、`scene_static_fusion._read`、`scene_to_nerfstudio.imread_unicode` 等（`np.fromfile` + `cv2.imdecode` / `imencode` + `tofile`），或 PIL。这些 helper 是各模块各自的副本，改一个不会改其他。
+- **不要用 `cv2.imread` / `cv2.imwrite`**。统一用 `io_utils.imread_unicode` / `imwrite_unicode`（`np.fromfile` + `cv2.imdecode` / `imencode` + `write_bytes`），或 PIL。不要再在模块里复制一份私有实现；需要旧名字时用 `from io_utils import imread_unicode as _read_image` 这类别名。
 - **Open3D 原生读写**走 `fusion.write_point_cloud_safe` / `read_geometry_safe`，先落到 `%LOCALAPPDATA%\FemtoPatientPose\native_io` 的 ASCII 临时路径再搬运。`fusion.py` 在 import 时就读 `os.environ["LOCALAPPDATA"]`，无该变量的环境 import 即崩。
 - 带 `confidence` 属性的自定义 PLY（`depth_confidence_cloud`）被 Open3D 重读时会丢掉该属性，下游融合必须读 depth + `.npy`，不能读回 PLY。
 - **Open3D Filament 资源**在中文路径下加载失败；`scene_demo_viewer._open3d_ascii_resources()` 镜像 wheel 资源到 `%LOCALAPPDATA%\FemtoSceneDemo\open3d_resources_*`，`live_point_cloud` 子进程也依赖它。

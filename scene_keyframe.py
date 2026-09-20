@@ -11,16 +11,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from scene_capture import json_dump
-from scene_dataset_validator import load_json, load_jsonl
-
-
-def _read(path: Path, flags: int) -> np.ndarray:
-    encoded = np.fromfile(path, dtype=np.uint8)
-    image = cv2.imdecode(encoded, flags) if encoded.size else None
-    if image is None:
-        raise ValueError(f"Cannot decode {path}")
-    return image
+from io_utils import imread_unicode as _read, load_json, load_jsonl, write_json as json_dump
 
 
 def _depth_range(manifest: dict[str, Any]) -> tuple[float, float]:

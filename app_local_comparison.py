@@ -10,7 +10,7 @@ import tkinter as tk
 from tkinter import ttk
 import uuid
 
-from local_processing import read_json
+from io_utils import load_json_object as read_json
 
 
 def comparison_source(result_or_dataset):

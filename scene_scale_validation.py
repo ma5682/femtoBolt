@@ -29,6 +29,7 @@ import numpy as np
 import open3d as o3d
 
 from fusion import read_geometry_safe
+from io_utils import load_json as _load_json
 from scene_data_kind import classify_dataset_data_kind
 
 
@@ -48,10 +49,6 @@ GEOMETRY_SOURCES = {
     "tsdf_mesh": "scene_tsdf_mesh_m.ply",
 }
 DEFAULT_SNAP_RADIUS_MM = 15.0
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def resolve_reconstruction(value: Path | None) -> Path:

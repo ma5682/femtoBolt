@@ -13,7 +13,8 @@ from pathlib import Path
 import sys
 import uuid
 
-from local_processing import empty_report, read_json, result_quality, write_html, write_json
+from io_utils import load_json_object as read_json, write_json_strict as write_json
+from local_processing import empty_report, result_quality, write_html
 
 TIME_BUDGET_S = 600.0
 MEMORY_BUDGET_MB = 4096

@@ -8,7 +8,8 @@ import shutil
 import numpy as np
 import open3d as o3d
 import cv2
-from scene_reconstruction import _distortion_maps,_prepare_rgbd,_read_image,_load_poses
+from io_utils import imread_unicode as _read_image
+from scene_reconstruction import _distortion_maps,_prepare_rgbd,_load_poses
 from scene_dataset_validator import validate_pose
 from moving_quality import rotation_deg,cycle_consistency
 

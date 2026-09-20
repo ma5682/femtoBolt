@@ -139,7 +139,7 @@ class LocalIntegrationTests(unittest.TestCase):
     def test_real_rgbd_pair_backend_on_static_synthetic_frame(self):
         from synthetic_scene_demo import generate_dataset
         from scene_live_tracker import PairEstimator
-        from scene_reconstruction import _read_image
+        from io_utils import imread_unicode as _read_image
         import cv2
         with TemporaryDirectory() as td:
             dataset=generate_dataset(Path(td)/'data',frames=4,width=512,height=288)

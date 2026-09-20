@@ -11,17 +11,11 @@ import time
 import numpy as np
 from PIL import Image
 
+from io_utils import load_json as read_json, write_json
+
 ROOT = Path(__file__).resolve().parent
 MARKER = ROOT / 'outputs' / 'latest_single_gs.txt'
 SCHEMA = 'femto-single-rgbd-gs-v1'
-
-
-def write_json(path, value):
-    Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
-
-
-def read_json(path):
-    return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 
 
 def resolve_source(source):

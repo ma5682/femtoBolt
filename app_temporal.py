@@ -9,7 +9,8 @@ import json
 
 import numpy as np
 
-from scene_capture import imwrite_unicode, json_dump, write_calibration
+from io_utils import imwrite_unicode, write_json as json_dump
+from scene_capture import write_calibration
 
 
 class TemporalBurst:

@@ -12,8 +12,8 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
-from scene_capture import imwrite_unicode, json_dump, write_calibration
-from scene_static_fusion import _read
+from io_utils import imread_unicode as _read, imwrite_unicode, write_json as json_dump
+from scene_capture import write_calibration
 from scene_pose_estimator import assess_rgb_motion_pair
 from temporal_depth_fusion import fuse_temporal_depth
 from depth_quality import process_depth_quality, DepthQualityConfig

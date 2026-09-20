@@ -13,9 +13,10 @@ import cv2
 import numpy as np
 import open3d as o3d
 
+from io_utils import imread_unicode as _read_image, load_json, load_jsonl
 from moving_quality import POLICY, frame_quality, cycle_consistency, select_keyframes
-from scene_dataset_validator import load_json, load_jsonl, resolve_dataset, validate_pose
-from scene_reconstruction import _distortion_maps, _prepare_rgbd, _read_image
+from scene_dataset_validator import resolve_dataset, validate_pose
+from scene_reconstruction import _distortion_maps, _prepare_rgbd
 from scene_to_nerfstudio import pose_diversity
 
 

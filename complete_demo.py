@@ -13,8 +13,9 @@ import numpy as np
 import open3d as o3d
 
 from fusion import read_geometry_safe
+from io_utils import imread_unicode as _read, imwrite_unicode as _write, load_json, load_jsonl
 from scene_data_kind import classify_dataset_data_kind
-from scene_dataset_validator import load_json, load_jsonl, resolve_dataset, validate_dataset
+from scene_dataset_validator import resolve_dataset, validate_dataset
 from scene_pose_estimator import estimate_poses
 from scene_reconstruction import reconstruct_scene
 from scene_to_nerfstudio import convert
@@ -84,21 +85,6 @@ def _validator_args(dataset: Path) -> argparse.Namespace:
         max_depth_mm=maximum_mm,
         no_write_report=False,
     )
-
-
-def _read(path: Path, flags: int) -> np.ndarray:
-    encoded = np.fromfile(path, dtype=np.uint8)
-    image = cv2.imdecode(encoded, flags) if encoded.size else None
-    if image is None:
-        raise ValueError(f"Cannot decode {path}")
-    return image
-
-
-def _write(path: Path, image: np.ndarray) -> None:
-    ok, encoded = cv2.imencode(path.suffix, image)
-    if not ok:
-        raise ValueError(f"Cannot encode {path}")
-    path.write_bytes(encoded.tobytes())
 
 
 def _contact_sheet(dataset: Path, output: Path) -> None:
@@ -239,7 +225,7 @@ def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     result_root.mkdir(parents=True, exist_ok=False)
     publication_id = getattr(args, 'publication_id', None)
     if publication_id:
-        from local_processing import write_json
+        from io_utils import write_json_strict as write_json
         write_json(result_root / 'publication.json', dict(schema='femto-local-publication-v1',
             status='pending', session_id=publication_id, result=str(result_root)))
         if getattr(args, 'created_result_file', None):
@@ -332,7 +318,8 @@ def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         summary["single_frame_quality"] = load_json(Path(reconstruction["outputs"]["quality_report"]))
     processing_path = getattr(args, 'local_processing_report', None)
     if processing_path:
-        from local_processing import read_json, write_json, write_html
+        from io_utils import load_json_object as read_json, write_json_strict as write_json
+        from local_processing import write_html
         processing = read_json(processing_path)
         if Path(processing['actual_dataset']).resolve() != posed_dataset.resolve():
             raise ValueError('Processing report does not match reconstruction input')

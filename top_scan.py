@@ -28,6 +28,7 @@ from fusion import (
     temporal_median_depth,
     write_point_cloud_safe,
 )
+from io_utils import append_jsonl, imwrite_unicode, write_json as json_dump
 from orbbec_rgbd import OrbbecAlignedCamera
 from pose_geometry import (
     LANDMARK_NAMES,
@@ -119,27 +120,6 @@ def media_pipe_model_path(project_model: Path) -> Path:
     if not runtime_model.exists() or sha256(runtime_model) != source_hash:
         shutil.copy2(project_model, runtime_model)
     return runtime_model
-
-
-def json_dump(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, path)
-
-
-def append_jsonl(path: Path, data: Any) -> None:
-    with path.open("a", encoding="utf-8") as output:
-        output.write(json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n")
-
-
-def imwrite_unicode(path: Path, image: np.ndarray, params: list[int] | None = None) -> None:
-    """Write through Python because OpenCV's Windows path handling is narrow."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ok, encoded = cv2.imencode(path.suffix, image, params or [])
-    if not ok:
-        raise RuntimeError(f"OpenCV failed to encode {path.suffix}: {path}")
-    path.write_bytes(encoded.tobytes())
 
 
 def mediapipe_landmarks(raw_landmarks: Any) -> list[Landmark2D]:

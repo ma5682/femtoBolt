@@ -16,6 +16,7 @@ import numpy as np
 import open3d as o3d
 
 from fusion import export_mesh_formats
+from io_utils import imwrite_unicode as _imwrite, write_json as _write_json, write_jsonl as _write_jsonl
 
 
 ROOT = Path(__file__).resolve().parent
@@ -29,26 +30,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=480)
     parser.add_argument("--height", type=int, default=270)
     return parser.parse_args()
-
-
-def _write_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _write_jsonl(path: Path, values: list[dict[str, Any]]) -> None:
-    path.write_text(
-        "".join(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n" for value in values),
-        encoding="utf-8",
-    )
-
-
-def _imwrite(path: Path, image: np.ndarray, params: list[int] | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ok, encoded = cv2.imencode(path.suffix, image, params or [])
-    if not ok:
-        raise RuntimeError(f"Cannot encode {path}")
-    path.write_bytes(encoded.tobytes())
 
 
 def _look_at_rdf(eye: np.ndarray, target: np.ndarray) -> np.ndarray:

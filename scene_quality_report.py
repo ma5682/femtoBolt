@@ -7,21 +7,16 @@ import html
 import json
 from pathlib import Path
 import numpy as np
+from io_utils import load_json as read, write_json_strict as dump
 from scene_data_kind import classify_dataset_data_kind, load_dataset_manifest_chain
 
 SPEC_SCHEMA = 'femto-field-acceptance-spec-v1'
-
-def read(path):
-    return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 
 def digest(path):
     h = hashlib.sha256()
     with Path(path).open('rb') as stream:
         for block in iter(lambda: stream.read(1024*1024), b''): h.update(block)
     return h.hexdigest()
-
-def dump(path, value):
-    Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
 
 def numeric_summary(values):
     values = np.asarray([v for v in values if v is not None], dtype=float)

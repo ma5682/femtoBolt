@@ -16,9 +16,9 @@ import time
 import cv2
 import numpy as np
 
+from io_utils import imread_unicode as _read_image, write_json as json_dump
 from scene_dataset_validator import validate_pose
-from scene_reconstruction import _distortion_maps, _read_image
-from scene_capture import json_dump
+from scene_reconstruction import _distortion_maps
 
 
 class ObservedAccumulator:

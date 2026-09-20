@@ -2,7 +2,7 @@
 
 ## 新增第十一至十五项（最新，覆盖下方历史指标）
 
-本次新增 `depth_error_check.py`、`depth_confidence_cloud.py`、`depth_debug_viewer.py`、`start_depth_debug.cmd`、`benchmark_depth_quality.py`、`tests/test_depth_error_debug.py`；局部修改 `depth_quality.py`、`scene_segmented_capture.py`、`femto_control_app.py`、`scene_reconstruction.py`、`depth_quality_replay.py` 和技术路线。原有过滤未删除。
+本次新增 `depth_error_check.py`、`depth_confidence_cloud.py`、`depth_debug_viewer.py`、`start_depth_debug.cmd`、`benchmark_depth_quality.py`（2026-09-20 起位于 `tools/`）、`tests/test_depth_error_debug.py`；局部修改 `depth_quality.py`、`scene_segmented_capture.py`、`femto_control_app.py`、`scene_reconstruction.py`、`depth_quality_replay.py` 和技术路线。原有过滤未删除。
 
 误差检查比较原始有效像素与修复后同坐标Depth，任何变化拒绝输出；另对补点检查与原始有效8邻域的最大差，超过50mm撤回整个孔洞，Depth和confidence归零。所有输出新增MAE/max/histogram报告。缺失像素无真值，因此单独记录邻域一致性指标，不将0值当真值、不声称补点真实误差。
 

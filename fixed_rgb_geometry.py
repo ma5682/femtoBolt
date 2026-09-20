@@ -6,8 +6,9 @@ import time
 import cv2
 import numpy as np
 import open3d as o3d
+from io_utils import imread_unicode as _read_image
 from scene_annotations import AnnotationStore, region_boundary
-from scene_reconstruction import _distortion_maps, _read_image
+from scene_reconstruction import _distortion_maps
 from scene_scale_validation import read_geometry_safe, resolve_reconstruction
 
 

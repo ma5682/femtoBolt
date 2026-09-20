@@ -15,10 +15,10 @@ import numpy as np
 import open3d as o3d
 
 from fusion import export_mesh_formats, write_point_cloud_safe
-from scene_dataset_validator import load_json, load_jsonl, resolve_dataset, validate_pose
+from io_utils import imread_unicode as _read_image, imwrite_unicode, load_json, load_jsonl
+from scene_dataset_validator import resolve_dataset, validate_pose
 from scene_gaussian import export_gaussian_initialization
 from single_frame_quality import clean_depth, compare_geometry, evidence_manifest
-from scene_capture import imwrite_unicode
 from single_frame_mesh import build_pixel_mesh, export_pixel_mesh
 from multiview_texture import export_multiview_texture
 from depth_quality import process_depth_quality
@@ -40,14 +40,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth-max-m", type=float, default=3.86)
     parser.add_argument("--point-stride", type=int, default=1)
     return parser.parse_args()
-
-
-def _read_image(path: Path, flags: int) -> np.ndarray:
-    encoded = np.fromfile(path, dtype=np.uint8)
-    image = cv2.imdecode(encoded, flags) if encoded.size else None
-    if image is None:
-        raise ValueError(f"Cannot decode image: {path}")
-    return image
 
 
 def _distortion_maps(dataset: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:

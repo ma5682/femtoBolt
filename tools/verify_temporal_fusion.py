@@ -1,18 +1,21 @@
 """Persist reproducible synthetic material-pattern comparison and timing, not physical acceptance."""
 from datetime import datetime
 from pathlib import Path
+import sys
 from time import perf_counter
 import json
 
 import cv2
 import numpy as np
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))  # tools/ scripts import repository-root modules
+from io_utils import imwrite_unicode, write_json as json_dump
 from temporal_depth_fusion import fuse_temporal_depth
-from scene_capture import imwrite_unicode, json_dump
 
 
 def run():
-    output=Path(__file__).resolve().parent/'outputs'/('temporal_validation_'+datetime.now().strftime('%Y%m%d_%H%M%S'))
+    output=REPO_ROOT/'outputs'/('temporal_validation_'+datetime.now().strftime('%Y%m%d_%H%M%S'))
     output.mkdir()
     results=[]
     for index,name in enumerate(('white_table','computer_shell','black_object','phone_glass','transparent_object')):

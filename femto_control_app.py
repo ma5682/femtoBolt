@@ -35,15 +35,13 @@ from gsplat_backend import (
     runtime_status as gsplat_runtime_status,
     train as train_direct_gsplat,
 )
+from io_utils import append_jsonl, imwrite_unicode, write_json as json_dump
 from orbbec_rgbd import AlignedFrame, DEPTH_MODE_SPECS, OrbbecAlignedCamera
 from scene_keyframe import build_fixed_keyframe_dataset
 from scene_capture import (
-    append_jsonl,
     create_session,
     depth_preview,
     enable_windows_dpi_awareness,
-    imwrite_unicode,
-    json_dump,
     write_calibration,
 )
 from scene_segmented_capture import depth_cloud

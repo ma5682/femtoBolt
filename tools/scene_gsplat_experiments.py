@@ -6,15 +6,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))  # tools/ scripts import repository-root modules
 from gsplat_backend import runtime_environment, runtime_python
+from io_utils import write_json as dump
 from scene_gsplat_split import file_sha256
-
-
-def dump(path: Path, value: dict) -> None:
-    temporary = path.with_suffix('.tmp')
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
-    temporary.replace(path)
 
 
 def rank(report: dict) -> tuple:
@@ -38,7 +36,7 @@ def run_suite(input_dir: Path, output: Path, iterations: int) -> None:
             return cache[key]
         folder = output / f'run_{len(cache):02d}'
         folder.mkdir()
-        command = [str(runtime_python()), str(Path(__file__).with_name('scene_gsplat_trainer.py')),
+        command = [str(runtime_python()), str(REPO_ROOT / 'scene_gsplat_trainer.py'),
                    'train', '--input', str(input_dir.resolve()), '--output', str(folder.resolve()),
                    '--profile', 'low_vram', '--iterations', str(iterations),
                    '--grow-grad2d', str(gradient), '--depth-weight', str(depth),

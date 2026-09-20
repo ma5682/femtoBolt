@@ -4,7 +4,8 @@ import unittest
 from unittest import mock
 import numpy as np
 from PIL import Image
-from scene_single_gs import prepare, seed_arrays, write_json, read_json, resolve_source
+from io_utils import load_json as read_json, write_json
+from scene_single_gs import prepare, seed_arrays, resolve_source
 from scene_single_gs_viewer import FixedViewport, load_viewport, SingleViewer, native_render_size
 
 

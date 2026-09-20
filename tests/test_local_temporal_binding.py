@@ -12,8 +12,7 @@ import numpy as np
 
 from local_reference import calibration_identity, reference_provenance
 from local_temporal_support import MASK_SOURCE_SCHEMA, filtered_depth, prepare
-from scene_capture import imwrite_unicode
-from scene_reconstruction import _read_image
+from io_utils import imread_unicode as _read_image, imwrite_unicode
 import cv2
 
 

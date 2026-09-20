@@ -12,16 +12,7 @@ import cv2
 import numpy as np
 
 from fusion import temporal_median_depth
-from scene_capture import imwrite_unicode, json_dump
-from scene_dataset_validator import load_json, load_jsonl
-
-
-def _read(path: Path, flags: int) -> np.ndarray:
-    encoded = np.fromfile(path, dtype=np.uint8)
-    image = cv2.imdecode(encoded, flags) if encoded.size else None
-    if image is None:
-        raise ValueError(f"Cannot decode {path}")
-    return image
+from io_utils import imread_unicode as _read, imwrite_unicode, load_json, load_jsonl, write_json as json_dump
 
 
 def _select_reference_frame(

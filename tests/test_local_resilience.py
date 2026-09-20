@@ -20,7 +20,8 @@ from local_raw_writer import RawFrameWriter
 from local_reference import reference_provenance
 from local_tracking_diagnostics import classify, quality_text, summarize
 from scene_live_tracker import PairEstimator
-from scene_reconstruction import _prepare_rgbd, _read_image
+from io_utils import imread_unicode as _read_image
+from scene_reconstruction import _prepare_rgbd
 from test_segmented_capture import make_camera, make_frame
 
 
@@ -170,7 +171,7 @@ class InterruptedPrefixTests(unittest.TestCase):
         finalize_scan(capture.scan, capture.camera)
         capture.records=records; capture.accepted=records[:3]
         capture.reference_provenance=reference_provenance(capture.session_id, records[0], capture.calibration)
-        from local_processing import write_json
+        from io_utils import write_json_strict as write_json
         write_json(capture.session/'derived/local_reference.json', capture.reference_provenance)
         (capture.session/'derived/live_tracking.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in records), encoding='utf-8')
         tracker=SimpleNamespace(reference_id=0, lost=True, max_gap_s=2, loss_context=dict(reason='tracking_gap', last_valid_frame_id=2))

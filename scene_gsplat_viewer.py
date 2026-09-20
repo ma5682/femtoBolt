@@ -30,6 +30,7 @@ from typing import Any
 
 import numpy as np
 
+from io_utils import load_json as _load_json
 from scene_gsplat_export import read_trained_gaussian_ply
 from ui_i18n import LANGUAGE_NAMES, tr
 
@@ -453,10 +454,6 @@ class TrainedGaussianRenderer:
                     pass
                 if not self.degrade_for_oom(requested_width, requested_height):
                     raise
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def _report_data_kind(report: dict[str, Any], manifest: dict[str, Any]) -> str:

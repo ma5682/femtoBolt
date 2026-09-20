@@ -8,7 +8,7 @@ import numpy as np
 
 from single_frame_quality import clean_depth
 from scene_reconstruction import reconstruct_scene, _prepare_rgbd
-from scene_capture import imwrite_unicode
+from io_utils import imwrite_unicode
 from fusion import read_geometry_safe
 from synthetic_scene_demo import generate_dataset
 from scene_keyframe import build_fixed_keyframe_dataset

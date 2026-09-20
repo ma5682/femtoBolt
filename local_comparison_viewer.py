@@ -124,10 +124,10 @@ def evaluate_and_render(baseline, dataset, reconstruction, *, width=640):
     import cv2
     import open3d as o3d
     from fusion import read_geometry_safe
-    from scene_reconstruction import _distortion_maps, _read_image, _prepare_rgbd
-    from scene_capture import imwrite_unicode
+    from io_utils import imread_unicode as _read_image, imwrite_unicode, load_json_object as read_json, write_json_strict as write_json
+    from scene_reconstruction import _distortion_maps, _prepare_rgbd
     from local_temporal_support import filtered_depth
-    from local_comparison import read_json, read_rows, sha256, write_json
+    from local_comparison import read_rows, sha256
 
     dataset, reconstruction = Path(dataset), Path(reconstruction)
     frames = read_rows(dataset / 'frames.jsonl')

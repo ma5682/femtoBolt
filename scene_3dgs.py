@@ -17,6 +17,8 @@ import subprocess
 import time
 from typing import Any
 
+from io_utils import load_json as _load_json
+
 
 ROOT = Path(__file__).resolve().parent
 OUTPUTS_ROOT = ROOT / "outputs"
@@ -42,10 +44,6 @@ OPTION_FLAGS = {
     "scale_regularization": ("--pipeline.model.use-scale-regularization", "True"),
     "bilateral_grid": ("--pipeline.model.use-bilateral-grid", "True"),
 }
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def _runtime_command(name: str) -> Path | None:

@@ -14,8 +14,9 @@ import uuid
 from collections import Counter
 
 import numpy as np
+from io_utils import append_jsonl, write_json as json_dump
 from moving_quality import POLICY, rotation_deg
-from scene_capture import json_dump, append_jsonl, write_calibration
+from scene_capture import write_calibration
 from scene_live_tracker import LiveTracker, PairEstimator, PreparedRGBD
 from local_reference import calibration_identity, reference_provenance
 from local_stability_feedback import CandidateStability

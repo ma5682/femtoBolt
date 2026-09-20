@@ -11,7 +11,8 @@ from unittest import mock
 
 from local_capture import LocalCapture
 from local_offline import LocalOfflineJob, PublicationError, publish_result
-from local_processing import SCHEMA, read_json
+from io_utils import load_json_object as read_json
+from local_processing import SCHEMA
 
 
 def write(path, value):

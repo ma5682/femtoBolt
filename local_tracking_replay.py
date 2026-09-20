@@ -12,17 +12,9 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 
+from io_utils import imread_unicode as _read_image, load_json as read_json, load_jsonl as rows
 from local_tracking_diagnostics import distribution, summarize, image_diagnostics
 from scene_live_tracker import LiveTracker, PairEstimator
-from scene_reconstruction import _read_image
-
-
-def read_json(path):
-    return json.loads(Path(path).read_text('utf-8-sig'))
-
-
-def rows(path):
-    return [json.loads(s) for s in Path(path).read_text('utf-8-sig').splitlines() if s.strip()]
 
 
 def frame_from_row(source, row):

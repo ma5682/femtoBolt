@@ -9,6 +9,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+from io_utils import imread_unicode_or_none, load_json, load_jsonl
+
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_DATASETS = ROOT / "datasets"
@@ -34,22 +36,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-depth-mm", type=float, default=3860.0)
     parser.add_argument("--no-write-report", action="store_true")
     return parser.parse_args()
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
-
-
-def imread_unicode(path: Path, flags: int) -> np.ndarray | None:
-    try:
-        encoded = np.fromfile(path, dtype=np.uint8)
-    except OSError:
-        return None
-    return cv2.imdecode(encoded, flags) if encoded.size else None
 
 
 def resolve_dataset(dataset: Path | None, datasets_root: Path) -> Path:
@@ -140,8 +126,8 @@ def validate_dataset(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if not rgb_path.is_file() or not depth_path.is_file():
             continue
 
-        rgb = imread_unicode(rgb_path, cv2.IMREAD_COLOR)
-        depth = imread_unicode(depth_path, cv2.IMREAD_UNCHANGED)
+        rgb = imread_unicode_or_none(rgb_path, cv2.IMREAD_COLOR)
+        depth = imread_unicode_or_none(depth_path, cv2.IMREAD_UNCHANGED)
         if rgb is None or depth is None:
             add_issue(errors, "image_decode_failed", "RGB or depth image cannot be decoded", frame=frame_id)
             continue

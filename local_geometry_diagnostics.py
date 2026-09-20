@@ -4,11 +4,10 @@ from pathlib import Path
 from datetime import datetime,timezone
 import cv2
 import numpy as np
+from io_utils import load_json as read, load_jsonl as rows
 from scene_dataset_validator import validate_pose
 
 
-def read(path):return json.loads(Path(path).read_text(encoding='utf-8-sig'))
-def rows(path):return [json.loads(s) for s in Path(path).read_text(encoding='utf-8-sig').splitlines() if s.strip()]
 def digest(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
@@ -55,7 +54,8 @@ def diagnose(model,point,check=lambda:None,progress=lambda stage:None):
         raw_dataset=tracking_path.parent.parent;raw_frames={r['frame']:r for r in rows(raw_dataset/'frames.jsonl')}
         if calibration_identity(raw_dataset)!=calibration:raise ValueError('原始会话标定不匹配')
         if tracking['session_id']!=local['session_id'] or tracking['reference_frame_id']!=local['reference_frame_id']:raise ValueError('跟踪来源与模型原点不匹配')
-        from scene_reconstruction import _distortion_maps,_read_image
+        from io_utils import imread_unicode as _read_image
+        from scene_reconstruction import _distortion_maps
         mx,my,k,w,h=_distortion_maps(dataset)
         report['source_hashes']={str(p.resolve()):digest(p) for p in (dataset/'manifest.json',dataset/'frames.jsonl',tracking_path,record_path)}
         for frame in frames:

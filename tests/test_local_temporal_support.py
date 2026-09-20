@@ -6,7 +6,7 @@ import unittest
 from unittest import mock
 import numpy as np
 from local_temporal_support import support_mask,stationary_window,filtered_depth,prepare
-from scene_capture import imwrite_unicode
+from io_utils import imwrite_unicode
 from test_local_temporal_binding import make_source
 
 

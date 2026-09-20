@@ -7,7 +7,7 @@ import numpy as np
 
 from temporal_depth_fusion import confidence_weighted_median, fuse_temporal_depth
 from scene_temporal_fusion import build_temporal_dataset, audit_temporal_motion
-from scene_capture import imwrite_unicode
+from io_utils import imwrite_unicode
 
 
 class TemporalDepthTests(TestCase):

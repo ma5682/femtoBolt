@@ -17,6 +17,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+from io_utils import load_json as _load_json
 from scene_data_kind import classify_dataset_data_kind, load_dataset_manifest_chain
 
 
@@ -24,10 +25,6 @@ ROOT = Path(__file__).resolve().parent
 OUTPUTS_ROOT = ROOT / "outputs"
 LATEST_MARKER = OUTPUTS_ROOT / "latest_direct_gsplat.txt"
 REPORT_SCHEMA = "femto-direct-gsplat-acceptance-v1"
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def _maybe_json(path: Path) -> dict[str, Any] | None:

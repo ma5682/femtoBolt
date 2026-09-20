@@ -29,6 +29,7 @@ import tempfile
 import time
 from typing import Any, Callable
 
+from io_utils import load_json as _load_json
 from scene_gsplat_trainer import (
     ASCII_RUNTIME_ROOT,
     LATEST_MARKER,
@@ -83,10 +84,6 @@ class TrainedModel:
     @property
     def accepted(self) -> bool:
         return bool(self.report.get("accepted", False))
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
 def _cuda_home() -> Path:

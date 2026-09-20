@@ -20,6 +20,8 @@ import struct
 import time
 import uuid
 
+from io_utils import write_json_strict as _write
+
 
 ROOT = Path(__file__).resolve().parent
 SCHEMA = 'femto-local-parameter-study-v1'
@@ -32,6 +34,7 @@ IMPLEMENTATION_FILES = (
     'local_comparison.py', 'local_comparison_viewer.py', 'scene_reconstruction.py',
     'local_pose_refinement.py', 'local_temporal_support.py', 'local_geometry.py',
     'local_reference.py', 'scene_dataset_validator.py', 'fixed_rgb_geometry.py', 'local_stability.py',
+    'io_utils.py',
 )
 IDENTITY_KEYS = ('dataset', 'raw_source', 'data_kind', 'session_id', 'reference_frame_id',
                  'reference_provenance', 'accepted_frame_ids', 'source_frame_count',
@@ -128,14 +131,6 @@ def parameter_key(voxel_m, sdf_trunc_m):
             not .001 <= voxel_m <= .02 or not voxel_m < sdf_trunc_m <= .1):
         raise ValueError('Invalid finite voxel / truncation parameters')
     return f'voxel_{voxel_m * 1000:.6g}mm_trunc_{sdf_trunc_m * 1000:.6g}mm'
-
-
-def _write(path, value):
-    """Only called inside a newly reserved task directory."""
-    path = Path(path)
-    temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
-    temporary.replace(path)
 
 
 def _hash_map(value, *, missing_allowed=False):

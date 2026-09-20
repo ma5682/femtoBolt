@@ -8,7 +8,8 @@ import os
 import tempfile
 from pathlib import Path
 import numpy as np
-from scene_single_gs import read_json, write_json, SCHEMA, MARKER, SingleConfig
+from io_utils import load_json as read_json, write_json
+from scene_single_gs import SCHEMA, MARKER, SingleConfig
 
 
 def enable_native_dpi():

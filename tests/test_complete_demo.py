@@ -10,7 +10,7 @@ import numpy as np
 import open3d as o3d
 
 from fusion import read_geometry_safe
-from scene_capture import imwrite_unicode
+from io_utils import imwrite_unicode
 from scene_dataset_validator import validate_pose
 from scene_gaussian import export_gaussian_initialization
 from scene_keyframe import build_fixed_keyframe_dataset

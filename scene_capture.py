@@ -13,6 +13,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from io_utils import append_jsonl, imwrite_unicode, write_json as json_dump
 from orbbec_rgbd import OrbbecAlignedCamera
 
 
@@ -52,18 +53,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def json_dump(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, path)
-
-
-def append_jsonl(path: Path, data: Any) -> None:
-    with path.open("a", encoding="utf-8") as output:
-        output.write(json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n")
-
-
 def write_calibration(session: Path, camera: OrbbecAlignedCamera, intrinsics: Any) -> None:
     """Save raw factory calibration and the aligned RGB-D pixel-grid intrinsic."""
     calibration = camera.calibration
@@ -85,14 +74,6 @@ def write_calibration(session: Path, camera: OrbbecAlignedCamera, intrinsics: An
     )
     json_dump(session / "calibration" / "factory_calibration.json", calibration)
     json_dump(session / "calibration" / "camera_metadata.json", camera.metadata)
-
-
-def imwrite_unicode(path: Path, image: np.ndarray, params: list[int] | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ok, encoded = cv2.imencode(path.suffix, image, params or [])
-    if not ok:
-        raise RuntimeError(f"OpenCV failed to encode {path}")
-    path.write_bytes(encoded.tobytes())
 
 
 def create_session(output_root: Path) -> Path:

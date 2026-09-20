@@ -8,6 +8,8 @@ import math
 from pathlib import Path
 import time
 
+from io_utils import load_json_object as read_json, write_json_strict as write_json
+
 SCHEMA = 'femto-local-processing-v1'
 STATUS = {
     'not_recorded': ('未记录', 'Not recorded'),
@@ -42,20 +44,6 @@ WARNINGS = (
     ('预览点数增长不等于补洞数量或覆盖率。',
      'Preview point growth is not a hole-fill count or coverage ratio.'),
 )
-
-
-def read_json(path):
-    value = json.loads(Path(path).read_text(encoding='utf-8-sig'))
-    if not isinstance(value, dict):
-        raise ValueError('Expected report object')
-    return value
-
-
-def write_json(path, data):
-    path = Path(path)
-    temporary = path.with_suffix(path.suffix + '.tmp')
-    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
-    temporary.replace(path)
 
 
 def empty_report():

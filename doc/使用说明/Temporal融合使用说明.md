@@ -42,14 +42,14 @@ fast默认5帧，quality默认15帧，均支持显式5/10/15帧。新采集沿�
 | --- | --- |
 | orbbec_rgbd.OrbbecAlignedCamera.read | 原有采集、对齐、毫米Depth读取，未修改 |
 | scene_temporal_fusion.capture_temporal_frames | 新增有限帧采集；raw PNG、timestamps、metadata、calibration |
-| scene_temporal_fusion.build_temporal_dataset | 新增回放编排与源文件SHA-256核验；复用scene_static_fusion._read |
+| scene_temporal_fusion.build_temporal_dataset | 新增回放编排与源文件SHA-256核验；图片读取复用 `io_utils.imread_unicode` |
 | scene_temporal_fusion.audit_temporal_motion | 复用assess_rgb_motion_pair；每相邻帧及首帧对各帧检查 |
 | depth_quality.process_depth_quality | 原有每帧质量/补洞/confidence，结果仅作独立诊断 |
 | temporal_depth_fusion.confidence_weighted_median / fuse_temporal_depth | 新增分块真实观测融合和稳定性统计 |
 | scene_segmented_capture.depth_cloud | 原有K6反投影；新增显式temporal_confidence=True连续权重分支，旧默认仍仅接受0/.3/1 |
 | depth_confidence_cloud.write_confident_point_cloud | 新增显式连续confidence的PLY属性输出，旧默认不变 |
 | tests/test_temporal_depth_fusion.py | 十项测试，含五类场景模式、多帧、运动、SDK模拟采集顺序 |
-| verify_temporal_fusion.py | 生成五类合成模式比较图、JSON、1080p重复性能统计 |
+| tools/verify_temporal_fusion.py | 生成五类合成模式比较图、JSON、1080p重复性能统计（2026-09-20 起移入 `tools/`，从仓库根目录运行） |
 
 先审查调用链，再设计，再局部修改，最后回放验证。没有删除现有过滤、替换旧时域中值或修改3DGS格式。
 

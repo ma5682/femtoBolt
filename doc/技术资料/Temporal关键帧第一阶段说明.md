@@ -27,7 +27,7 @@
 | `scene_gsplat_data.py` | `load_frame_confidence()` 接受连续 0..1，不量化 |
 | `scene_single_gs.py` | `prepare()` 不对融合 Depth 重算质量；`seed_arrays()` 排除零 confidence；训练损失保留连续权重，opacity 上限尊重来源 confidence |
 | `complete_demo.py` | 修正报告中“未做多帧合并”的过时描述，训练触发行为未改变 |
-| `validate_temporal_keyframe.py`（新增） | `compare_batches()`、`run()`，独立批次无 ICP 的 Chamfer、深度/边缘差异、点数、无效率和耗时对比 |
+| `validate_temporal_keyframe.py`（新增，2026-09-20 起位于 `tools/`） | `compare_batches()`、`run()`，独立批次无 ICP 的 Chamfer、深度/边缘差异、点数、无效率和耗时对比 |
 | `tests/test_temporal_keyframe.py`（新增） | 来源上限、连续传播、中间层、Depth 移动检测、GS 种子、TSDF 阶段隔离、一键 10 帧与取消测试 |
 | `技术路线.md` | 同步本阶段边界和验证记录 |
 

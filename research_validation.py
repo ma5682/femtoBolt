@@ -3,14 +3,13 @@ import argparse,hashlib,json,os,platform,tempfile,time,uuid
 from pathlib import Path
 from datetime import datetime,timezone
 import numpy as np
+from io_utils import load_json as read, write_json_strict as write
 
 PURPOSES=('optical_range','axial_depth','housing_distance','two_point_length','plane_residual','mapping_reprojection')
 KINDS=('synthetic','historical_replay','physical_test')
 
 def hashed(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest()
-def read(path):return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 def finite(value):return type(value) in (int,float) and np.isfinite(value)
-def write(path,value):Path(path).write_text(json.dumps(value,ensure_ascii=False,indent=2,allow_nan=False),encoding='utf-8')
 
 def template():
     return dict(schema='femto-research-protocol-v1',test_id='replace-with-test-id',purpose='two_point_length',evidence_kind='physical_test',
