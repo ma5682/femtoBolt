@@ -1,0 +1,22 @@
+# 仓库内统一以 LF 存储文本；检出时按各机器 core.autocrlf 处理。
+* text=auto
+
+# Windows 批处理 / PowerShell 入口固定 CRLF 检出
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制资产：不做行尾转换，不做文本 diff
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.task binary
+*.pt binary
+*.pth binary
+*.ply binary
+*.spz binary
+*.glb binary
+*.npy binary
+*.npz binary
+*.zip binary

@@ -1,0 +1,4 @@
+# Build-isolation input used by setup_spz_environment.cmd.
+# nanobind is statically linked into the SPZ extension, so its exact version is
+# part of the delivered binary rather than an incidental build-only choice.
+nanobind==3.0.1

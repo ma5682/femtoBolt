@@ -1,0 +1,26 @@
+colorama==0.4.6
+filelock==3.32.5
+fsspec==2026.7.0
+gsplat==1.5.3
+imageio==2.37.0
+jaxtyping==0.3.7
+Jinja2==3.1.6
+lightning-utilities==0.15.3
+markdown-it-py==4.2.0
+MarkupSafe==3.0.3
+mdurl==0.1.2
+mpmath==1.3.0
+networkx==3.4.2
+ninja==1.13.2
+numpy==2.2.6
+packaging==26.3
+pillow==11.3.0
+Pygments==2.21.0
+rich==15.0.0
+sympy==1.14.0
+torch @ file:///C:/Users/55053/Downloads/femto-gsplat-wheels/torch-2.7.1%2Bcu128-cp310-cp310-win_amd64.whl#sha256=5174f02de8ca14df87c8e333c4c39cf3ce93a323c9d470d690301d110a053b3c
+torchmetrics==1.9.0
+torchvision @ file:///C:/Users/55053/Downloads/femto-gsplat-wheels/torchvision-0.22.1%2Bcu128-cp310-cp310-win_amd64.whl#sha256=ad48ba3c3ffd48027e3a8de42fcea131a53a524ee9416ca4efb22f9ac6b7328d
+tqdm==4.67.1
+typing_extensions==4.16.0
+wadler_lindig==0.1.7

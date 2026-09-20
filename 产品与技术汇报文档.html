@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Femto Bolt 局部采集与区域导出 · 产品与技术汇报</title>
+<style>
+:root{--ink:#17212b;--muted:#637180;--line:#dce4ea;--bg:#eef3f6;--panel:#fff;--navy:#102431;--cyan:#3fc7bd;--orange:#f4a340;--red:#e45858;--pink:#ec5c96;--green:#268a64;--blue:#3976c5}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.7 "Microsoft YaHei","PingFang SC",Arial,sans-serif}
+.wrap{max-width:1180px;margin:auto;padding:28px 24px 64px}.hero{padding:42px 46px;border-radius:22px;color:#fff;background:linear-gradient(135deg,#0c1d29,#17394a 68%,#1c5962);box-shadow:0 18px 44px #18313f26}
+.hero h1{margin:0 0 8px;font-size:36px;letter-spacing:.02em}.hero .subtitle{font-size:18px;color:#b8eee9;margin:0 0 18px}.hero .summary{max-width:920px;font-size:16px;color:#e7f1f4}
+.meta,.kpis{display:flex;flex-wrap:wrap;gap:9px;margin-top:20px}.meta span{padding:6px 11px;border:1px solid #ffffff30;border-radius:999px;background:#ffffff10;font-size:13px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.kpi{padding:15px;border:1px solid #ffffff22;border-radius:14px;background:#07192366}.kpi b{display:block;font-size:24px;color:#fff}.kpi small{color:#b8cbd3}
+nav{margin:20px 0;padding:16px 20px;border:1px solid var(--line);border-radius:14px;background:#fff}nav b{margin-right:14px}nav a{display:inline-block;margin:3px 12px 3px 0;color:#295e84;text-decoration:none}
+section{margin-top:20px;padding:30px 34px;border:1px solid var(--line);border-radius:18px;background:var(--panel);box-shadow:0 7px 20px #18313f0a}h2{margin:0 0 17px;font-size:25px}h3{margin:24px 0 10px;font-size:18px}h4{margin:0 0 8px;font-size:16px}p{margin:8px 0}.lead{font-size:17px;color:#334554}.num{display:inline-grid;place-items:center;width:34px;height:34px;margin-right:10px;border-radius:10px;background:var(--navy);color:#fff;font-size:17px}
+.grid{display:grid;gap:14px}.c2{grid-template-columns:repeat(2,1fr)}.c3{grid-template-columns:repeat(3,1fr)}.card{padding:18px;border:1px solid var(--line);border-radius:14px;background:#fbfdfe}.card p,.card li{color:#475866}.card ul{margin:8px 0 0;padding-left:20px}
+.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700}.ok{background:#e4f5ed;color:#176b4c}.dev{background:#edf2ff;color:#345ba5}.warn{background:#fff2d9;color:#8b5b00}.hide{background:#f1f2f4;color:#626a73}
+.flow{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}.step{position:relative;min-height:138px;padding:17px;border:1px solid var(--line);border-radius:14px;background:#f9fbfc}.step strong{display:block;margin-bottom:7px;color:#123447}.step em{display:inline-grid;place-items:center;width:27px;height:27px;margin-bottom:9px;border-radius:50%;background:#dceff0;color:#12665e;font-style:normal;font-weight:700}.step:not(:last-child):after{content:"→";position:absolute;right:-11px;top:52px;z-index:2;color:#71808c;font-size:20px}
+.rule{display:grid;grid-template-columns:130px 1fr 1fr;gap:0;border:1px solid var(--line);border-radius:13px;overflow:hidden}.rule>div{padding:13px 15px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}.rule>div:nth-child(3n){border-right:0}.rule>div:nth-last-child(-n+3){border-bottom:0}.rule .head{background:#edf3f6;font-weight:700}.orange{color:#a55d00}.red{color:#a72d36}.pink{color:#ae275f}
+.formula{padding:18px;border-radius:14px;background:#102431;color:#d9e8ee;text-align:center;font-size:18px}.formula code{color:#6ee0d5;font-size:19px}.callout{margin-top:14px;padding:14px 17px;border-left:4px solid var(--blue);border-radius:8px;background:#edf5ff;color:#33495d}.callout.good{border-color:var(--green);background:#edf9f3}.callout.warning{border-color:var(--orange);background:#fff8e9}
+table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}th,td{padding:11px 12px;border:1px solid var(--line);vertical-align:top;text-align:left}th{background:#edf3f6;color:#263b4a}code,pre{font-family:Consolas,"Cascadia Mono",monospace}code{padding:1px 4px;border-radius:4px;background:#edf2f5;font-size:13px}pre{margin:0;white-space:pre-wrap;color:#334b5a;font-size:13px}
+.pipeline{display:grid;grid-template-columns:repeat(6,1fr);gap:9px;align-items:stretch}.pipe{padding:14px 10px;border-radius:12px;border:1px solid var(--line);background:#f9fbfc;text-align:center}.pipe b{display:block;color:#183a4e}.pipe small{color:#657785}.pipe.src{background:#fff5df;border-color:#e9bd67}.pipe.select{background:#eaf8f6;border-color:#79cfc6}.pipe.out{background:#eaf2ff;border-color:#8db3ea}
+.status{display:grid;grid-template-columns:1.2fr 1fr;gap:15px}.metric-list{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.metric{padding:14px;border-radius:12px;background:#f3f7f9}.metric b{display:block;font-size:20px;color:#173e52}.metric small{color:#677987}
+footer{padding:24px 6px 0;text-align:center;color:#71808c;font-size:13px}
+@media(max-width:900px){.kpis,.c2,.c3,.flow,.pipeline,.status{grid-template-columns:1fr}.step:not(:last-child):after{display:none}.rule{grid-template-columns:1fr}.rule>div{border-right:0}.metric-list{grid-template-columns:repeat(2,1fr)}}
+@media print{body{background:#fff}.wrap{max-width:none;padding:0}.hero,section,nav{box-shadow:none;break-inside:avoid}.hero{border-radius:0}nav{display:none}}
+</style>
+</head>
+<body>
+<main class="wrap">
+<header class="hero">
+<h1>Femto Bolt 局部采集与区域导出</h1>
+<p class="subtitle">产品流程 · 方形涂抹选区 · 三维映射 · 区域文件交付</p>
+<p class="summary">当前产品展示聚焦一条清晰主线：采集真实 RGB-D 场景，在固定初始 RGB 画面上用方形笔刷标记工作区域或禁止区域，系统自动组合最终保留范围，并导出对应的三维区域文件。原始采集、完整模型与区域结果分层保存，区域操作不会改写原始 RGB、Depth、标定、位姿或完整场景模型。</p>
+<div class="meta"><span>文档日期：2026-09-20</span><span>技术基线：技术路线.md（2026-09-19）</span><span>设备：Orbbec Femto Bolt</span><span>坐标：W0 / RDF / 米</span><span>当前状态：研发产品演示</span></div>
+<div class="kpis"><div class="kpi"><b>1</b><small>当前保留的最新采集记录</small></div><div class="kpi"><b>3</b><small>最新模型有效融合视角</small></div><div class="kpi"><b>86,993</b><small>最新 TSDF 网格三角面</small></div><div class="kpi"><b>0</b><small>当前历史区域导出记录</small></div></div>
+</header>
+
+<nav><b>目录</b><a href="#s1">产品定位</a><a href="#s2">操作流程</a><a href="#s3">区域规则</a><a href="#s4">技术实现</a><a href="#s5">交付文件</a><a href="#s6">当前数据</a><a href="#s7">边界与风险</a><a href="#s8">汇报口径</a></nav>
+
+<section id="s1">
+<h2><span class="num">1</span>当前产品定位</h2>
+<p class="lead">产品解决的是“从真实采集画面中选出需要的三维区域，并形成可独立交付的区域文件”。当前演示不要求用户理解规划、精度诊断、方案版本或 3DGS 训练流程。</p>
+<div class="grid c3">
+<div class="card"><h4>真实采集 <span class="tag ok">已实现</span></h4><ul><li>同步保存完整 RGB、uint16 毫米 Depth、标定、时间戳和原始会话</li><li>局部跟踪在固定 W0 中输出可信位姿</li></ul></div>
+<div class="card"><h4>方形涂抹 <span class="tag ok">已实现</span></h4><ul><li>工作区域与禁止区域可随时切换</li><li>支持方块尺寸、连续拖动、擦除和逐笔撤销</li></ul></div>
+<div class="card"><h4>区域交付 <span class="tag ok">已实现</span></h4><ul><li>自动按工作区/禁止区组合最终范围</li><li>导出 GLB、网格 PLY、顶点 PLY、边界 CSV 和来源 JSON</li></ul></div>
+<div class="card"><h4>隔离查看 <span class="tag ok">已实现</span></h4><ul><li>单选只显示当前区域</li><li>多选显示所选区域并集，清除选择后隐藏叠加</li></ul></div>
+<div class="card"><h4>历史区域导出 <span class="tag ok">已收口</span></h4><ul><li>只展示实际导出的区域结果</li><li>支持预览、打开导出目录和刷新</li></ul></div>
+<div class="card"><h4>高级研发能力 <span class="tag hide">产品界面隐藏</span></h4><ul><li>测距、几何诊断、精度报告、规划和方案恢复不进入当前产品演示</li><li>底层实现仍保留，便于研发继续验证</li></ul></div>
+</div>
+</section>
+
+<section id="s2">
+<h2><span class="num">2</span>产品操作流程</h2>
+<div class="flow">
+<div class="step"><em>1</em><strong>采集与建模</strong>建立初始相机坐标 W0，采集可信局部视角并生成完整场景 TSDF 网格。</div>
+<div class="step"><em>2</em><strong>打开固定 RGB</strong>使用初始彩色画面作为稳定参考，画面缩放和平移不改变涂抹坐标。</div>
+<div class="step"><em>3</em><strong>方形涂抹</strong>选择工作区域或禁止区域，按住左键连续涂抹；可调整方块大小、擦除和撤销。</div>
+<div class="step"><em>4</em><strong>完成区域选择</strong>系统把二维涂抹映射到有真实三维支持的可见网格表面，并自动计算最终保留范围。</div>
+<div class="step"><em>5</em><strong>导出当前结果</strong>导出区域 GLB / PLY / CSV / JSON；历史窗口仅显示实际导出结果。</div>
+</div>
+<div class="callout good"><strong>操作原则：</strong>用户只需要决定“哪里要保留”和“哪里要排除”。系统根据已有标记自动判断保存方式，不再要求用户额外选择“保留涂抹区域”或“排除涂抹区域”。</div>
+</section>
+
+<section id="s3">
+<h2><span class="num">3</span>工作区域与禁止区域规则</h2>
+<div class="rule">
+<div class="head">标记情况</div><div class="head">自动计算</div><div class="head">最终导出内容</div>
+<div><strong class="orange">只有工作区域</strong></div><div>以工作区域作为候选范围</div><div>只保存工作区域内有三维支持的内容</div>
+<div><strong class="red">只有禁止区域</strong></div><div>以完整有效范围作为候选，再扣除禁止区域</div><div>保存未被禁止区域覆盖的其余内容</div>
+<div><strong class="pink">工作区 + 禁止区</strong></div><div>先取工作区域，再减去与其相交的禁止区域</div><div>保存“工作区域减禁止区域”；工作区外的禁止标记自然忽略</div>
+</div>
+<div class="formula"><code>最终导出 =（存在工作区 ? 工作区 : 完整有效范围）− 禁止区</code></div>
+<div class="grid c3" style="margin-top:14px"><div class="card"><h4 class="orange">橙色</h4><p>工作区域：用户希望保留的候选范围。</p></div><div class="card"><h4 class="red">红色</h4><p>禁止区域：必须从候选范围中排除的部分。</p></div><div class="card"><h4 class="pink">粉色</h4><p>最终结果：自动组合后实际将被导出的内容。</p></div></div>
+</section>
+
+<section id="s4">
+<h2><span class="num">4</span>技术实现与数据保护</h2>
+<div class="pipeline">
+<div class="pipe src"><b>原始 RGB-D</b><small>完整画面、深度、标定和时间戳不可变</small></div>
+<div class="pipe"><b>局部跟踪</b><small>T_W0_Ct、30 mm 工作半径、10°总旋转范围</small></div>
+<div class="pipe"><b>TSDF 网格</b><small>仅积分实测深度；测量默认使用网格</small></div>
+<div class="pipe select"><b>固定 RGB 涂抹</b><small>参考 RGB 像素坐标中的方形笔刷掩码</small></div>
+<div class="pipe select"><b>三维支持映射</b><small>可见三角面与深度一致性门禁</small></div>
+<div class="pipe out"><b>区域文件</b><small>完整三角面、孔洞、边界与来源血缘</small></div>
+</div>
+<div class="grid c2" style="margin-top:16px">
+<div class="card"><h4>方形笔刷</h4><ul><li>默认边长 40 屏幕像素，范围 8–160</li><li>连续鼠标事件之间扫掠方形，避免快速拖动产生断点</li><li>每次松开鼠标形成一笔，草稿最多保留 100 笔撤销</li><li>超过轮廓复杂度预算时拒绝当前笔，不用凸包填掉孔洞</li></ul></div>
+<div class="card"><h4>性能优化</h4><ul><li>预览刷新合并到最多 30 FPS</li><li>拖动时只更新当前涂抹层，背景和已完成区域复用</li><li>区域掩码按画面尺寸和轮廓缓存，轮廓变化自动失效</li><li>像素判定和轮廓追踪限制在选区包围盒</li></ul></div>
+<div class="card"><h4>隔离显示</h4><ul><li>列表单选时只绘制该区域的填充、边界和禁区</li><li>多选显示所选区域并集</li><li>查看已完成区域时暂时隐藏未完成草稿，但草稿数据仍保留</li><li>显示隔离不改变导出内容和区域数据</li></ul></div>
+<div class="card"><h4>坐标与来源</h4><ul><li>内部统一 W0 / RDF：+X 右、+Y 下、+Z 前，单位米</li><li>初始相机光心是局部模型坐标原点</li><li>GLB 使用场景节点完成 RDF 到图形坐标变换</li><li>每份区域 JSON 记录源几何哈希和导出文件哈希</li></ul></div>
+</div>
+</section>
+
+<section id="s5">
+<h2><span class="num">5</span>区域交付文件</h2>
+<table>
+<tr><th>文件</th><th>用途</th><th>坐标/内容</th></tr>
+<tr><td><code>region_*_mesh_m.glb</code></td><td>产品展示和通用三维预览</td><td>完整选中三角面；场景节点记录坐标转换</td></tr>
+<tr><td><code>region_*_mesh_m.ply</code></td><td>三维网格计算与研发复核</td><td>W0 / RDF / 米，保留原网格顶点色与孔洞</td></tr>
+<tr><td><code>region_*_vertices_m.ply</code></td><td>选中区域顶点点云</td><td>W0 / RDF / 米</td></tr>
+<tr><td><code>region_*_boundary_m.csv</code></td><td>边界检查与数据交换</td><td>含孔洞的无序边集合，不是运动路径</td></tr>
+<tr><td><code>region_*.json</code></td><td>来源、范围、坐标与哈希</td><td>绑定模型、会话、参考画面和源几何</td></tr>
+</table>
+<div class="callout warning"><strong>导出边界：</strong>区域 GLB/PLY 是三维表面数据，不等于治疗路径、机械臂可执行轨迹或已验证的物理接触范围。边界 CSV 也不表示有序闭合路径。</div>
+</section>
+
+<section id="s6">
+<h2><span class="num">6</span>当前保留数据与验证状态</h2>
+<div class="status">
+<div><h3 style="margin-top:0">唯一保留的最新数据</h3><pre>原始会话：datasets/scene_20260917_102907_local_3e8ddeec
+当前模型：outputs/complete_demo_20260917_102931
+数据类型：real_femto
+发布状态：published
+原始采集帧：51
+最终融合视角：3
+区域导出历史：0</pre><p>旧采集、旧模型、验证输出、备份、规划草稿和区域导出历史已于 2026-09-20 清理。最新指针已复核，只指向上述会话和模型。</p></div>
+<div class="metric-list">
+<div class="metric"><b>57,437</b><small>融合点云点数</small></div><div class="metric"><b>45,820</b><small>网格顶点数</small></div><div class="metric"><b>86,993</b><small>网格三角面数</small></div><div class="metric"><b>75.22%</b><small>平均有效深度比例</small></div><div class="metric"><b>1.085 mm</b><small>点云到网格距离中位数</small></div><div class="metric"><b>4.113 mm</b><small>点云到网格距离 P90</small></div>
+</div>
+</div>
+<div class="callout"><strong>指标解释：</strong>点云到网格距离只表示同一批多视角观测与 TSDF 表面的内部一致性，不是实物尺寸误差，也不能证明定位、治疗或机械臂精度。最新局部结果少于 12 视角，因此没有进入 3DGS 训练，当前 Gaussian 状态仅为未训练初始化。</div>
+</section>
+
+<section id="s7">
+<h2><span class="num">7</span>质量边界、风险与待验证项</h2>
+<div class="grid c2">
+<div class="card"><h4>当前已经确认</h4><ul><li>原始 RGB-D 与派生结果分层保存，区域操作不改源数据</li><li>工作区、禁止区及二者组合的自动导出语义已实现</li><li>方形笔刷支持尺寸、擦除、撤销、孔洞和分离区域</li><li>已完成区域支持单选隔离和多选并集显示</li><li>区域导出保留来源、坐标、单位和文件哈希</li></ul></div>
+<div class="card"><h4>仍需现场验证</h4><ul><li>真实移动补采在不同材质、遮挡和人体体动下的稳定性</li><li>已知尺寸、重复采集和不同操作者条件下的物理误差</li><li>长时间连续运行的帧率、内存和交互延迟</li><li>区域边界与真实目标边界的可重复性</li><li>产品打包、隐私、许可证和医疗用途分类门禁</li></ul></div>
+</div>
+<div class="callout warning"><strong>对外口径：</strong>当前是研发产品演示，可展示采集、选区、三维映射和文件导出能力；不得把软件分辨率、内部残差或单次目测吻合描述为临床精度、接触安全或机械臂执行能力。</div>
+</section>
+
+<section id="s8">
+<h2><span class="num">8</span>产品汇报建议与常用入口</h2>
+<div class="grid c2">
+<div class="card"><h4>建议演示顺序</h4><ol><li>展示最新采集结果和固定初始 RGB。</li><li>调整方块大小，涂一个工作区域。</li><li>切换禁止区域，在工作区内扣除一部分。</li><li>在区域列表中单选，确认画面只显示当前区域。</li><li>展示粉色最终保留结果并导出。</li><li>打开导出文件夹，说明 GLB / PLY / CSV / JSON 的用途。</li></ol></div>
+<div class="card"><h4>当前不进入产品演示</h4><ul><li>标记回读、实测距离、同位置几何诊断</li><li>精度测试报告和研发验证记录</li><li>区域方案保存、另存、草稿恢复和规划工作台</li><li>路径生成、机械臂或治疗执行表述</li><li>3DGS 训练与旧验证数据</li></ul></div>
+<div class="card"><h4>程序与文档入口</h4><pre>start_femto_app.cmd
+README.md
+技术路线.md
+doc/README.md
+doc/使用说明/局部补采使用说明.md</pre></div>
+<div class="card"><h4>合规入口</h4><pre>COMMERCIAL_READINESS.md
+SOURCE_PROVENANCE.md
+THIRD_PARTY_NOTICES.md
+licenses/</pre></div>
+</div>
+</section>
+
+<footer>本文档按 2026-09-20 仓库、最新保留数据和当前产品界面整理。实现参数与变更记录以根目录 <code>技术路线.md</code> 为准；发布与合规状态以对应门禁文件为准。</footer>
+</main>
+</body>
+</html>

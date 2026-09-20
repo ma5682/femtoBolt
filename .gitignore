@@ -1,18 +1,39 @@
-# Build and Release Folders
-bin-debug/
-bin-release/
-[Oo]bj/
-[Bb]in/
+# ==== Python 虚拟环境与缓存 ====
+# 三套隔离环境由 setup_environment.cmd / setup_direct_gsplat_environment.cmd /
+# setup_3dgs_environment.cmd 重建，产品 gsplat 运行时另有 C:\FemtoGsplatRuntime 联接。
+.venv/
+.venv-*/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Other files and folders
-.settings/
+# ==== 采集证据层与派生结果（本地数据树，不入版本库） ====
+# datasets/ 是不可变原始 RGB-D 证据；outputs/ 与 photos/ 是重建、标注、规划、
+# 3DGS 与历史备份产物；marker 文本（latest_*.txt）随所在目录一并忽略。
+datasets/
+outputs/
+photos/
+Log/
+*.log
 
-# Executables
-*.swf
-*.air
-*.ipa
-*.apk
+# ==== 大体积权重 / 检查点（不随源码分发，按 THIRD_PARTY_NOTICES.md 离线安装） ====
+*.pt
+*.ckpt
+*.pth
+*.spz
 
-# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
-# should NOT be excluded as they contain compiler settings and other important
-# information for Eclipse / Flash Builder.
+# ==== 本机私有配置 ====
+.claude/settings.local.json
+.claude/worktrees/
+
+# ==== 系统 / 编辑器杂项 ====
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~

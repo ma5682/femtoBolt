@@ -1,0 +1,50 @@
+{
+  "schema": "femto-research-protocol-v1",
+  "test_id": "填写测试编号-two_point_length",
+  "purpose": "two_point_length",
+  "evidence_kind": "physical_test",
+  "target_id": null,
+  "operator": null,
+  "measurement_definition": null,
+  "repetition_scope": "independent_capture",
+  "coordinate_frame": "world_rdf",
+  "unit": "metre",
+  "reference": {
+    "value": null,
+    "unit": "mm",
+    "uncertainty_bound": null,
+    "uncertainty_method": null,
+    "datum": "two_physical_endpoints",
+    "instrument": null,
+    "reference_object": null
+  },
+  "conditions": {
+    "distance_mm": null,
+    "angle_deg": null,
+    "material": null,
+    "camera_mode": null,
+    "environment": null,
+    "placement_procedure": null
+  },
+  "tolerance": null,
+  "algorithm": {
+    "name": null,
+    "version": null,
+    "parameters": {}
+  },
+  "assets": [
+    {
+      "role": "raw",
+      "path": "REPLACE_RAW_FILE"
+    },
+    {
+      "role": "calibration",
+      "path": "REPLACE_CALIBRATION_FILE"
+    },
+    {
+      "role": "algorithm",
+      "path": "REPLACE_ALGORITHM_SOURCE_FILE"
+    }
+  ],
+  "notes": "所有空值保留未验证；每次尝试均录入，失败也保留。不据此设置固定补偿。"
+}

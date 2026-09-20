@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Femto Bolt 真实场景三维重建 · 产品与技术实现文档</title>
+<style>
+  :root{
+    --ink:#1b2430; --muted:#5b6675; --line:#d9dee5; --bg:#f6f8fa; --card:#ffffff;
+    --blue:#1f6feb; --blue-soft:#e8f0fe; --green:#1a7f37; --green-soft:#e6f4ea;
+    --amber:#9a6700; --amber-soft:#fff8e1; --red:#b42318; --red-soft:#fdecea;
+    --purple:#6f42c1; --purple-soft:#f1ebfb; --teal:#0b7285; --teal-soft:#e3fafc;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);
+    font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Segoe UI,Arial,sans-serif;font-size:15px;line-height:1.65}
+  a{color:var(--blue);text-decoration:none}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 28px 80px}
+  header.hero{background:linear-gradient(135deg,#0f2a4a 0%,#1f6feb 100%);color:#fff;border-radius:16px;padding:40px 44px;margin-bottom:28px}
+  header.hero h1{margin:0 0 8px;font-size:30px;font-weight:700;letter-spacing:.5px}
+  header.hero p{margin:6px 0;opacity:.92;font-size:15px}
+  header.hero .meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px}
+  header.hero .meta span{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);border-radius:999px;padding:4px 12px;font-size:13px}
+  nav.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin-bottom:28px}
+  nav.toc h2{margin:0 0 8px;font-size:15px;color:var(--muted);font-weight:600}
+  nav.toc ol{margin:0;padding-left:20px;columns:2;column-gap:32px}
+  nav.toc li{margin:3px 0}
+  section{margin-bottom:40px}
+  h2.sec{font-size:22px;margin:0 0 14px;padding-bottom:8px;border-bottom:2px solid var(--blue);display:flex;align-items:center;gap:10px}
+  h2.sec .num{background:var(--blue);color:#fff;border-radius:8px;padding:2px 10px;font-size:15px}
+  h3{font-size:17px;margin:22px 0 10px}
+  p{margin:8px 0}
+  .lead{font-size:16px;color:var(--ink)}
+  .grid{display:grid;gap:16px}
+  .grid.c2{grid-template-columns:repeat(2,1fr)}
+  .grid.c3{grid-template-columns:repeat(3,1fr)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card h4{margin:0 0 8px;font-size:15.5px}
+  .card ul{margin:6px 0 0;padding-left:18px}
+  .card li{margin:3px 0}
+  .kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .kpi .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .kpi .v{font-size:26px;font-weight:700;color:var(--blue)}
+  .kpi .l{font-size:13px;color:var(--muted)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:14px}
+  th,td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{background:#eef2f7;font-weight:600}
+  tr:last-child td{border-bottom:none}
+  code{background:#eef2f7;border-radius:4px;padding:1px 5px;font-family:Consolas,"Cascadia Mono",monospace;font-size:13px}
+  pre{background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:10px;overflow:auto;font-size:13px;line-height:1.5}
+  .tag{display:inline-block;border-radius:999px;padding:1px 10px;font-size:12.5px;font-weight:600;border:1px solid transparent}
+  .tag.ok{background:var(--green-soft);color:var(--green)}
+  .tag.warn{background:var(--amber-soft);color:var(--amber)}
+  .tag.no{background:var(--red-soft);color:var(--red)}
+  .tag.info{background:var(--blue-soft);color:var(--blue)}
+  .tag.dev{background:var(--purple-soft);color:var(--purple)}
+  .callout{border-left:4px solid var(--blue);background:var(--blue-soft);padding:10px 14px;border-radius:0 10px 10px 0;margin:12px 0}
+  .callout.warn{border-color:var(--amber);background:var(--amber-soft)}
+  .callout.danger{border-color:var(--red);background:var(--red-soft)}
+  .callout.ok{border-color:var(--green);background:var(--green-soft)}
+  /* 横向流程 */
+  .flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:0;margin:14px 0}
+  .flow .node{background:var(--card);border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;min-width:150px;max-width:210px;flex:1;font-size:13.5px}
+  .flow .node b{display:block;font-size:14px;margin-bottom:3px}
+  .flow .node small{color:var(--muted);display:block;line-height:1.45}
+  .flow .node.gate{border-color:var(--amber);background:var(--amber-soft)}
+  .flow .node.out{border-color:var(--green);background:var(--green-soft)}
+  .flow .node.src{border-color:var(--teal);background:var(--teal-soft)}
+  .flow .node.gpu{border-color:var(--purple);background:var(--purple-soft)}
+  .flow .arrow{display:flex;align-items:center;justify-content:center;width:34px;color:var(--muted);font-size:22px;flex:none}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin-top:6px}
+  .legend i{display:inline-block;width:14px;height:14px;border-radius:3px;border:1.5px solid var(--line);vertical-align:-2px;margin-right:4px;background:var(--card)}
+  .legend i.src{border-color:var(--teal);background:var(--teal-soft)}
+  .legend i.gate{border-color:var(--amber);background:var(--amber-soft)}
+  .legend i.out{border-color:var(--green);background:var(--green-soft)}
+  .legend i.gpu{border-color:var(--purple);background:var(--purple-soft)}
+  svg text{font-family:inherit}
+  .svgbox{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;overflow:auto}
+  footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px;margin-top:40px}
+  @media print{
+    body{background:#fff}
+    .wrap{max-width:none;padding:0}
+    header.hero{border-radius:0}
+    section{break-inside:avoid-page}
+    .card,.svgbox,table{break-inside:avoid}
+    nav.toc{display:none}
+  }
+  @media (max-width:900px){.grid.c2,.grid.c3{grid-template-columns:1fr}.kpi{grid-template-columns:repeat(2,1fr)}nav.toc ol{columns:1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>Femto Bolt 真实场景三维重建</h1>
+  <p>产品流程 · 技术实现 · 质量门禁 · 商用合规 —— 技术汇报文档</p>
+  <p>基于 Orbbec Femto Bolt 同步采集 RGB、Depth、内参、时间戳与相机位姿，对人体、床体、设备与环境做整体三维重建，输出点云、TSDF Mesh 和训练后的 3D Gaussian Splatting。</p>
+  <div class="meta">
+    <span>文档日期 2026-09-05</span>
+    <span>技术基线：技术路线.md</span>
+    <span>平台：Windows 11 · Python 3.12 / 3.10</span>
+    <span>合成 GPU 链路验收：RTX 5060 Laptop 8GB</span>
+    <span>单元测试：103 项通过</span>
+    <span>合规门禁：开发基线通过 · release_ready=false</span>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s1">产品定位与交付物</a></li>
+    <li><a href="#s2">产品操作流程（用户视角）</a></li>
+    <li><a href="#s3">总体数据流与系统架构</a></li>
+    <li><a href="#s4">技术栈与运行环境</a></li>
+    <li><a href="#s5">各技术环节实现与考量</a></li>
+    <li><a href="#s6">质量门禁总表</a></li>
+    <li><a href="#s7">当前验证结果</a></li>
+    <li><a href="#s8">商用合规与许可证边界</a></li>
+    <li><a href="#s9">风险、边界与下一步</a></li>
+    <li><a href="#s10">附录：产物目录与常用入口</a></li>
+  </ol>
+</nav>
+
+<!-- 1 -->
+<section id="s1">
+  <h2 class="sec"><span class="num">1</span>产品定位与交付物</h2>
+  <p class="lead">用一台 Femto Bolt RGB-D 相机，把相机实际拍到的<strong>完整场景</strong>重建为可交付的三维资产。人体 Pose / Mask / 物体语义只是可删除重算的派生标注层，永远不裁剪或覆盖原始画面。</p>
+  <div class="grid c3">
+    <div class="card"><h4>RGB-D 原始数据 <span class="tag ok">已实现</span></h4><ul><li>完整 RGB、<code>uint16</code> 毫米深度、内参、双时间戳、逐帧位姿</li><li>不可变证据层，任何派生结果不得回写</li></ul></div>
+    <div class="card"><h4>点云 / TSDF Mesh <span class="tag ok">已实现</span></h4><ul><li>固定机位与多视角融合点云 PLY</li><li>TSDF 网格，导出 GLB / OBJ / PLY，米制单位</li></ul></div>
+    <div class="card"><h4>3D Gaussian Splatting <span class="tag ok">合成 GPU 链路已验收</span></h4><ul><li>直接调用 Apache-2.0 <code>gsplat</code> 的自研训练器</li><li>训练后 SH3 PLY，可选 Niantic SPZ；真实 Femto 多视角仍待人工采集</li></ul></div>
+    <div class="card"><h4>质量报告 <span class="tag ok">已实现</span></h4><ul><li>数据集门禁、位姿质量、3DGS 验收 JSON + HTML</li><li>每一步失败都阻断并写报告，不输出伪结果</li></ul></div>
+    <div class="card"><h4>人体语义层 <span class="tag dev">可选原型</span></h4><ul><li>MediaPipe 33 点 Pose、人体 Mask、区域标注</li><li>仅研发可视化，不声称临床靶点</li></ul></div>
+    <div class="card"><h4>桌面 / Web 查看器 <span class="tag warn">桌面已实现，Web 未做</span></h4><ul><li>Open3D 中英双语专业查看器：Mesh / 点云 / Gaussian / 相机轨迹叠加</li><li>React + Three.js Web 端待建</li></ul></div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="s2">
+  <h2 class="sec"><span class="num">2</span>产品操作流程（用户视角）</h2>
+  <p>统一入口是 <code>start_femto_app.cmd</code> 的中英双语一体化页面。左侧实时预览 RGB 与 Depth，右侧完成拍照、模式选择、扫描、自动建模、3DGS 训练与结果查看。</p>
+
+  <div class="flow">
+    <div class="node src"><b>① 启动与预览</b><small>自动连接 Femto Bolt，实时显示 RGB / Depth 与有效深度比例</small></div>
+    <div class="arrow">→</div>
+    <div class="node"><b>② 选择量程</b><small>WFOV 512² 0.25–2.88 m / NFOV 320×288 0.50–5.46 m / NFOV 640×576 0.50–3.86 m</small></div>
+    <div class="arrow">→</div>
+    <div class="node"><b>③ 选择采集模式</b><small>关键帧快照 / 固定机位融合 / 完整背景多视角</small></div>
+    <div class="arrow">→</div>
+    <div class="node"><b>④ 采集</b><small>点击开始才写盘；默认 10 秒、6 FPS、最多 60 帧</small></div>
+    <div class="arrow">→</div>
+    <div class="node gate"><b>⑤ 门禁</b><small>文件、同步、标定、位姿、深度覆盖；失败即阻断并写报告</small></div>
+    <div class="arrow">→</div>
+    <div class="node"><b>⑥ 自动重建</b><small>点云 → TSDF Mesh → Nerfstudio 格式 → Gaussian 初值</small></div>
+    <div class="arrow">→</div>
+    <div class="node gpu"><b>⑦ 3DGS 训练</b><small>≥12 合格视角才允许；三档质量；留出集验收</small></div>
+    <div class="arrow">→</div>
+    <div class="node out"><b>⑧ 查看与报告</b><small>桌面查看器、HTML 验收报告、结果目录</small></div>
+  </div>
+  <div class="legend"><span><i class="src"></i>数据源</span><span><i></i>处理</span><span><i class="gate"></i>质量门禁</span><span><i class="gpu"></i>GPU 训练</span><span><i class="out"></i>交付物</span></div>
+
+  <h3>三种采集模式决定整条链</h3>
+  <table>
+    <tr><th style="width:18%">模式</th><th style="width:22%">适用场景</th><th>处理方式</th><th style="width:22%">位姿与下游</th></tr>
+    <tr><td><strong>关键帧快照</strong>（默认）</td><td>人物可动，相机固定</td><td>对深度覆盖率、RGB 清晰度、RGB/Depth 同步差和深度稳定性评分，自动选一张 RGB 与 Depth 同源的最佳帧</td><td><code>T_WC = I</code>；单视角几何；不进 3DGS</td></tr>
+    <tr><td><strong>固定机位融合</strong></td><td>相机与场景都静止</td><td>逐像素深度时间中值 + 最小支持帧数，抑制深度噪声</td><td><code>T_WC = I</code>，写 <code>derived/fixed_median_*</code>；不进 3DGS</td></tr>
+    <tr><td><strong>完整背景多视角</strong></td><td>场景静止，相机缓慢移动，相邻约 70% 重叠</td><td>约每秒异步抽样低分辨率 RGB 提示是否移动；结束后再以多帧对光流 + RANSAC 单应性门禁并跑顺序 RGB-D 里程计</td><td>提示不是 Pose；原始 <code>pose_valid=false</code>；估计位姿写 <code>derived/posed_rgbd_odometry_*</code>；唯一可进 3DGS 的模式</td></tr>
+  </table>
+  <div class="callout warn"><strong>产品原则：</strong>相机移动时禁止写单位外参。位姿不合格时阻断并写质量报告，不得输出伪 Pose，否则会同时破坏 TSDF 与 3DGS。</div>
+</section>
+
+<!-- 3 -->
+<section id="s3">
+  <h2 class="sec"><span class="num">3</span>总体数据流与系统架构</h2>
+  <p>所有重建输出必须从同一个<strong>不可变原始数据集</strong>派生。几何管线、写实管线、语义管线三条并行，共同前提是每帧有可信的 <code>T_WC</code>。</p>
+  <div class="svgbox">
+  <svg viewBox="0 0 1120 560" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="ar" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#5b6675"/></marker>
+      <style>
+        .b{fill:#fff;stroke:#d9dee5;stroke-width:1.5;rx:10}
+        .src{fill:#e3fafc;stroke:#0b7285}
+        .raw{fill:#fff8e1;stroke:#9a6700}
+        .drv{fill:#eef2f7;stroke:#5b6675}
+        .geo{fill:#e8f0fe;stroke:#1f6feb}
+        .gs{fill:#f1ebfb;stroke:#6f42c1}
+        .sem{fill:#e6f4ea;stroke:#1a7f37}
+        .out{fill:#e6f4ea;stroke:#1a7f37}
+        .t{font-size:13px;fill:#1b2430}
+        .h{font-size:14px;font-weight:700;fill:#1b2430}
+        .s{font-size:11.5px;fill:#5b6675}
+        .l{stroke:#5b6675;stroke-width:1.6;fill:none;marker-end:url(#ar)}
+        .lane{font-size:12px;fill:#5b6675;font-weight:600}
+      </style>
+    </defs>
+    <!-- source -->
+    <rect class="b src" x="20" y="40" width="180" height="88" rx="10"/>
+    <text class="h" x="110" y="66" text-anchor="middle">Femto Bolt</text>
+    <text class="s" x="110" y="86" text-anchor="middle">orbbec_rgbd.py</text>
+    <text class="s" x="110" y="102" text-anchor="middle">Depth→Color 对齐 · 内参</text>
+    <text class="s" x="110" y="117" text-anchor="middle">双时间戳 · 曝光/增益元数据</text>
+
+    <!-- raw dataset -->
+    <rect class="b raw" x="260" y="30" width="220" height="108" rx="10"/>
+    <text class="h" x="370" y="54" text-anchor="middle">原始数据集（不可变）</text>
+    <text class="s" x="370" y="74" text-anchor="middle">datasets/scene_*/</text>
+    <text class="s" x="370" y="90" text-anchor="middle">rgb · depth(uint16 mm) · pose</text>
+    <text class="s" x="370" y="105" text-anchor="middle">calibration · timestamp · manifest</text>
+    <text class="s" x="370" y="121" text-anchor="middle">femto-full-scene-rgbd-v1</text>
+    <path class="l" d="M200,84 L260,84"/>
+
+    <!-- validator gate -->
+    <rect class="b raw" x="540" y="30" width="180" height="108" rx="10"/>
+    <text class="h" x="630" y="54" text-anchor="middle">数据集门禁</text>
+    <text class="s" x="630" y="74" text-anchor="middle">scene_dataset_validator.py</text>
+    <text class="s" x="630" y="90" text-anchor="middle">文件·格式·同步·标定</text>
+    <text class="s" x="630" y="105" text-anchor="middle">Pose·深度覆盖 ≥35%</text>
+    <text class="s" x="630" y="121" text-anchor="middle">quality/validation_report.json</text>
+    <path class="l" d="M480,84 L540,84"/>
+
+    <!-- derived pose -->
+    <rect class="b drv" x="780" y="30" width="320" height="108" rx="10"/>
+    <text class="h" x="940" y="54" text-anchor="middle">派生层 derived/（可重算）</text>
+    <text class="s" x="940" y="74" text-anchor="middle">scene_keyframe.py · scene_static_fusion.py</text>
+    <text class="s" x="940" y="90" text-anchor="middle">scene_pose_estimator.py：顺序 Hybrid RGB-D 里程计</text>
+    <text class="s" x="940" y="105" text-anchor="middle">相邻位移≤0.25 m · 旋转≤25° · fitness≥0.15 · RMSE≤60 mm</text>
+    <text class="s" x="940" y="121" text-anchor="middle">posed_rgbd_odometry_* + pose_quality_report.json</text>
+    <path class="l" d="M720,84 L780,84"/>
+
+    <!-- lanes -->
+    <text class="lane" x="20" y="205">几何管线</text>
+    <text class="lane" x="20" y="335">写实管线</text>
+    <text class="lane" x="20" y="465">语义管线（可选）</text>
+    <line x1="20" y1="215" x2="1100" y2="215" stroke="#e5e9ef"/>
+    <line x1="20" y1="345" x2="1100" y2="345" stroke="#e5e9ef"/>
+    <line x1="20" y1="475" x2="1100" y2="475" stroke="#e5e9ef"/>
+
+    <!-- trunk from derived down -->
+    <path class="l" d="M940,138 L940,170 L120,170 L120,225"/>
+    <path class="l" d="M120,170 L120,355" style="marker-end:none"/>
+    <path class="l" d="M120,355 L120,485"/>
+
+    <!-- geometry lane -->
+    <rect class="b geo" x="120" y="225" width="200" height="88" rx="10"/>
+    <text class="h" x="220" y="250" text-anchor="middle">去畸变 + 世界变换</text>
+    <text class="s" x="220" y="270" text-anchor="middle">scene_reconstruction.py</text>
+    <text class="s" x="220" y="286" text-anchor="middle">K6 Brown-Conrady · p_W = T_WC·p_C</text>
+    <text class="s" x="220" y="302" text-anchor="middle">RDF：+X右 +Y下 +Z前，单位米</text>
+    <rect class="b geo" x="380" y="225" width="200" height="88" rx="10"/>
+    <text class="h" x="480" y="250" text-anchor="middle">全场景 TSDF</text>
+    <text class="s" x="480" y="270" text-anchor="middle">fusion.py · Open3D</text>
+    <text class="s" x="480" y="286" text-anchor="middle">积分用 inv(T_WC)</text>
+    <text class="s" x="480" y="302" text-anchor="middle">补孔只补内部小孔，保留外轮廓</text>
+    <rect class="b out" x="640" y="225" width="200" height="88" rx="10"/>
+    <text class="h" x="740" y="250" text-anchor="middle">点云 / Mesh</text>
+    <text class="s" x="740" y="270" text-anchor="middle">fused PLY · TSDF Mesh</text>
+    <text class="s" x="740" y="286" text-anchor="middle">GLB / OBJ / PLY</text>
+    <text class="s" x="740" y="302" text-anchor="middle">相机轨迹 · 合成真值误差</text>
+    <path class="l" d="M320,269 L380,269"/><path class="l" d="M580,269 L640,269"/>
+
+    <!-- realism lane -->
+    <rect class="b gs" x="120" y="355" width="200" height="88" rx="10"/>
+    <text class="h" x="220" y="380" text-anchor="middle">Nerfstudio 格式转换</text>
+    <text class="s" x="220" y="400" text-anchor="middle">scene_to_nerfstudio.py (v2)</text>
+    <text class="s" x="220" y="416" text-anchor="middle">RDF→RUB diag(1,-1,-1,1)</text>
+    <text class="s" x="220" y="432" text-anchor="middle">transforms.json + rgbd_init_points.ply</text>
+    <rect class="b gs" x="380" y="355" width="200" height="88" rx="10"/>
+    <text class="h" x="480" y="380" text-anchor="middle">3DGS 输入门禁</text>
+    <text class="s" x="480" y="400" text-anchor="middle">≥12 合格移动视角</text>
+    <text class="s" x="480" y="416" text-anchor="middle">位移≥0.05 m 或旋转≥5°</text>
+    <text class="s" x="480" y="432" text-anchor="middle">必须有 RGB-D Seed PLY</text>
+    <rect class="b gs" x="640" y="355" width="200" height="88" rx="10"/>
+    <text class="h" x="740" y="380" text-anchor="middle">直接 gsplat 训练器</text>
+    <text class="s" x="740" y="400" text-anchor="middle">scene_gsplat_trainer.py · .venv-gsplat</text>
+    <text class="s" x="740" y="416" text-anchor="middle">L1+SSIM+米制 Depth · DefaultStrategy</text>
+    <text class="s" x="740" y="432" text-anchor="middle">检查点 · PSNR/SSIM/LPIPS/Depth 验收</text>
+    <rect class="b out" x="900" y="355" width="200" height="88" rx="10"/>
+    <text class="h" x="1000" y="380" text-anchor="middle">Gaussian 产物</text>
+    <text class="s" x="1000" y="400" text-anchor="middle">trained_gaussians.ply (SH3)</text>
+    <text class="s" x="1000" y="416" text-anchor="middle">可选官方 SPZ</text>
+    <text class="s" x="1000" y="432" text-anchor="middle">model_manifest.json 血缘</text>
+    <path class="l" d="M320,399 L380,399"/><path class="l" d="M580,399 L640,399"/><path class="l" d="M840,399 L900,399"/>
+
+    <!-- semantic lane -->
+    <rect class="b sem" x="120" y="485" width="200" height="62" rx="10"/>
+    <text class="h" x="220" y="510" text-anchor="middle">MediaPipe Pose / Mask</text>
+    <text class="s" x="220" y="530" text-anchor="middle">top_scan.py · pose_geometry.py</text>
+    <rect class="b sem" x="380" y="485" width="200" height="62" rx="10"/>
+    <text class="h" x="480" y="510" text-anchor="middle">3D 关节 / 人体区域</text>
+    <text class="s" x="480" y="530" text-anchor="middle">33 点反投影，与表面共用内参</text>
+    <rect class="b out" x="640" y="485" width="200" height="62" rx="10"/>
+    <text class="h" x="740" y="510" text-anchor="middle">semantic/ 标注层</text>
+    <text class="s" x="740" y="530" text-anchor="middle">可删除重算，仅研发可视化</text>
+    <path class="l" d="M320,516 L380,516"/><path class="l" d="M580,516 L640,516"/>
+
+    <!-- viewer -->
+    <rect class="b out" x="900" y="225" width="200" height="88" rx="10"/>
+    <text class="h" x="1000" y="250" text-anchor="middle">查看器 / 报告</text>
+    <text class="s" x="1000" y="270" text-anchor="middle">scene_demo_viewer.py (Open3D GUI)</text>
+    <text class="s" x="1000" y="286" text-anchor="middle">demo_report.html · demo_summary.json</text>
+    <text class="s" x="1000" y="302" text-anchor="middle">Web (React+Three.js) 待建</text>
+    <path class="l" d="M840,269 L900,269"/>
+    <path class="l" d="M1000,355 L1000,313"/>
+  </svg>
+  </div>
+  <div class="callout"><strong>坐标与单位约定：</strong>磁盘一律 Orbbec/OpenCV RDF（+X 右、+Y 下、+Z 前）；深度 PNG 为 <code>uint16</code> 毫米，0 表示未知；3D 关节、点云、Mesh、Gaussian 一律米。<code>T_AB</code> 把 B 系坐标变到 A 系。只有导出 Nerfstudio/OpenGL 时右乘 <code>diag(1,-1,-1,1)</code> 做 RDF→RUB，训练前再转回 RDF，所以训练后的 Gaussian 与 Seed PLY 同处 RDF 世界系。</div>
+</section>
+
+<!-- 4 -->
+<section id="s4">
+  <h2 class="sec"><span class="num">4</span>技术栈与运行环境</h2>
+  <p>纯 Python，模块扁平放在根目录。三套虚拟环境保持隔离；合规脚本钉死正式使用的 <code>.venv</code> 与 <code>.venv-gsplat</code> 依赖，内部对照候选 <code>.venv-3dgs</code> 当前未就绪且不进入产品发布物。</p>
+  <table>
+    <tr><th style="width:15%">环境</th><th style="width:10%">Python</th><th>用途</th><th style="width:36%">核心组件（版本 · 许可证）</th></tr>
+    <tr><td><code>.venv</code></td><td>3.12</td><td>采集、几何重建、查看器、单元测试、合规门禁</td><td>pyorbbecsdk2 2.1.2 (Apache-2.0 + Orbbec EULA) · MediaPipe 1.0.1 (Apache-2.0) · Open3D 0.19.0 (MIT) · opencv-contrib-python 5.0.0.93 (Apache-2.0，含 LGPL 三方) · NumPy 2.2.6 (BSD-3) · Pillow 12.3.0 (MIT-CMU) · Trimesh 5.1.0 (MIT)</td></tr>
+    <tr><td><code>.venv-gsplat</code></td><td>3.10 x64</td><td><strong>正式产品 3DGS 训练器</strong>；通过 <code>C:\FemtoGsplatRuntime</code> 目录联接规避中文路径下 CUDA JIT 失败</td><td>gsplat 1.5.3 (Apache-2.0) · PyTorch 2.7.1+cu128 (BSD-3) · torchvision 0.22.1+cu128 (BSD-3) · torchmetrics 1.9.0 (Apache-2.0，含 BSD-2 LPIPS) · imageio / tqdm / lightning-utilities；CUDA 12.8 + VS2022 Build Tools，<code>sm_120</code></td></tr>
+    <tr><td><code>.venv-3dgs</code></td><td>3.12.10</td><td>仅内部 Splatfacto 效果对照候选；当前没有 <code>ns-train</code>/<code>ns-viewer</code>，不可运行 <span class="tag no">禁止随产品分发</span></td><td>Nerfstudio 1.1.5 是原计划候选（本环境当前未安装）；其 PyPI 强制依赖 GPL-3.0 PyMeshLab，因此不属于正式产品后端</td></tr>
+  </table>
+
+  <h3>模块职责一览</h3>
+  <div class="grid c2">
+    <div class="card"><h4>采集与数据底座</h4><ul>
+      <li><code>orbbec_rgbd.py</code>：SDK 封装，Depth→Color 对齐，三档 <code>DEPTH_MODE_SPECS</code>，帧元数据与分类读取诊断</li>
+      <li><code>scene_capture.py</code>：全场景连续采集，写 <code>femto-full-scene-rgbd-v1</code></li>
+      <li><code>scene_keyframe.py</code> / <code>scene_static_fusion.py</code>：关键帧 / 时间中值派生集</li>
+      <li><code>scene_dataset_validator.py</code>：数据集门禁</li>
+      <li><code>scene_data_kind.py</code>：保守区分 synthetic / real_femto / unknown，只有原始 Femto manifest 可证明真实来源</li></ul></div>
+    <div class="card"><h4>位姿与几何</h4><ul>
+      <li><code>scene_pose_estimator.py</code>：背景运动预检 + 顺序 Hybrid RGB-D 里程计 + 逐帧门禁</li>
+      <li><code>pose_geometry.py</code>：内参、反投影、稳健深度、33 点几何</li>
+      <li><code>scene_reconstruction.py</code> / <code>fusion.py</code>：去畸变、世界变换、TSDF、补孔、导出</li>
+      <li><code>synthetic_scene_demo.py</code>：带真值 <code>T_WC</code> 与真值 Mesh 的合成数据</li></ul></div>
+    <div class="card"><h4>写实（3DGS）</h4><ul>
+      <li><code>scene_to_nerfstudio.py</code>：K6 去畸变、RDF→RUB、Seed PLY、输入质量报告</li>
+      <li><code>scene_gsplat_data.py</code>：数据集加载、RUB→RDF、train/eval 切分、SHA-256 指纹</li>
+      <li><code>scene_gsplat_trainer.py</code>：三档 profile、损失、致密化、原子检查点、验收</li>
+      <li><code>scene_gsplat_metrics.py</code> / <code>scene_gsplat_export.py</code>：指标、LPIPS 权重装载、PLY/SPZ、血缘</li></ul></div>
+    <div class="card"><h4>编排、界面与合规</h4><ul>
+      <li><code>femto_control_app.py</code>：Tkinter 主界面，相机独占线程 + 命令队列 + 后台重建线程；15 秒 aligned-frame 截止时间与异步运动反馈</li>
+      <li><code>complete_demo.py</code>：校验 → 重建 → 转换 → HTML 报告 → 查看器</li>
+      <li><code>scene_demo_viewer.py</code> / <code>ui_i18n.py</code>：Open3D 双语查看器与 UI 文案</li>
+      <li><code>commercial_compliance_check.py</code>：版本、许可证、模型哈希、受限导入、运行时纯净度</li></ul></div>
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="s5">
+  <h2 class="sec"><span class="num">5</span>各技术环节实现与考量</h2>
+  <p>每个环节按"做了什么 / 为什么这样做 / 必须考虑的事"整理，便于汇报时回答追问。</p>
+
+  <div class="grid c2">
+    <div class="card"><h4>5.1 RGB-D 同步采集与对齐</h4>
+      <p><strong>实现：</strong>Orbbec <code>AlignFilter</code> 做 Depth→Color 对齐，输出 1920×1080 对齐 RGB-D；保存彩色/深度内参、K6 畸变、双时间戳；固件可提供时保存曝光、增益、白平衡、激光状态、传感器时间戳。</p>
+      <ul><li>三档量程各有适用距离，页面实时显示"有效/过近/过远/无返回"比例，低于 35% 提醒调整</li>
+      <li>预览不落盘，点击才采集，避免无意义大文件</li>
+      <li>SDK 缺失字段保持缺失，不伪造元数据</li>
+      <li>RGB 像素没有有效深度就没有真实几何；大块黑区多为过近/无返回/遮挡，单视角不能补全</li></ul></div>
+
+    <div class="card"><h4>5.2 三种采集模式与位姿策略</h4>
+      <p><strong>实现：</strong>模式选择一路传播到 manifest、位姿、重建参数与报告口径。</p>
+      <ul><li>关键帧：RGB 与 Depth 必须同源，避免时间中值把移动人物删掉或把不同时刻纹理贴到同一几何</li>
+      <li>固定融合：只适合完全静止场景，写 <code>temporal_support.png</code> 供审计</li>
+      <li>移动：先用 RGB 特征光流 + RANSAC 单应性判断"相机其实没动"，是则阻断并建议改固定模式</li>
+      <li>eye-in-hand 正式方案优先机器人位姿 + 手眼标定 <code>T_BC = T_BF · T_FC</code>；手持需回环/全局优化</li></ul></div>
+
+    <div class="card"><h4>5.3 顺序 RGB-D 里程计与位姿门禁</h4>
+      <p><strong>实现：</strong>Open3D Hybrid RGB-D Odometry 估算相邻帧 <code>source→target</code>，按 <code>T_WC(i)=T_WC(i-1)·inv(T)</code> 累积。</p>
+      <ul><li>单帧门禁：位移 ≤0.25 m、旋转 ≤25°、fitness ≥0.15、inlier RMSE ≤60 mm</li>
+      <li>整条轨迹：≥3 帧通过且跨度 ≥20 mm 或 ≥2°，否则阻断</li>
+      <li>异常帧只进报告，不进派生 Pose；原始 <code>pose/</code> 永不改写</li>
+      <li>没有回环与重定位，会累积漂移，定位为静态场景研发 Demo</li></ul></div>
+
+    <div class="card"><h4>5.4 数据集门禁</h4>
+      <p><strong>实现：</strong>检查帧文件完整、格式、RGB/Depth 同步差、标定合法、位姿刚体性、深度覆盖与模糊分数，写 <code>quality/validation_report.json</code>。</p>
+      <ul><li>Pose 不完整允许归档通过，但输出 <code>ready_for_multiview_reconstruction=false</code></li>
+      <li>有效深度 &lt;35% 标 <code>warning_low_depth_coverage</code>，不能标 PASS</li>
+      <li>后续增加曝光跳变、相邻 Pose 速度/加速度门禁</li></ul></div>
+
+    <div class="card"><h4>5.5 去畸变、世界变换与 TSDF</h4>
+      <p><strong>实现：</strong>RGB 与 <code>uint16</code> 深度执行同一套 Brown-Conrady K6 去畸变；按彩色内参反投影，<code>p_W = T_WC·p_C</code>；Open3D TSDF 积分用 <code>inv(T_WC)</code>。</p>
+      <ul><li>补孔只补内部小孔，保留外轮廓，避免把未观测区域"编造"成表面</li>
+      <li>合成真值场景自动算融合点到真值表面的中位数 / P95 / 最大距离</li>
+      <li>输出目录已存在直接报错，从不覆盖</li>
+      <li>Gaussian 不是可用于碰撞或尺寸测量的工程表面，尺寸以 Mesh/点云为准</li></ul></div>
+
+    <div class="card"><h4>5.6 Nerfstudio 格式转换与 Seed PLY</h4>
+      <p><strong>实现：</strong><code>femto-to-nerfstudio-v2</code>：去畸变 RGB、无损毫米 Depth、<code>transforms.json</code>、按真实内参反投影并用 <code>T_WC</code> 变到世界坐标的 XYZRGB <code>rgbd_init_points.ply</code>（10 mm 体素，≤100 万点）。</p>
+      <ul><li>相机矩阵仅在写 transforms 时右乘 RDF→RUB，世界点不重复翻轴</li>
+      <li>训练从相机实测的尺度与表面起步，而非随机初始化</li>
+      <li><code>3dgs_input_report.json</code> 汇总深度覆盖、同步差、亮度与曝光稳定性；变化过大标 <code>photometric_unstable</code></li>
+      <li>无 Pose 或所有机位相同直接阻断；不做人体 Mask</li></ul></div>
+
+    <div class="card"><h4>5.7 直接 gsplat 产品训练器</h4>
+      <p><strong>实现：</strong>只调用 <code>gsplat.rasterization</code> 与 <code>DefaultStrategy</code> 公共 API；损失 = 0.8·L1 + 0.2·(1−SSIM) + 0.1·米制 Depth Smooth-L1(β=0.02) + 尺度/透明度轻量正则；<code>RGB+ED</code> 渲染模式同时得到期望深度。</p>
+      <ul><li>三档：low_vram 15k 步/降采样 2/10 万初值；balanced 30k/1/25 万；quality 45k/1/50 万</li>
+      <li>致密化：复制、分裂、低透明度裁剪、周期透明度重置，由 gsplat 策略执行，本项目只管调用顺序与参数</li>
+      <li>原子检查点：Gaussian、Adam、策略状态、Python/NumPy/Torch/CUDA 随机状态、输入 SHA-256 指纹；跨数据集 <code>--resume</code> 会被拒绝</li>
+      <li>不依赖 Nerfstudio / PyMeshLab / Graphdeco；<code>patch_gsplat_windows.py</code> 仅替换 MSVC 编译标志，不改内核</li></ul></div>
+
+    <div class="card"><h4>5.8 验收指标与 Depth 口径</h4>
+      <p><strong>实现：</strong>留出视角（<code>eval_stride=8</code>）计算 PSNR、SSIM、LPIPS、Depth RMSE/MAE/AbsRel，保存 RGB 与毫米 Depth 渲染证据。</p>
+      <ul><li><strong>Depth 口径收紧：</strong>模型没渲染出几何的"黑洞"像素按预测 0 m 计入误差，不排除；另设覆盖率 ≥0.90 门槛，漏渲染不能把误差做好看</li>
+      <li>门槛：PSNR ≥20、SSIM ≥0.65、LPIPS ≤0.40、Depth RMSE ≤0.12 m、覆盖率 ≥0.90，五项同时满足才 <code>accepted=true</code></li>
+      <li>LPIPS 主干 AlexNet 权重按官方 SHA-256 离线装载（<code>install_lpips_weights.cmd</code>），训练器不隐式联网下载；缺失即拒绝构造并写入报告</li>
+      <li><code>--skip-lpips</code> 只用于冒烟，验收必然不通过</li></ul></div>
+
+    <div class="card"><h4>5.9 导出格式与模型血缘</h4>
+      <p><strong>实现：</strong>训练后 PLY 含 <code>f_dc_0..2</code>、<code>f_rest_0..44</code>、opacity logits、log scales、scalar-first 四元数（62 属性，二进制小端）；SPZ 仅经 Niantic 官方 MIT binding 做 RDF→RUB 转换。当前官方 tag v3.0.0 已构建为 <code>spz==1.1.0</code>。</p>
+      <ul><li>SPZ 构建固定 zlib 1.3.1、zstd 1.5.6、nanobind 3.0.1 及其 robin-map 1.4.0；运行 DLL、静态组件版本、commit、SHA-256，以及 Adobe、zstd 旧解码器和 libdivsufsort-lite notice 均已登记</li>
+      <li>缺少 SPZ binding 时只保留有效 PLY，报告明确记录转换失败，不伪造 <code>.spz</code>；已安装时官方回读核对 Gaussian 数量</li>
+      <li><code>model_manifest.json</code> 记录输入指纹、轴转换、检查点、指标与输出</li>
+      <li>未训练初值 <code>gaussian_init_untrained.ply</code> 状态固定 <code>initialization_only_untrained</code>，在 manifest / 报告 / UI 中与训练后 3DGS 严格区分</li></ul></div>
+
+    <div class="card"><h4>5.10 桌面查看器与报告</h4>
+      <p><strong>实现：</strong>自定义 Open3D <code>Window + SceneWidget</code>，中英即时切换；Mesh、点云、Gaussian 初值、相机轨迹、视锥为独立对象可任意叠加；着色/线框/法线/顶点色、点大小实时改材质、八种视角。</p>
+      <ul><li>轨迹与视锥只读源数据集中通过刚体校验的真实 <code>T_WC</code>，单帧不生成虚假轨迹</li>
+      <li>Y 翻转只作用于显示副本，不改磁盘坐标</li>
+      <li>直接 gsplat 查看器对大模型按显存/像素预算运行；超时或明确 OOM 时仅临时降分辨率或采样，其他 CUDA 错误原样记录并失败；报告保留原始/实际 Gaussian 数、每帧耗时和峰值显存</li>
+      <li>Web 端（React + Three.js + 专用 splat renderer）尚未实现</li></ul></div>
+
+    <div class="card"><h4>5.11 人体语义分支（可选）</h4>
+      <p><strong>实现：</strong>MediaPipe Pose Landmarker Full（模型 SHA-256 钉死）33 点 + 人体 Mask；关节反投影与表面共用内参；短时 TSDF 原型。</p>
+      <ul><li>尺度只能来自 Femto 深度与验证位姿，不能来自模型 <code>world_landmarks</code></li>
+      <li>输出仅供研发可视化，不得声称临床靶点或驱动机械臂</li>
+      <li>真人数据需隐私影响评估与单独同意</li></ul></div>
+
+    <div class="card"><h4>5.12 Windows / 中文路径工程问题</h4>
+      <p><strong>实现：</strong>仓库路径含中文，多处原生库需要兜底。</p>
+      <ul><li>OpenCV 读写走 <code>np.fromfile + imdecode</code> / <code>imencode + tofile</code></li>
+      <li>Open3D 原生 IO 与 Filament 资源先落到 <code>%LOCALAPPDATA%</code> ASCII 路径</li>
+      <li>CUDA JIT 走 <code>C:\FemtoGsplatRuntime</code> 目录联接</li>
+      <li>GUI 无控制台，stdout/stderr 重定向到 <code>Log/</code>；JSON <code>ensure_ascii=False</code> 写、<code>utf-8-sig</code> 读</li></ul></div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section id="s6">
+  <h2 class="sec"><span class="num">6</span>质量门禁总表</h2>
+  <p class="lead">失败时的正确行为是<strong>阻断并写报告</strong>，不是降级输出伪结果。</p>
+  <table>
+    <tr><th style="width:20%">环节</th><th>门禁条件</th><th style="width:26%">失败行为</th></tr>
+    <tr><td>深度覆盖</td><td>有效深度像素 &lt;35%</td><td>报告标 <code>warning_low_depth_coverage</code>，不能标 PASS</td></tr>
+    <tr><td>移动模式预检</td><td>RGB 光流 + RANSAC 单应性判断相机实际未移动</td><td>阻断，提示改用固定模式</td></tr>
+    <tr><td>里程计单帧</td><td>位移 ≤0.25 m · 旋转 ≤25° · fitness ≥0.15 · inlier RMSE ≤60 mm</td><td>该帧进 <code>pose_quality_report.json</code>，不进派生 Pose</td></tr>
+    <tr><td>里程计轨迹</td><td>≥3 帧通过且跨度 ≥20 mm 或 ≥2°</td><td>阻断，不写任何伪 Pose</td></tr>
+    <tr><td>3DGS 输入</td><td>≥12 合格移动视角 · 非固定机位 · 位移 ≥0.05 m 或旋转 ≥5° · 有 Seed PLY</td><td>训练拒绝启动，返回 <code>reasons</code></td></tr>
+    <tr><td>检查点恢复</td><td>输入 SHA-256 指纹与 downscale / sh_degree / packed 一致</td><td>拒绝恢复</td></tr>
+    <tr><td>3DGS 验收</td><td>PSNR ≥20 · SSIM ≥0.65 · LPIPS ≤0.40 · Depth RMSE ≤0.12 m · 深度覆盖 ≥0.90（黑洞计满误差）</td><td><code>accepted=false</code>，产物保留但不标合格</td></tr>
+    <tr><td>商用合规</td><td>包版本钉死 · 许可证快照齐全 · 模型哈希 · 受限导入 · 产品运行时纯净 · LPIPS 权重哈希</td><td>退出码 2，<code>compliance/current_report.json</code></td></tr>
+    <tr><td>输出目录</td><td>重建 / 位姿估计输出目录已存在</td><td><code>FileExistsError</code>，从不覆盖</td></tr>
+  </table>
+</section>
+
+<!-- 7 -->
+<section id="s7">
+  <h2 class="sec"><span class="num">7</span>当前验证结果</h2>
+  <h3>7.1 直接 gsplat 训练器合成 GPU 链路验收（2026-09-04）</h3>
+  <p>输入：<code>outputs/complete_demo_20260904_233323</code> 的合成 14 视角完整场景（带真值 <code>T_WC</code>，RGB-D Seed PLY）；<code>low_vram</code> 档，降采样 4，5,000 初值，800 步。结果目录 <code>outputs/direct_gsplat_20260904_233427</code>，所有报告显式标记 <code>data_kind=synthetic</code>。</p>
+  <div class="kpi">
+    <div class="box"><div class="v">46.66</div><div class="l">PSNR（门槛 ≥20）</div></div>
+    <div class="box"><div class="v">0.9970</div><div class="l">SSIM（门槛 ≥0.65）</div></div>
+    <div class="box"><div class="v">0.000545</div><div class="l">LPIPS（门槛 ≤0.40）</div></div>
+    <div class="box"><div class="v">57.4 mm</div><div class="l">Depth RMSE（门槛 ≤120 mm）</div></div>
+    <div class="box"><div class="v">100%</div><div class="l">深度覆盖率（门槛 ≥90%）</div></div>
+    <div class="box"><div class="v">12,636</div><div class="l">Gaussian 数（5,000 初值，训练后）</div></div>
+    <div class="box"><div class="v">36.0 MiB</div><div class="l">峰值显存</div></div>
+    <div class="box"><div class="v">18.9 s</div><div class="l">训练器记录耗时</div></div>
+  </div>
+  <div class="callout ok" style="margin-top:14px"><strong>结论：</strong>五项门禁全部通过，<code>accepted=true</code>。这是合成数据上的<strong>链路验收</strong>，证明代码链路、坐标约定与验收口径正确；不代表真实 Femto 场景的渲染质量。</div>
+
+  <h3>7.2 其他已验证项</h3>
+  <ul>
+    <li>Femto Bolt 固件 1.1.3 实机完成对齐、拍照、三档量程切换（320×288 与 640×576 均可对齐输出 1080p RGB-D）。</li>
+    <li>合成真值 RGB-D 端到端回归（<code>complete_demo.py --mode synthetic</code>）：校验 → TSDF → Nerfstudio → Gaussian 初值 → 查看器，自动报告几何误差。</li>
+    <li>实拍顺序里程计 Demo：异常帧剔除并写报告；不足时阻断。</li>
+    <li>103 项单元测试通过；商用合规门禁 <code>development_baseline_passed=true</code>、<code>release_ready=false</code>；500k/1M Gaussian 离屏规模回放已完成。</li>
+    <li>真实 <code>scene_20260903_145140</code> 按最终全相邻帧对预检重跑：59 个相邻对加首末对共 60/60 对均固定，中位 0.0992 px、最大 1.8341 px，仍为 <code>BLOCKED</code>，未生成伪 Pose。</li>
+    <li>SPZ 固定缓存重建及官方回读通过：既有 PLY/SPZ 均为 12,781 个 Gaussian；zlib 1.3.1 运行 DLL及 nanobind/robin-map/zstd 内嵌组成、Adobe notice 已补齐合规登记。</li>
+  </ul>
+</section>
+
+<!-- 8 -->
+<section id="s8">
+  <h2 class="sec"><span class="num">8</span>商用合规与许可证边界</h2>
+  <div class="grid c2">
+    <div class="card"><h4>代码边界</h4><ul>
+      <li>Graphdeco <code>gaussian-splatting</code> 只读论文与黑盒对照，<span class="tag no">不进产品树</span>；合规脚本 AST 扫描阻断 <code>diff_gaussian_rasterization</code> / <code>simple_knn</code> / <code>pymeshlab</code> 导入</li>
+      <li>正式 3DGS 只走 Apache-2.0 <code>gsplat</code> 公共 API；损失、深度约束、验收、导出均为自研</li>
+      <li>Nerfstudio 环境因 GPL-3.0 PyMeshLab 传递依赖，仅内部对照，不随闭源产品分发</li>
+      <li>产品运行时 <code>.venv-gsplat</code> 由门禁检查：版本钉死，禁止安装受限发行包</li></ul></div>
+    <div class="card"><h4>许可证材料</h4><ul>
+      <li><code>licenses/</code> 保存全部依赖许可证快照（含 torch LICENSE+NOTICE、LPIPS BSD-2、nanobind BSD-3、robin-map MIT）</li>
+      <li><code>THIRD_PARTY_NOTICES.md</code> 登记版本、许可证、修改与交付方式</li>
+      <li><code>SOURCE_PROVENANCE.md</code> 记录有来源标记的适配（Orbbec 解码、MediaPipe 点位、gsplat MSVC 补丁）</li>
+      <li>MediaPipe 模型 SHA-256 钉死，随模型附许可证与模型卡</li></ul></div>
+  </div>
+  <div class="callout warn"><strong>发布前仍需完成：</strong>权利人登记；Orbbec Extension EULA 流转与 LGPL 义务；安装包内置 LICENSE/NOTICE；MediaPipe 遥测核查；真人数据隐私影响评估与同意；医疗用途分类评估；LPIPS 所用 ImageNet 衍生 AlexNet 权重若在客户环境运行需法务确认。当前结论：<strong>可用于商用产品研发与原型验证，尚不能直接打包销售</strong>。</div>
+</section>
+
+<!-- 9 -->
+<section id="s9">
+  <h2 class="sec"><span class="num">9</span>风险、边界与下一步</h2>
+  <div class="grid c2">
+    <div class="card"><h4>技术边界（必须如实告知）</h4><ul>
+      <li>顺序里程计无回环/重定位，长轨迹会漂移；生产级位姿应来自机器人正运动学 + 手眼，或验证过的 SLAM/COLMAP</li>
+      <li>单视角无法补全遮挡与无返回区域；深度黑区不是算法能"猜"出来的</li>
+      <li>3DGS 验收目前只在合成数据完成，真实 Femto 场景的噪声、标定误差与位姿误差尚未验收</li>
+      <li>Gaussian 不是工程表面，不能用于碰撞或尺寸测量</li>
+      <li>人体关键点未经临床验证，只做研发可视化</li></ul></div>
+    <div class="card"><h4>下一步实施顺序</h4><ol style="padding-left:18px;margin:6px 0 0">
+      <li>用真实静态多视角 Femto 数据跑完整 <code>low_vram</code> / <code>balanced</code> 档，验收指标与显存</li>
+      <li>真实移动采集后验收真实 3DGS 指标与尺度；SPZ PLY→SPZ 转换已完成，继续保持 PLY 为训练主格式</li>
+      <li>接入机器人位姿 + 手眼；补回环 / Pose Graph 与全局优化</li>
+      <li>数据集门禁增加曝光跳变、相邻 Pose 速度/加速度</li>
+      <li>React + Three.js Web 查看器：GLB / PLY / 视锥 / 标注先上线，再接专用 3DGS renderer</li>
+      <li>建立静态几何靶、室内场景、动态人体三套验收集</li></ol></div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section id="s10">
+  <h2 class="sec"><span class="num">10</span>附录：产物目录与常用入口</h2>
+  <div class="grid c2">
+    <div class="card"><h4>产物目录</h4>
+<pre>datasets/scene_*/            原始采集（不可变）
+  ├─ rgb/ depth/ pose/ calibration/
+  ├─ quality/validation_report.json
+  └─ derived/                派生位姿 / 关键帧 / 中值融合
+outputs/complete_demo_*/
+  ├─ reconstruction/         点云 · TSDF Mesh · Gaussian 初值
+  ├─ nerfstudio/             transforms.json · rgbd_init_points.ply
+  ├─ demo_summary.json · demo_report.html
+outputs/direct_gsplat_*/     产品 3DGS 训练
+  ├─ checkpoints/latest.pt
+  ├─ renders/                留出视角 RGB / 深度证据
+  ├─ evaluation.json · training_report.json
+  └─ model/trained_gaussians.ply (+.spz) · model_manifest.json
+outputs/patient_top_*/       人体分支原型
+compliance/current_report.json · Log/</pre></div>
+    <div class="card"><h4>常用入口</h4>
+<pre>.\start_femto_app.cmd                 一体化操作页面
+.\start_complete_demo.cmd             合成真值一键端到端
+.\start_real_scene_demo.cmd           实拍 + 顺序里程计 Demo
+.\validate_latest_scene.cmd           数据集门禁
+.\convert_latest_scene_to_nerfstudio.cmd
+.\setup_direct_gsplat_environment.cmd 产品 3DGS 环境
+.\install_lpips_weights.cmd           LPIPS 权重离线装载
+.\start_direct_gsplat_status.cmd      运行时 / 输入状态
+.\start_direct_gsplat_train.cmd --profile low_vram
+.\check_commercial_readiness.cmd      商用合规门禁
+.\.venv\Scripts\python.exe -m unittest discover -s tests</pre></div>
+  </div>
+</section>
+
+<footer>
+  本文档由仓库现状整理生成（2026-09-05）。技术基线以 <code>技术路线.md</code> 为准；合规结论属工程筛选，不替代法务、医疗器械与数据保护专业意见。
+</footer>
+</div>
+</body>
+</html>

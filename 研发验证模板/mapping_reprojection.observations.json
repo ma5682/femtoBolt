@@ -1,0 +1,30 @@
+{
+  "xyz_m": [
+    [
+      null,
+      null,
+      null
+    ]
+  ],
+  "pixel": [
+    null,
+    null
+  ],
+  "intrinsic": [
+    [
+      null,
+      0,
+      null
+    ],
+    [
+      0,
+      null,
+      null
+    ],
+    [
+      0,
+      0,
+      1
+    ]
+  ]
+}
