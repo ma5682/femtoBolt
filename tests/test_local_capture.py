@@ -175,7 +175,7 @@ class LocalIntegrationTests(unittest.TestCase):
 
     def test_measured_geometry_and_annotation_lineage(self):
         from femto.pipeline.synthetic_scene_demo import generate_dataset
-        from femto.geometry.scene_reconstruction import reconstruct_scene
+        from femto.pipeline.scene_reconstruction import reconstruct_scene
         from femto.geometry.fusion import read_geometry_safe
         from femto.annotation.scene_annotations import AnnotationStore
         with TemporaryDirectory() as td:

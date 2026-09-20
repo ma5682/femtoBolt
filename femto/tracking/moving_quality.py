@@ -51,3 +51,15 @@ def select_keyframes(poses):
                 rotation_deg(relative) >= POLICY['keyframe_rotation_deg']):
             selected.append(index)
     return selected
+
+
+def pose_diversity(poses: list[np.ndarray]) -> tuple[float, float]:
+    centers = np.stack([pose[:3, 3] for pose in poses])
+    translation_span = float(np.linalg.norm(centers[:, None] - centers[None, :], axis=-1).max())
+    reference = poses[0][:3, :3]
+    angles = []
+    for pose in poses:
+        relative = reference.T @ pose[:3, :3]
+        cosine = np.clip((np.trace(relative) - 1.0) / 2.0, -1.0, 1.0)
+        angles.append(np.degrees(np.arccos(cosine)))
+    return translation_span, float(max(angles, default=0.0))

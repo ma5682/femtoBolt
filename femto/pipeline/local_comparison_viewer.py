@@ -125,9 +125,9 @@ def evaluate_and_render(baseline, dataset, reconstruction, *, width=640):
     import open3d as o3d
     from femto.geometry.fusion import read_geometry_safe
     from femto.io_utils import imread_unicode as _read_image, imwrite_unicode, load_json_object as read_json, write_json_strict as write_json
-    from femto.geometry.scene_reconstruction import _distortion_maps, _prepare_rgbd
+    from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps, prepare_rgbd as _prepare_rgbd
     from femto.local.local_temporal_support import filtered_depth
-    from femto.local.local_comparison import read_rows, sha256
+    from femto.pipeline.local_comparison import read_rows, sha256
 
     dataset, reconstruction = Path(dataset), Path(reconstruction)
     frames = read_rows(dataset / 'frames.jsonl')
@@ -275,7 +275,7 @@ def write_comparison_html(output, report):
         for r in metric.get('valid_pixels', {}).get('frames', []):
             rows.append(f'<tr><td>{_dual("有效像素 原始 → 实用", "Valid pixels raw → used")} · #{r["frame"]}</td><td>{_value(r.get("raw_valid_pixel_ratio"),100,"%")} → {_value(r.get("actual_valid_pixel_ratio"),100,"%")}</td></tr>')
         geo = json.dumps(variant['optimization'].get('details', {}), ensure_ascii=False, indent=2)
-        from femto.pipeline.local_processing import REASONS
+        from femto.local.local_processing import REASONS
         detail = variant['optimization'].get('details', {})
         reasons = set([detail['reason']]) if detail.get('reason') else set()
         for row in detail.get('frames', []):

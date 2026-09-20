@@ -15,9 +15,9 @@
 双击项目根目录 `start_depth_debug.cmd`，选择上述目录即可打开四模式查看器；绿=真实、黄=修复、红=未知，1:1与放大可检查小孔，鼠标悬停读取原始/修复毫米值和confidence。或者在项目根目录运行：
 
 ```powershell
-.venv/Scripts/python.exe depth_debug_viewer.py datasets/scene_20260909_103220/derived/fixed_keyframe_20260909_103230/derived/depth_quality_replay_20260909_172112_593738
-.venv/Scripts/python.exe depth_quality_replay.py datasets/scene_20260909_103220/derived/fixed_keyframe_20260909_103230 --mode fast
-.venv/Scripts/python.exe depth_quality_replay.py datasets/scene_20260909_103220/derived/fixed_keyframe_20260909_103230 --mode quality
+.venv/Scripts/python.exe -m femto.viewer.depth_debug_viewer datasets/scene_20260909_103220/derived/fixed_keyframe_20260909_103230/derived/depth_quality_replay_20260909_172112_593738
+.venv/Scripts/python.exe -m femto.pipeline.depth_quality_replay datasets/scene_20260909_103220/derived/fixed_keyframe_20260909_103230 --mode fast
+.venv/Scripts/python.exe -m femto.pipeline.depth_quality_replay datasets/scene_20260909_103220/derived/fixed_keyframe_20260909_103230 --mode quality
 ```
 
 quality完整CC及RANSAC复核；fast仅检测8个原始邻居均有效的孤立孔，保留所有真实性门禁。10次预热后内存处理计时中位：fast161.7ms、quality202.4ms，不含磁盘/XYZ；均不适合直接同步接入15FPS循环。当前采集循环不运行本模块，实拍FPS尚未复测。
@@ -73,7 +73,7 @@ TSDF沿用现有10次真实/3次修复独立积分，保持相对1:0.3贡献；�
 离线回放命令（项目根目录）：
 
 ```powershell
-.venv/Scripts/python.exe depth_quality_replay.py datasets/scene_20260909_103220/derived/fixed_keyframe_20260909_103230
+.venv/Scripts/python.exe -m femto.pipeline.depth_quality_replay datasets/scene_20260909_103220/derived/fixed_keyframe_20260909_103230
 ```
 
 每次运行生成新的derived目录，不开启相机、不训练、不修改当前模型或照片指针。

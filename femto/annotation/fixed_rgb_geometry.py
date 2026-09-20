@@ -8,7 +8,7 @@ import numpy as np
 import open3d as o3d
 from femto.io_utils import imread_unicode as _read_image
 from femto.annotation.scene_annotations import AnnotationStore, region_boundary
-from femto.geometry.scene_reconstruction import _distortion_maps
+from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps
 from femto.reports.scene_scale_validation import read_geometry_safe, resolve_reconstruction
 
 

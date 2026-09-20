@@ -69,7 +69,7 @@ class WorkerTests(unittest.TestCase):
 
     def test_saved_rgbd_in_same_origin_latest_mailbox_and_raw_unchanged(self):
         from femto.app.femto_control_app import ActiveScan,save_scan_frame
-        from femto.capture.scene_capture import write_calibration
+        from femto.dataset.calibration_files import write_calibration
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)
             for name in ('rgb','depth','pose','derived'):(root/name).mkdir()
@@ -98,7 +98,7 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(report['status'],'closed')
 
     def test_corrupt_input_reports_preview_failure_without_modifying_raw(self):
-        from femto.capture.scene_capture import write_calibration
+        from femto.dataset.calibration_files import write_calibration
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);write_calibration(root,make_camera('wide_detail',20),make_camera('wide_detail',20).intrinsics)
             worker=LivePreviewWorker(root,'bad',250,2210)

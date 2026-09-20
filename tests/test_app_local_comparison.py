@@ -54,7 +54,7 @@ class ComparisonControlsTests(unittest.TestCase):
             stopped.set()
             return dict(state='cancelled', stages=[])
         with mock.patch('femto.app.app_local_comparison.comparison_source', return_value=Path('fixture')), \
-             mock.patch('femto.local.local_comparison.run_comparison', side_effect=compare):
+             mock.patch('femto.pipeline.local_comparison.run_comparison', side_effect=compare):
             window.start()
             self.assertTrue(started.wait(2))
             poll_timer = window.timer

@@ -16,7 +16,7 @@ import open3d as o3d
 
 from femto.tracking.moving_quality import POLICY, frame_quality, cycle_consistency, rotation_deg
 from femto.dataset.scene_dataset_validator import validate_pose
-from femto.geometry.scene_reconstruction import _distortion_maps, _prepare_rgbd
+from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps, prepare_rgbd as _prepare_rgbd
 
 
 FEATURE_SEED_POLICY = dict(

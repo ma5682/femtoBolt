@@ -1,6 +1,6 @@
-# tools/ — 研发实验与一次性诊断脚本
+# tools/ — 研发实验、安装辅助与一次性迁移脚本
 
-这里的脚本不是产品链路的一部分：没有 `.cmd` 入口，没有被任何根目录模块 import，也没有单元测试覆盖。它们保留下来是为了复现历史交付记录里的对照实验。
+这里的脚本不是产品链路的一部分：没有产品 `.cmd` 入口（安装脚本除外），没有被 `femto/` 包 import，也没有单元测试覆盖。实验脚本保留下来是为了复现历史交付记录里的对照实验。
 
 | 脚本 | 用途 | 记录 |
 |---|---|---|
@@ -9,8 +9,12 @@
 | `scene_gsplat_experiments.py` | 顺序验证集调参 + 一次 test 评估的 gsplat 超参对照（需要 `.venv-gsplat`） | `技术路线.md` 3DGS 章节 |
 | `validate_temporal_keyframe.py` | 时域关键帧独立批次 Chamfer / 深度差 / 耗时对比 | `doc/技术资料/Temporal关键帧第一阶段说明.md` |
 | `verify_temporal_fusion.py` | 五类合成材质模式的时域融合对比图与 1080p 性能统计 | `doc/使用说明/Temporal融合使用说明.md` |
+| `download_model.py` | 下载并校验 MediaPipe Pose Landmarker 模型到 `models/`（`setup_environment.cmd` 调用） | — |
+| `download_verified_file.py` | 分块校验下载大文件（`setup_direct_gsplat_environment.cmd` 调用） | — |
+| `patch_gsplat_windows.py` | 对已安装 gsplat 1.5.3 做 MSVC 编译标志补丁（`setup_direct_gsplat_environment.cmd` 调用） | `SOURCE_PROVENANCE.md` |
+| `_migrate_packages.py` / `_restructure_layers.py` | 2026-09-20 平铺仓库 → `femto/` 包结构的两阶段迁移脚本，已执行完毕，仅作记录 | `doc/历史开发记录/包结构迁移交付记录_20260920.md` |
 
-运行方式：从仓库根目录执行，脚本开头会把仓库根目录加入 `sys.path`。
+运行方式：从仓库根目录执行，脚本开头会把仓库根目录加入 `sys.path` 以便 import `femto` 包。
 
 ```powershell
 .venv\Scripts\python.exe tools\verify_temporal_fusion.py

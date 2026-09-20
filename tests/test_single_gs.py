@@ -5,7 +5,8 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 from femto.io_utils import load_json as read_json, write_json
-from femto.gsplat.scene_single_gs import prepare, seed_arrays, resolve_source
+from femto.gsplat.scene_single_gs import prepare, seed_arrays
+from femto.dataset.single_frame_source import resolve_source
 from femto.gsplat.scene_single_gs_viewer import FixedViewport, load_viewport, SingleViewer, native_render_size
 
 

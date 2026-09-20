@@ -16,27 +16,15 @@ from collections import Counter
 import numpy as np
 from femto.io_utils import append_jsonl, write_json as json_dump
 from femto.tracking.moving_quality import POLICY, rotation_deg
-from femto.capture.scene_capture import write_calibration
+from femto.dataset.calibration_files import write_calibration
 from femto.tracking.scene_live_tracker import LiveTracker, PairEstimator, PreparedRGBD
 from femto.dataset.local_reference import calibration_identity, reference_provenance
 from femto.tracking.local_stability_feedback import CandidateStability
 from femto.tracking.local_frame_selection import ViewSelector, SELECTION_POLICY
+from femto.tracking.local_frame_selection import LOCAL_RADIUS_M, LOCAL_ROTATION_DEG, local_workspace
 
-LOCAL_RADIUS_M = .03  # Acquisition envelope, not measurement accuracy.
 TRACKER_OPTIONS = dict(feature_seed=False, keyframe_anchor=False, relocalization=False,
                        relocalization_window_s=15., relocalization_confirmations=2)
-
-LOCAL_ROTATION_DEG = 10.0  # Total rotation relative to W0, not per Euler axis.
-
-
-def local_workspace(transform):
-    transform=np.asarray(transform,dtype=float)
-    radius=float(np.linalg.norm(transform[:3,3]));angle=rotation_deg(transform)
-    return dict(radius_m=radius,limit_m=LOCAL_RADIUS_M,rotation_deg=angle,
-                rotation_limit_deg=LOCAL_ROTATION_DEG,
-                within_limit=bool(np.isfinite([radius,angle]).all() and
-                    radius<=LOCAL_RADIUS_M+1e-12 and angle<=LOCAL_ROTATION_DEG+1e-9))
-
 
 class LocalCapture:
     def __init__(self, camera, datasets, outputs, events, *, session_id=None, shutdown_event=None, cancel_event=None, tracker_options=None):
@@ -44,7 +32,7 @@ class LocalCapture:
         if tracker_options:
             if set(tracker_options)-set(TRACKER_OPTIONS):raise ValueError('Unknown tracker option')
             self.tracker_options.update(tracker_options)
-        from femto.app.femto_control_app import ActiveScan
+        from femto.capture.scan_session import ActiveScan
         self.session_id = uuid.UUID(hex=session_id).hex if session_id is not None else uuid.uuid4().hex
         self.session = Path(datasets) / (time.strftime('scene_%Y%m%d_%H%M%S_local_')+self.session_id[:8])
         for child in ('rgb', 'depth', 'pose', 'derived'):
@@ -91,7 +79,7 @@ class LocalCapture:
         return self.processing_cancel.is_set() or (shutdown is not None and shutdown.is_set())
 
     def submit(self, frame):
-        from femto.app.femto_control_app import copy_frame
+        from femto.capture.scan_session import copy_frame
         if self.closing.is_set():
             return
         if self.queue.full():
@@ -233,7 +221,7 @@ class LocalCapture:
             return bool(moved)
 
     def _run(self):
-        from femto.app.femto_control_app import save_scan_frame, finalize_scan
+        from femto.capture.scan_session import save_scan_frame, finalize_scan
         tracker = None
         raw_writer = None
         finalized = False
@@ -366,7 +354,7 @@ class LocalCapture:
             # late cancellation cannot turn a completed publication into failure.
             with self.lock:
                 if self._cancelled():
-                    from femto.local.local_comparison import StageStopped
+                    from femto.pipeline.local_comparison import StageStopped
                     raise StageStopped('cancelled', 'Cancelled before publication', self.processing_job.stats)
                 publish_result(result, self.outputs, self.session_id, cancelled=self._cancelled)
                 self.successful_model_published = True
@@ -531,7 +519,7 @@ class LocalCapture:
                 tracking_report=str(self.session/'derived'/'local_capture_report.json')))
         json_dump(output/'manifest.json', manifest)
         # Keep the standard quality-report reader compatible with the online path.
-        from femto.pipeline.scene_to_nerfstudio import pose_diversity
+        from femto.tracking.moving_quality import pose_diversity
         span_m, span_deg = pose_diversity([np.asarray(r['T_WC']) for r in self.accepted])
         json_dump(output/'pose_quality_report.json', dict(status='estimated_research_grade',
             source_dataset=str(self.session), source_frame_count=len(self.records), frame_count=len(derived),

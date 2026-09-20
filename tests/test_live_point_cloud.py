@@ -11,7 +11,7 @@ import open3d as o3d
 
 from femto.viewer.live_point_cloud import CalibratedCloudBuilder, LivePointCloudPreview, focus_bounds
 from femto.geometry.pose_geometry import Intrinsics
-from femto.capture.scene_segmented_capture import depth_cloud
+from femto.geometry.depth_cloud import depth_cloud
 from femto.app.femto_control_app import FemtoControlApp
 
 

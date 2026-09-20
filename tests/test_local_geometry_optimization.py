@@ -1,6 +1,6 @@
 import unittest
 import open3d as o3d
-from femto.geometry.local_geometry import filter_small_components
+from femto.local.local_geometry import filter_small_components
 
 
 class LocalGeometryOptimizationTests(unittest.TestCase):

@@ -184,7 +184,7 @@ class ComparisonWindow:
         self._buttons()
         def worker():
             try:
-                from femto.local.local_comparison import run_comparison
+                from femto.pipeline.local_comparison import run_comparison
                 source = comparison_source(source_input)
                 result.parent.mkdir(parents=True, exist_ok=True)
                 report = run_comparison(source, result, cancelled=cancellation.is_set,

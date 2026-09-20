@@ -7,7 +7,8 @@ import unittest
 import numpy as np
 
 from femto.geometry.single_frame_quality import clean_depth
-from femto.geometry.scene_reconstruction import reconstruct_scene, _prepare_rgbd
+from femto.pipeline.scene_reconstruction import reconstruct_scene
+from femto.geometry.rgbd_frames import prepare_rgbd as _prepare_rgbd
 from femto.io_utils import imwrite_unicode
 from femto.geometry.fusion import read_geometry_safe
 from femto.pipeline.synthetic_scene_demo import generate_dataset

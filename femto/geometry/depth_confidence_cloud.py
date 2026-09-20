@@ -9,7 +9,7 @@ from femto.depth.depth_quality import invalid_depth_mask
 
 def build_confident_depth_cloud(original, filled, confidence, rgb_bgr, intrinsics, distortion,
                                 min_range_mm, max_range_mm, *, temporal_layer=None):
-    from femto.capture.scene_segmented_capture import depth_cloud
+    from femto.geometry.depth_cloud import depth_cloud
     if temporal_layer is not None:
         temporal_layer.validate()
         if not np.array_equal(filled,temporal_layer.fused_depth_mm) or not np.array_equal(confidence,temporal_layer.fused_confidence):

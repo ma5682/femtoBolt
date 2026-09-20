@@ -18,7 +18,7 @@ import numpy as np
 
 from femto.io_utils import imread_unicode as _read_image, write_json as json_dump
 from femto.dataset.scene_dataset_validator import validate_pose
-from femto.geometry.scene_reconstruction import _distortion_maps
+from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps
 
 
 class ObservedAccumulator:

@@ -92,7 +92,7 @@ class FixedProjectionTests(unittest.TestCase):
 
 class EnvelopeTests(unittest.TestCase):
     def test_total_rotation_and_radius_boundaries(self):
-        from femto.capture.local_capture import local_workspace
+        from femto.tracking.local_frame_selection import local_workspace
         def pose(degrees):
             t=np.eye(4);a=np.deg2rad(degrees)
             t[:3,:3]=[[np.cos(a),-np.sin(a),0],[np.sin(a),np.cos(a),0],[0,0,1]]

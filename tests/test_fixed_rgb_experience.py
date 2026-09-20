@@ -20,8 +20,8 @@ import open3d as o3d
 
 from femto.annotation.fixed_rgb_geometry import FixedProjection, FixedRGBModel, GeometryTaskCancelled
 from femto.annotation.scene_annotations import AnnotationStore, region_boundary
-from femto.annotation.local_history import scan_history, existing_actions
-from femto.pipeline.local_processing import empty_report
+from femto.pipeline.local_history import scan_history, existing_actions
+from femto.local.local_processing import empty_report
 
 
 def quad(z=.5, left=-.2, right=.2, top=-.2, bottom=.2):

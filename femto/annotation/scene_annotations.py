@@ -9,6 +9,7 @@ import numpy as np
 import open3d as o3d
 import trimesh
 from femto.geometry.fusion import write_point_cloud_safe
+import cv2
 
 STATUS = 'not_physically_validated'
 
@@ -278,7 +279,6 @@ class AnnotationStore:
     def normalized_region(self, region):
         if not isinstance(region, dict):
             raise ValueError('Invalid surface region')
-        from femto.planning.region_exclusions import validate_exclusions
         validate_exclusions(region.get('exclusion_polygons',[]))
         ids = region.get('triangle_indices')
         if (not isinstance(ids, list) or not ids
@@ -516,3 +516,14 @@ class AnnotationStore:
     def _measurements(points):
         return [dict(point_indices=[i, i + 1], distance_m=distance_m(points[i], points[i + 1]),
                      scale_validation=STATUS) for i in range(len(points) - 1)]
+
+
+def validate_exclusions(polygons):
+    if not isinstance(polygons,list) or len(polygons)>32:raise ValueError('最多支持32个禁止区域')
+    for polygon in polygons:
+        p=np.asarray(polygon,float)
+        if p.ndim!=2 or p.shape[1]!=2 or not 3<=len(p)<=512 or not np.isfinite(p).all():
+            raise ValueError('禁止区域轮廓无效')
+        if np.max(np.abs(p))>100000 or abs(cv2.contourArea(p.astype(np.float32)))<1:
+            raise ValueError('禁止区域面积过小或坐标无效')
+    return polygons

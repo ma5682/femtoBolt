@@ -13,10 +13,10 @@ from unittest import mock
 import numpy as np
 import open3d as o3d
 
-from femto.local.local_comparison import (StageStopped, changed_files, copy_unchanged_model, fingerprints,
+from femto.pipeline.local_comparison import (StageStopped, changed_files, copy_unchanged_model, fingerprints,
     read_json, read_rows, run_comparison, sha256, supervise, validate_comparison_input,
     validate_variant_input, write_json)
-from femto.local.local_comparison_viewer import sampled_depth_metrics, _mesh_scene, render_fixed_surface, write_comparison_html
+from femto.pipeline.local_comparison_viewer import sampled_depth_metrics, _mesh_scene, render_fixed_surface, write_comparison_html
 
 
 def make_fixture(root, width=128, height=96):

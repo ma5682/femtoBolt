@@ -31,12 +31,12 @@ DEFAULT_CANDIDATES = (BASELINE, (.003, .012), (.003, .02), (.002, .008), (.002, 
 # Must match the comparison producer's implementation snapshot. Missing files
 # cannot silently weaken reuse when an old report predates a required dependency.
 IMPLEMENTATION_FILES = (
-    'femto/local/local_comparison.py', 'femto/local/local_comparison_viewer.py',
-    'femto/geometry/scene_reconstruction.py', 'femto/local/local_pose_refinement.py',
-    'femto/local/local_temporal_support.py', 'femto/geometry/local_geometry.py',
-    'femto/dataset/local_reference.py', 'femto/dataset/scene_dataset_validator.py',
-    'femto/annotation/fixed_rgb_geometry.py', 'femto/tracking/local_stability.py',
-    'femto/io_utils.py',
+    'femto/pipeline/local_comparison.py', 'femto/pipeline/local_comparison_viewer.py',
+    'femto/pipeline/scene_reconstruction.py', 'femto/geometry/rgbd_frames.py',
+    'femto/local/local_pose_refinement.py', 'femto/local/local_temporal_support.py',
+    'femto/local/local_geometry.py', 'femto/dataset/local_reference.py',
+    'femto/dataset/scene_dataset_validator.py', 'femto/annotation/fixed_rgb_geometry.py',
+    'femto/tracking/local_stability.py', 'femto/io_utils.py',
 )
 IDENTITY_KEYS = ('dataset', 'raw_source', 'data_kind', 'session_id', 'reference_frame_id',
                  'reference_provenance', 'accepted_frame_ids', 'source_frame_count',
@@ -608,7 +608,7 @@ def run_study(dataset, output, *, candidates=DEFAULT_CANDIDATES, reuse_paths=(),
     Existing reports are not rerun. New outputs and the final summary live in this
     new task directory. The original 5 mm / 20 mm default remains untouched.
     """
-    from femto.local.local_comparison import run_comparison
+    from femto.pipeline.local_comparison import run_comparison
     dataset, output = Path(dataset).resolve(), Path(output).resolve()
     candidates = tuple(candidates)
     keys = [parameter_key(*pair) for pair in candidates]

@@ -4,7 +4,8 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 import numpy as np
-from femto.temporal.temporal_keyframe import fuse_quality_frames, build_temporal_keyframe, prepared_depth
+from femto.temporal.temporal_keyframe import fuse_quality_frames, build_temporal_keyframe
+from femto.depth.temporal_depth_layer import prepared_depth
 from tests import test_temporal_depth_fusion as fixtures
 
 
@@ -39,7 +40,7 @@ class KeyframeFusionTests(unittest.TestCase):
     def test_replay_and_downstream_preserve_weights(self):
         from femto.gsplat.scene_single_gs import prepare
         from femto.pipeline.scene_to_nerfstudio import convert
-        from femto.geometry.scene_reconstruction import reconstruct_scene
+        from femto.pipeline.scene_reconstruction import reconstruct_scene
         with TemporaryDirectory() as td:
             root=Path(td)
             source=fixtures.TemporalDepthTests().fixture(root/'source')

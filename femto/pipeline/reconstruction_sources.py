@@ -23,7 +23,7 @@ def mode_of(root):
         if data.get('data_kind') != 'real_femto' or not (root / 'reconstruction' / 'reconstruction_report.json').is_file():
             return None
         if data.get('fixed_camera') is True and data.get('frame_count') == 1:
-            from femto.gsplat.scene_single_gs import resolve_source
+            from femto.dataset.single_frame_source import resolve_source
             resolve_source(root)
             return 'keyframe'
         if data.get('fixed_camera') is False and int(data.get('frame_count', 0)) > 1:

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from femto.pipeline.local_processing import LocalProcessing, empty_report, format_quality, result_quality, temporal_summary
+from femto.local.local_processing import LocalProcessing, empty_report, format_quality, result_quality, temporal_summary
 
 
 def write(path, value):

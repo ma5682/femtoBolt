@@ -14,7 +14,7 @@ import sys
 import uuid
 
 from femto.io_utils import load_json_object as read_json, write_json_strict as write_json
-from femto.pipeline.local_processing import empty_report, result_quality, write_html
+from femto.local.local_processing import empty_report, result_quality, write_html
 
 TIME_BUDGET_S = 600.0
 MEMORY_BUDGET_MB = 4096
@@ -37,7 +37,7 @@ def publish_result(result, outputs, session_id, *, cancelled=lambda: False):
     result, outputs = Path(result).resolve(), Path(outputs).resolve()
     def check_cancel():
         if cancelled():
-            from femto.local.local_comparison import StageStopped
+            from femto.pipeline.local_comparison import StageStopped
             raise StageStopped('cancelled','Cancelled before publication commit',{})
     check_cancel()
     summary = read_json(result / 'demo_summary.json')
@@ -185,7 +185,7 @@ class LocalOfflineJob:
         return receipt
 
     def run(self):
-        from femto.local.local_comparison import StageStopped, supervise
+        from femto.pipeline.local_comparison import StageStopped, supervise
         request = dict(dataset=str(self.dataset), output=str(self.output), outputs=str(self.outputs),
                        session_id=self.session_id)
         write_json(self.output / 'request.json', request)
@@ -275,8 +275,8 @@ def _source_paths(dataset):
 
 
 def worker(request_file):
-    from femto.local.local_comparison import changed_files, fingerprints
-    from femto.pipeline.local_processing import LocalProcessing
+    from femto.pipeline.local_comparison import changed_files, fingerprints
+    from femto.local.local_processing import LocalProcessing
     request = read_json(request_file)
     output = Path(request['output'])
     job = None

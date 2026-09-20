@@ -13,7 +13,7 @@ import unittest
 from unittest import mock
 import zlib
 
-import femto.local.local_parameter_study as study
+import femto.pipeline.local_parameter_study as study
 
 
 def write_json(path, value):
@@ -449,7 +449,7 @@ class ParameterStudyTests(unittest.TestCase):
             calls.append((dataset, output, kwargs))
             self.fixture.make_case(output, kwargs['voxel_m'], kwargs['sdf_trunc_m'])
             return self.read(Path(output)/'comparison_report.json')
-        with mock.patch('femto.local.local_comparison.run_comparison', side_effect=run):
+        with mock.patch('femto.pipeline.local_comparison.run_comparison', side_effect=run):
             result = study.run_study(self.fixture.dataset, self.root/'job', candidates=(study.BASELINE, (.003, .02)),
                 reuse_paths=[self.base], render_width=128)
         self.assertEqual(result['state'], 'complete', result.get('error'))
@@ -464,14 +464,14 @@ class ParameterStudyTests(unittest.TestCase):
         def progress(job):
             if len(job['cases']) == 1:
                 event.set()
-        with mock.patch('femto.local.local_comparison.run_comparison') as run:
+        with mock.patch('femto.pipeline.local_comparison.run_comparison') as run:
             result = study.run_study(self.fixture.dataset, self.root/'job', candidates=(study.BASELINE, (.003, .02)),
                 reuse_paths=[self.base], render_width=128, cancelled=event.is_set, progress=progress)
         self.assertEqual(result['state'], 'cancelled')
         run.assert_not_called()
 
     def test_reuse_with_different_requested_budget_does_not_start_comparison(self):
-        with mock.patch('femto.local.local_comparison.run_comparison') as run:
+        with mock.patch('femto.pipeline.local_comparison.run_comparison') as run:
             with self.assertRaisesRegex(ValueError, 'budgets'):
                 study.run_study(self.fixture.dataset, self.root/'job', candidates=(study.BASELINE,),
                     reuse_paths=[self.base], memory_mb=6144, render_width=128)

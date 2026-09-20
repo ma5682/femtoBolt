@@ -9,8 +9,8 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import ttk,messagebox
-from femto.annotation.local_history import scan_history,existing_actions,set_records_deleted
-from femto.pipeline.local_processing import format_quality,empty_report
+from femto.pipeline.local_history import scan_history,existing_actions,set_records_deleted
+from femto.local.local_processing import format_quality,empty_report
 
 # These secondary tools are temporarily kept out of the history UI.  Their
 # implementation and recorded evidence stay intact so the entries can be

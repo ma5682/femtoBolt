@@ -14,11 +14,11 @@ import cv2
 import numpy as np
 
 from femto.io_utils import imread_unicode as _read, imwrite_unicode, write_json as json_dump
-from femto.capture.scene_capture import write_calibration
+from femto.dataset.calibration_files import write_calibration
 from femto.tracking.scene_pose_estimator import assess_rgb_motion_pair
 from femto.depth.temporal_depth_fusion import fuse_temporal_depth
 from femto.depth.depth_quality import process_depth_quality, DepthQualityConfig
-from femto.capture.scene_segmented_capture import depth_cloud
+from femto.geometry.depth_cloud import depth_cloud
 from femto.geometry.depth_confidence_cloud import write_confident_point_cloud
 
 

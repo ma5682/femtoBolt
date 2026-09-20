@@ -247,7 +247,7 @@ class LocalPanel:
         for key,b in self.buttons.items():b.configure(text=self.text('resume' if key=='pause' and self.paused else key))
         self.buttons['view'].configure(text=self.text('fixed_view'))
         if self.quality is not None:
-            from femto.pipeline.local_processing import format_quality
+            from femto.local.local_processing import format_quality
             self.quality_frame.pack(fill='x',before=self.preview)
             self.quality_text.configure(state='normal')
             self.quality_text.delete('1.0','end')
@@ -499,7 +499,7 @@ class LocalPanel:
         reuse_initial='initial' in self.clouds
         self.state='loading_review';self.app.processing=True
         def worker():
-            from femto.pipeline.local_processing import result_quality
+            from femto.local.local_processing import result_quality
             quality=result_quality(result)
             try:
                 clouds=(read_review_clouds(result,include_initial=False) if reuse_initial

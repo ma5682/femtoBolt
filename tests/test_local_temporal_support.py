@@ -46,7 +46,7 @@ class SupportTests(unittest.TestCase):
             self.assertIn('stopped_after',status)
 
     def test_reconstruction_uses_mask_and_keeps_initial_raw_cloud(self):
-        from femto.geometry.scene_reconstruction import reconstruct_scene
+        from femto.pipeline.scene_reconstruction import reconstruct_scene
         from femto.geometry.fusion import read_geometry_safe
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)
@@ -66,7 +66,7 @@ class SupportTests(unittest.TestCase):
             self.assertGreater(report['metrics']['fused_point_count'],0)
             self.assertTrue(all(r.get('local_temporal_support') for r in rows))
             # Inspect integration calls rather than inferring support from mesh appearance.
-            import femto.geometry.scene_reconstruction as reconstruction
+            import femto.pipeline.scene_reconstruction as reconstruction
             original=reconstruction._prepare_rgbd;observations=[]
             def observe(color,depth,*args,**kwargs):
                 observations.append(depth.copy());return original(color,depth,*args,**kwargs)

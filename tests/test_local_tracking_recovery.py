@@ -267,7 +267,7 @@ class CaptureFailureTests(unittest.TestCase):
         local.abort.assert_called_once_with('camera_error', 'USB read fixture failure')
         self.assertTrue(any(kind=='camera_error' for kind, _ in app.event_queue.queue))
 
-    @mock.patch('femto.app.femto_control_app.save_scan_frame', side_effect=OSError('raw storage fixture failure'))
+    @mock.patch('femto.capture.scan_session.save_scan_frame', side_effect=OSError('raw storage fixture failure'))
     @mock.patch('femto.capture.local_capture.PairEstimator')
     def test_raw_write_failure_is_reported_as_error_without_a_successful_pose(self, pair, save):
         capture = LocalCapture(make_camera('wide_detail', 10), self.root/'data', self.root/'out', self.events)

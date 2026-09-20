@@ -22,6 +22,7 @@ from femto.depth.depth_quality import process_depth_quality
 
 
 from femto.paths import REPO_ROOT as ROOT
+from femto.tracking.moving_quality import pose_diversity
 DEFAULT_DATASETS = ROOT / "datasets"
 CV_CAMERA_TO_OPENGL_CAMERA = np.diag([1.0, -1.0, -1.0, 1.0])
 DEFAULT_SEED_VOXEL_M = 0.01
@@ -44,18 +45,6 @@ def parse_args() -> argparse.Namespace:
 def camera_to_opengl(T_WC: np.ndarray) -> np.ndarray:
     """Convert camera-to-world from Orbbec/OpenCV RDF to OpenGL RUB camera axes."""
     return np.asarray(T_WC, dtype=np.float64) @ CV_CAMERA_TO_OPENGL_CAMERA
-
-
-def pose_diversity(poses: list[np.ndarray]) -> tuple[float, float]:
-    centers = np.stack([pose[:3, 3] for pose in poses])
-    translation_span = float(np.linalg.norm(centers[:, None] - centers[None, :], axis=-1).max())
-    reference = poses[0][:3, :3]
-    angles = []
-    for pose in poses:
-        relative = reference.T @ pose[:3, :3]
-        cosine = np.clip((np.trace(relative) - 1.0) / 2.0, -1.0, 1.0)
-        angles.append(np.degrees(np.arccos(cosine)))
-    return translation_span, float(max(angles, default=0.0))
 
 
 def _summary(values: list[float]) -> dict[str, float | int | None]:
@@ -263,7 +252,7 @@ def convert(
             raise ValueError(f"Frame {frame['frame']} dimensions do not match calibration")
         if depth.dtype != np.uint16:
             raise ValueError(f"Frame {frame['frame']} depth is not uint16 millimetres")
-        from femto.temporal.temporal_keyframe import prepared_depth
+        from femto.depth.temporal_depth_layer import prepared_depth
         filled_source, source_confidence, depth_quality, depth_quality_paths = prepared_depth(
             dataset,frame,depth,
             active_depth_range_m[0] * 1000.0,

@@ -14,7 +14,7 @@ from femto.io_utils import imwrite_unicode
 from femto.dataset.scene_dataset_validator import validate_pose
 from femto.geometry.scene_gaussian import export_gaussian_initialization
 from femto.temporal.scene_keyframe import build_fixed_keyframe_dataset
-from femto.geometry.scene_reconstruction import reconstruct_scene
+from femto.pipeline.scene_reconstruction import reconstruct_scene
 from femto.temporal.scene_static_fusion import build_static_median_dataset
 from femto.pipeline.scene_to_nerfstudio import convert
 from femto.pipeline.synthetic_scene_demo import _look_at_rdf, generate_dataset

@@ -14,38 +14,9 @@ from PIL import Image
 from femto.io_utils import load_json as read_json, write_json
 
 from femto.paths import REPO_ROOT as ROOT
+from femto.dataset.single_frame_source import resolve_source
 MARKER = ROOT / 'outputs' / 'latest_single_gs.txt'
 SCHEMA = 'femto-single-rgbd-gs-v1'
-
-
-def resolve_source(source):
-    source = Path(source).resolve()
-    model = None
-    if (source/'demo_summary.json').is_file():
-        summary = read_json(source/'demo_summary.json')
-        if summary.get('frame_count') != 1 or summary.get('fixed_camera') is not True:
-            raise ValueError('Single-frame GS requires a completed fixed keyframe model')
-        model = source
-        source = Path(summary['source_dataset'])
-        if not source.is_absolute(): source = model/source
-        source = source.resolve()
-    manifest = read_json(source/'manifest.json')
-    if manifest.get('schema') == 'femto-rgbd-photo-v1':
-        if model is not None: raise ValueError('Keyframe model points to an unrelated photo')
-        return source, manifest, dict(source_kind='photo', source_model=None, selected_source_frame=None)
-    if (manifest.get('schema') != 'femto-full-scene-rgbd-v1'
-            or manifest.get('status') != 'derived_fixed_camera_keyframe'
-            or manifest.get('frame_count') != 1
-            or manifest.get('parameters',{}).get('fixed_camera') is not True):
-        raise ValueError('Select a derived fixed keyframe, not an unselected capture sequence')
-    frames = [json.loads(line) for line in (source/'frames.jsonl').read_text(encoding='utf-8-sig').splitlines() if line.strip()]
-    if len(frames) != 1: raise ValueError('Keyframe dataset must contain exactly one RGB-D frame')
-    parameters = manifest['parameters']
-    adapted = dict(manifest, alignment='depth_to_color', files=dict(color=frames[0]['rgb'],depth=frames[0]['depth']),
-                   image=dict(depth_range_m=[parameters['depth_min_mm']/1000,parameters['depth_max_mm']/1000]))
-    return source, adapted, dict(source_kind='fixed_keyframe', source_model=str(model) if model else None,
-        source_model_summary_sha256=hashlib.sha256((model/'demo_summary.json').read_bytes()).hexdigest() if model else None,
-        selected_source_frame=frames[0].get('source_frame'), source_capture=manifest.get('source_dataset'))
 
 
 def prepare(photo: Path, output: Path):
@@ -87,7 +58,7 @@ def prepare(photo: Path, output: Path):
     rgb = cv2.remap(rgb, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
     temporal_confidence = None
     if temporal_frame is not None:
-        from femto.temporal.temporal_keyframe import load_temporal_confidence
+        from femto.depth.temporal_depth_layer import load_temporal_confidence
         temporal_confidence = cv2.remap(load_temporal_confidence(photo, temporal_frame, depth),
                                        mx, my, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
     depth = cv2.remap(depth, mx, my, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)

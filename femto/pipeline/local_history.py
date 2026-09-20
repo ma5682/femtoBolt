@@ -6,7 +6,7 @@ import time
 import os
 import tempfile
 from femto.io_utils import load_json_object as read_json
-from femto.pipeline.local_processing import result_quality, empty_report
+from femto.local.local_processing import result_quality, empty_report
 
 
 def deleted_records(outputs):

@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/ scripts i
 from femto.depth.depth_quality import assess_and_fill_depth
 from femto.io_utils import imread_unicode as _read, write_json as json_dump
 from femto.temporal.temporal_keyframe import fuse_quality_frames, assess_temporal_scene
-from femto.capture.scene_segmented_capture import depth_cloud
+from femto.geometry.depth_cloud import depth_cloud
 
 
 def compare_batches(depths, images, intr, distortion, low, high, modes, *, repeats):

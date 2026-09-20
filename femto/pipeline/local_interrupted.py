@@ -134,7 +134,7 @@ def prepare(source, output):
             tracking_report=str(source/'derived/local_capture_report.json'),
             **decision['recorded_policy'], capture_scope='interrupted_prefix', interrupted_prefix=decision))
     write_json(dataset/'manifest.json', manifest)
-    from femto.pipeline.scene_to_nerfstudio import pose_diversity
+    from femto.tracking.moving_quality import pose_diversity
     span, angle = pose_diversity([np.asarray(r['T_WC']) for r in selected])
     write_json(dataset/'pose_quality_report.json', dict(status='estimated_research_grade_interrupted_prefix',
         source_dataset=str(source), source_frame_count=len(raw), frame_count=len(derived),

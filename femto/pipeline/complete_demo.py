@@ -17,7 +17,7 @@ from femto.io_utils import imread_unicode as _read, imwrite_unicode as _write, l
 from femto.dataset.scene_data_kind import classify_dataset_data_kind
 from femto.dataset.scene_dataset_validator import resolve_dataset, validate_dataset
 from femto.tracking.scene_pose_estimator import estimate_poses
-from femto.geometry.scene_reconstruction import reconstruct_scene
+from femto.pipeline.scene_reconstruction import reconstruct_scene
 from femto.pipeline.scene_to_nerfstudio import convert
 from femto.pipeline.synthetic_scene_demo import generate_dataset
 
@@ -319,7 +319,7 @@ def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     processing_path = getattr(args, 'local_processing_report', None)
     if processing_path:
         from femto.io_utils import load_json_object as read_json, write_json_strict as write_json
-        from femto.pipeline.local_processing import write_html
+        from femto.local.local_processing import write_html
         processing = read_json(processing_path)
         if Path(processing['actual_dataset']).resolve() != posed_dataset.resolve():
             raise ValueError('Processing report does not match reconstruction input')

@@ -16,7 +16,7 @@ import open3d as o3d
 
 from femto.geometry.fusion import export_mesh_formats, write_point_cloud_safe
 from femto.io_utils import imread_unicode as _read_image, imwrite_unicode, load_json, load_jsonl
-from femto.dataset.scene_dataset_validator import resolve_dataset, validate_pose
+from femto.dataset.scene_dataset_validator import resolve_dataset
 from femto.geometry.scene_gaussian import export_gaussian_initialization
 from femto.geometry.single_frame_quality import clean_depth, compare_geometry, evidence_manifest
 from femto.geometry.single_frame_mesh import build_pixel_mesh, export_pixel_mesh
@@ -25,6 +25,7 @@ from femto.depth.depth_quality import process_depth_quality
 
 
 from femto.paths import REPO_ROOT as ROOT
+from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps, load_poses as _load_poses, prepare_rgbd as _prepare_rgbd
 DEFAULT_DATASETS = ROOT / "datasets"
 
 
@@ -40,81 +41,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth-max-m", type=float, default=3.86)
     parser.add_argument("--point-stride", type=int, default=1)
     return parser.parse_args()
-
-
-def _distortion_maps(dataset: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
-    intrinsic = load_json(dataset / "calibration" / "color_intrinsic.json")
-    distortion = load_json(dataset / "calibration" / "distortion.json")["rgb"]
-    model = str(distortion.get("model", ""))
-    if "BROWN_CONRADY_K6" not in model:
-        raise ValueError(f"Unsupported RGB distortion model: {model or 'missing'}")
-    width, height = int(intrinsic["width"]), int(intrinsic["height"])
-    K = np.array(
-        [[intrinsic["fx"], 0.0, intrinsic["cx"]], [0.0, intrinsic["fy"], intrinsic["cy"]], [0.0, 0.0, 1.0]],
-        dtype=np.float64,
-    )
-    coefficients = np.array(
-        [
-            distortion["k1"], distortion["k2"], distortion["p1"], distortion["p2"],
-            distortion["k3"], distortion["k4"], distortion["k5"], distortion["k6"],
-        ],
-        dtype=np.float64,
-    )
-    new_K, _ = cv2.getOptimalNewCameraMatrix(K, coefficients, (width, height), 0.0, (width, height))
-    map_x, map_y = cv2.initUndistortRectifyMap(
-        K, coefficients, np.eye(3), new_K, (width, height), cv2.CV_32FC1
-    )
-    return map_x, map_y, new_K, width, height
-
-
-def _prepare_rgbd(
-    color_bgr: np.ndarray,
-    depth_u16: np.ndarray,
-    map_x: np.ndarray,
-    map_y: np.ndarray,
-    K: np.ndarray,
-    scale: float,
-    depth_min_m: float,
-    depth_max_m: float,
-) -> tuple[o3d.geometry.RGBDImage, o3d.camera.PinholeCameraIntrinsic, np.ndarray, np.ndarray]:
-    color = cv2.remap(color_bgr, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-    depth = cv2.remap(depth_u16, map_x, map_y, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
-    valid = (depth >= int(round(depth_min_m * 1000.0))) & (depth <= int(round(depth_max_m * 1000.0)))
-    depth = np.where(valid, depth, 0).astype(np.uint16)
-    height, width = depth.shape
-    if scale != 1.0:
-        scaled_size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
-        color = cv2.resize(color, scaled_size, interpolation=cv2.INTER_AREA)
-        depth = cv2.resize(depth, scaled_size, interpolation=cv2.INTER_NEAREST)
-    scaled_K = K.copy()
-    scaled_K[0, :] *= scale
-    scaled_K[1, :] *= scale
-    intrinsic = o3d.camera.PinholeCameraIntrinsic(
-        color.shape[1], color.shape[0], scaled_K[0, 0], scaled_K[1, 1], scaled_K[0, 2], scaled_K[1, 2]
-    )
-    rgb = np.ascontiguousarray(color[:, :, ::-1])
-    rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-        o3d.geometry.Image(rgb),
-        o3d.geometry.Image(np.ascontiguousarray(depth)),
-        depth_scale=1000.0,
-        # Open3D drops z >= truncation; retain the inclusive millimetre endpoint.
-        depth_trunc=depth_max_m + 0.0005,
-        convert_rgb_to_intensity=False,
-    )
-    return rgbd, intrinsic, color, depth
-
-
-def _load_poses(dataset: Path, frames: list[dict[str, Any]]) -> list[np.ndarray]:
-    poses: list[np.ndarray] = []
-    for frame in frames:
-        record = load_json(dataset / frame["pose"])
-        if not record.get("pose_valid", False):
-            raise ValueError(f"Frame {frame['frame']} does not have a valid T_WC")
-        error = validate_pose(record.get("T_WC"))
-        if error:
-            raise ValueError(f"Frame {frame['frame']} pose error: {error}")
-        poses.append(np.asarray(record["T_WC"], dtype=np.float64))
-    return poses
 
 
 def _camera_trajectory(poses: list[np.ndarray]) -> o3d.geometry.LineSet:
@@ -233,7 +159,7 @@ def reconstruct_scene(
             raise ValueError(f"Frame {frame['frame']} dimensions do not match calibration")
         if depth.dtype != np.uint16:
             raise ValueError(f"Frame {frame['frame']} depth is not uint16 millimetres")
-        from femto.temporal.temporal_keyframe import prepared_depth
+        from femto.depth.temporal_depth_layer import prepared_depth
         filled_depth, depth_confidence, depth_quality, depth_quality_paths = prepared_depth(
             dataset,frame,depth,
             depth_min_m * 1000.0,
@@ -268,7 +194,7 @@ def reconstruct_scene(
                                 confidence=input_conf,rgb=np.asarray(input_rgbd.color),
                                 intrinsic=input_intrinsic.intrinsic_matrix,T_CW=np.linalg.inv(T_WC))
         if single_frame_quality:
-            from femto.capture.scene_segmented_capture import depth_cloud
+            from femto.geometry.depth_cloud import depth_cloud
 
             evidence_manifest(dataset, frame, output / "source_evidence.json")
             intr = SimpleNamespace(**load_json(dataset / "calibration" / "color_intrinsic.json"))
@@ -411,12 +337,12 @@ def reconstruct_scene(
         raise ValueError("TSDF extraction produced an empty mesh")
     local_support = None
     if local_measured:
-        from femto.geometry.local_geometry import retain_observed_triangles
+        from femto.local.local_geometry import retain_observed_triangles
         local_support = retain_observed_triangles(mesh, dataset, frames, poses,
             (map_x, map_y, K, expected_width, expected_height), depth_min_m, depth_max_m,
             prepared_depths=local_prepared_depths)
         if local_post_component_filter:
-            from femto.geometry.local_geometry import filter_small_components
+            from femto.local.local_geometry import filter_small_components
             local_support['post_retain_component_filter']=filter_small_components(mesh)
             local_support['post_retain_component_filter']['applied']=True
         else:

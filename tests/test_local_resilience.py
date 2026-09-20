@@ -21,7 +21,7 @@ from femto.dataset.local_reference import reference_provenance
 from femto.tracking.local_tracking_diagnostics import classify, quality_text, summarize
 from femto.tracking.scene_live_tracker import PairEstimator
 from femto.io_utils import imread_unicode as _read_image
-from femto.geometry.scene_reconstruction import _prepare_rgbd
+from femto.geometry.rgbd_frames import prepare_rgbd as _prepare_rgbd
 from test_segmented_capture import make_camera, make_frame
 
 
@@ -35,7 +35,7 @@ class RawReceiptTests(unittest.TestCase):
             save_scan_frame(scan, frame, **kwargs)
         with tempfile.TemporaryDirectory() as td, mock.patch('femto.capture.local_capture.PairEstimator'), \
                 mock.patch('femto.tracking.scene_live_tracker.frame_quality', return_value=dict(usable=True)), \
-                mock.patch('femto.app.femto_control_app.save_scan_frame', side_effect=slow):
+                mock.patch('femto.capture.scan_session.save_scan_frame', side_effect=slow):
             capture=LocalCapture(make_camera('wide_detail', 10), Path(td)/'data', Path(td)/'out', queue.Queue())
             capture.submit(make_frame([500]*10, 1))
             capture.thread.join(6)
@@ -57,7 +57,7 @@ class RawReceiptTests(unittest.TestCase):
             save_scan_frame(scan, frame, **kwargs)
         with tempfile.TemporaryDirectory() as td, mock.patch('femto.capture.local_capture.PairEstimator') as pair, \
                 mock.patch('femto.tracking.scene_live_tracker.frame_quality', return_value=dict(usable=True)), \
-                mock.patch('femto.app.femto_control_app.save_scan_frame', side_effect=save):
+                mock.patch('femto.capture.scan_session.save_scan_frame', side_effect=save):
             pair.return_value.prepare.side_effect = lambda frame: estimating.set()
             capture = LocalCapture(make_camera('wide_detail', 10), Path(td)/'data', Path(td)/'out', queue.Queue())
             try:

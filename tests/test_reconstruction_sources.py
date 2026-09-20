@@ -62,7 +62,7 @@ class SourceTests(unittest.TestCase):
             frame_count=1 if fixed else 90, created_local=date)))
         return folder.resolve()
 
-    @patch('femto.gsplat.scene_single_gs.resolve_source')
+    @patch('femto.dataset.single_frame_source.resolve_source')
     def test_alternating_and_restart_preserve_each_mode(self, resolve):
         with TemporaryDirectory() as td:
             root = Path(td)
@@ -75,7 +75,7 @@ class SourceTests(unittest.TestCase):
             self.assertEqual(sources.restore(root), dict(keyframe=newer, moving=moving))
             self.assertEqual((root / sources.MARKERS['moving']).read_text(), str(moving))
 
-    @patch('femto.gsplat.scene_single_gs.resolve_source')
+    @patch('femto.dataset.single_frame_source.resolve_source')
     def test_legacy_discovery_rejects_synthetic_and_incomplete(self, resolve):
         with TemporaryDirectory() as td:
             root = Path(td)

@@ -16,8 +16,8 @@ import open3d as o3d
 from femto.io_utils import imread_unicode as _read_image, load_json, load_jsonl
 from femto.tracking.moving_quality import POLICY, frame_quality, cycle_consistency, select_keyframes
 from femto.dataset.scene_dataset_validator import resolve_dataset, validate_pose
-from femto.geometry.scene_reconstruction import _distortion_maps, _prepare_rgbd
-from femto.pipeline.scene_to_nerfstudio import pose_diversity
+from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps, prepare_rgbd as _prepare_rgbd
+from femto.tracking.moving_quality import pose_diversity
 
 
 from femto.paths import REPO_ROOT as ROOT

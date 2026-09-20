@@ -66,7 +66,7 @@ class LocalEvidenceTests(unittest.TestCase):
         (self.model.reconstruction/'reconstruction_report.json').write_text(json.dumps(dict(source_dataset=str(self.dataset),frames=frames)))
         self.model.store.origin_reference['source_dataset']=str(self.dataset)
         self.model.view_reference.update(depth_sha256=digest(self.dataset/'depth0.png'),rgb_sha256=digest(self.dataset/'rgb0.png'))
-        yy,xx=np.indices((100,100));self.patch=mock.patch('femto.geometry.scene_reconstruction._distortion_maps',return_value=(xx.astype(np.float32),yy.astype(np.float32),K,100,100));self.patch.start()
+        yy,xx=np.indices((100,100));self.patch=mock.patch('femto.geometry.rgbd_frames.distortion_maps',return_value=(xx.astype(np.float32),yy.astype(np.float32),K,100,100));self.patch.start()
         self.point=self.model.pick(50,50,'test','')
     def tearDown(self):self.patch.stop();self.tmp.cleanup()
     def set_depth(self,index,mm):

@@ -6,7 +6,7 @@ import time
 import tkinter as tk
 import unittest
 from unittest import mock
-from femto.annotation.local_history import scan_history,existing_actions,set_record_deleted,set_records_deleted
+from femto.pipeline.local_history import scan_history,existing_actions,set_record_deleted,set_records_deleted
 
 
 def write(path,data):

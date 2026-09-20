@@ -1,17 +1,7 @@
 """Reference-image exclusion polygons and conservative whole-face removal."""
 import cv2
 import numpy as np
-
-
-def validate_exclusions(polygons):
-    if not isinstance(polygons,list) or len(polygons)>32:raise ValueError('最多支持32个禁止区域')
-    for polygon in polygons:
-        p=np.asarray(polygon,float)
-        if p.ndim!=2 or p.shape[1]!=2 or not 3<=len(p)<=512 or not np.isfinite(p).all():
-            raise ValueError('禁止区域轮廓无效')
-        if np.max(np.abs(p))>100000 or abs(cv2.contourArea(p.astype(np.float32)))<1:
-            raise ValueError('禁止区域面积过小或坐标无效')
-    return polygons
+from femto.annotation.scene_annotations import validate_exclusions
 
 
 def allowed_region(projection,mesh,region,check=lambda:None):

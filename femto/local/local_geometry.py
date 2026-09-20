@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import open3d as o3d
 from femto.io_utils import imread_unicode as _read_image
-from femto.geometry.scene_reconstruction import _prepare_rgbd
+from femto.geometry.rgbd_frames import prepare_rgbd as _prepare_rgbd
 
 
 def filter_small_components(mesh):

@@ -228,12 +228,12 @@ def validate_comparison_input(dataset, *, max_views=20, allow_synthetic=False):
         pose_source=expected_pose_source, source_sha256=hashes, validation=validation,
         synthetic_ground_truth=truth, physical_accuracy_verified=False,
         implementation_sha256=fingerprints(ROOT/name for name in (
-            'femto/local/local_comparison.py', 'femto/local/local_comparison_viewer.py',
-            'femto/geometry/scene_reconstruction.py', 'femto/local/local_pose_refinement.py',
-            'femto/local/local_temporal_support.py', 'femto/geometry/local_geometry.py',
-            'femto/dataset/local_reference.py', 'femto/dataset/scene_dataset_validator.py',
-            'femto/annotation/fixed_rgb_geometry.py', 'femto/tracking/local_stability.py',
-            'femto/io_utils.py')))
+            'femto/pipeline/local_comparison.py', 'femto/pipeline/local_comparison_viewer.py',
+            'femto/pipeline/scene_reconstruction.py', 'femto/geometry/rgbd_frames.py',
+            'femto/local/local_pose_refinement.py', 'femto/local/local_temporal_support.py',
+            'femto/local/local_geometry.py', 'femto/dataset/local_reference.py',
+            'femto/dataset/scene_dataset_validator.py', 'femto/annotation/fixed_rgb_geometry.py',
+            'femto/tracking/local_stability.py', 'femto/io_utils.py')))
 
 
 def validate_variant_input(baseline, dataset, *, allow_masks=False):
@@ -368,14 +368,14 @@ def _worker(spec):
         return dict(actual_dataset=str(result), applied_frames=report['applied_frames'], report=report,
                     report_path=str(output / 'temporal_support_report.json'))
     if stage == 'reconstruct':
-        from femto.geometry.scene_reconstruction import reconstruct_scene
+        from femto.pipeline.scene_reconstruction import reconstruct_scene
         binding = validate_variant_input(baseline, dataset, allow_masks=spec['allow_masks'])
         if spec.get('same_reconstruction'):
             report = copy_unchanged_model(spec['same_reconstruction'], output)
         else:
             report = reconstruct_scene(dataset, output, image_scale=1., point_stride=1,
                 voxel_m=spec['voxel_m'], sdf_trunc_m=spec['sdf_trunc_m'], depth_min_m=.25, depth_max_m=2.21)
-        from femto.local.local_comparison_viewer import evaluate_and_render
+        from femto.pipeline.local_comparison_viewer import evaluate_and_render
         metrics = evaluate_and_render(baseline, dataset, output, width=spec['render_width'])
         return dict(**binding, reconstruction=str(output), reconstruction_metrics=report['metrics'],
             metrics=metrics, mesh_sha256=sha256(output / 'scene_tsdf_mesh_m.ply'),
@@ -642,7 +642,7 @@ def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=
             row.update(stats)
             publish()
         try:
-            stats = supervise([sys.executable, '-X', 'utf8', '-m', 'femto.local.local_comparison',
+            stats = supervise([sys.executable, '-X', 'utf8', '-m', 'femto.pipeline.local_comparison',
                 '--worker', str(spec_path), '--worker-result', str(result_path)], output / (name + '.log'),
                 timeout_s=stage_timeout_s, memory_mb=memory_mb, cancelled=is_cancelled, progress=update)
             value = read_json(result_path)
@@ -713,7 +713,7 @@ def run_comparison(dataset, output, *, voxel_m=.005, sdf_trunc_m=.02, max_views=
         if report['state'] == 'complete' and (not report['source_unchanged'] or not report['latest_unchanged']):
             report.update(state='failed', error='Source or latest fingerprint changed; external changes are not restored')
         publish()
-        from femto.local.local_comparison_viewer import write_comparison_html
+        from femto.pipeline.local_comparison_viewer import write_comparison_html
         write_comparison_html(output, report)
     return report
 

@@ -101,8 +101,11 @@ C:\FemtoGsplatRuntime\Scripts\python.exe -m femto.gsplat.scene_gsplat_export out
 .\start_direct_gsplat_viewer.cmd outputs\direct_gsplat_xxx --orbit 3 --width 320 --data-kind synthetic
 .venv\Scripts\python.exe -m femto.gsplat.scene_gsplat_acceptance
 
+# 分层检查（新增 import 前跑；输出向上依赖边，期望 0）
+.venv\Scripts\python.exe tools\check_layering.py
+
 # 离线局部工具（不开相机）
-.venv\Scripts\python.exe -m femto.local.local_comparison <local_posed_dataset> <new_dir>      # 同源 A/B/C 几何对照
+.venv\Scripts\python.exe -m femto.pipeline.local_comparison <local_posed_dataset> <new_dir>      # 同源 A/B/C 几何对照
 .venv\Scripts\python.exe -m femto.pipeline.local_interrupted <session_dir> --output <dir>      # 失跟会话的合格前缀重建
 .venv\Scripts\python.exe -m femto.tracking.local_tracking_replay <session_dir> --output <dir>  # 只读跟踪回放
 .venv\Scripts\python.exe -m femto.pipeline.depth_quality_replay <photo_or_scene_dir>           # 深度补洞回放
@@ -118,28 +121,28 @@ C:\FemtoGsplatRuntime\Scripts\python.exe -m femto.gsplat.scene_gsplat_export out
 
 2026-09-20 起源码位于 `femto/` 包（约 130 个模块、16 个子包），根目录只保留 `commercial_compliance_check.py`、`.cmd` 入口、`tests/` 与 `tools/`。**文件基名沿用迁移前的名字**（例如 `scene_capture.py` 现在是 `femto/capture/scene_capture.py`），文档和历史记录里的模块名仍然可以直接对应到文件。所有入口一律 `python -m femto.<pkg>.<module>`，从仓库根目录运行；子进程也全部改为 `-m` 加 `cwd=REPO_ROOT`，没有任何按脚本路径启动的地方。`femto/paths.py` 提供 `REPO_ROOT / DATASETS_ROOT / OUTPUTS_ROOT / PHOTOS_ROOT / MODELS_ROOT / LOG_ROOT`，模块内不要再写 `Path(__file__).resolve().parent` 去找数据树。
 
-子包按依赖层次自下而上排列，原则上只允许上层 import 下层；当前仍有 21 条"下层惰性 import 上层"的边（见 `技术路线.md` 2026-09-20 包结构条目），属于待解的循环依赖，新代码不要再增加：
+子包按依赖层次自下而上排列，**只允许上层 import 下层**（含函数内延迟 import）。`tools/check_layering.py` 按下表顺序检查，当前为 0 条向上依赖；新增 import 前先跑它，若必须让下层调用上层功能，把那段纯函数往下搬而不是加延迟 import：
 
-| 子包 | 职责 | 主要模块 |
-|---|---|---|
-| `femto` | 叶子工具 | `io_utils`（唯一的 JSON / JSONL / 图片读写实现；`cv2` 延迟导入，gsplat 运行时可用）、`ui_i18n`（`tr(language, key)`，只覆盖高级页、Open3D 查看器和 gsplat 查看器；其余窗口用内联 `(zh, en)` 元组，`test_ui_i18n` 要求 zh/en 键集一致）、`paths` |
-| `femto.depth` | 逐帧深度质量 | `depth_quality`（保守补洞，`DepthQualityConfig` 只能收紧）、`depth_error_check`、`temporal_depth_fusion`、`temporal_depth_layer`；置信度层 1.0 原始 / 0.3 修复 / 0 未知，每次派生深度都有同名 float32 confidence |
-| `femto.dataset` | 数据集 schema 与门禁 | `scene_dataset_validator`、`scene_data_kind`（只有原始 manifest `camera.device=="Orbbec Femto Bolt"` 才是 `real_femto`）、`local_reference`、`scene_gsplat_split`（严格 train/val/test 分区） |
-| `femto.geometry` | 反投影、TSDF、网格 | `pose_geometry`（人体分支无畸变针孔）、`fusion`（Open3D 原生 IO 兜底）、`scene_reconstruction`（K6 去畸变 → 世界变换 → TSDF，补洞帧 10:3 重复积分）、`multiview_texture`、`single_frame_mesh` / `single_frame_quality`、`scene_gaussian`（未训练初值）、`depth_confidence_cloud`、`local_geometry` |
-| `femto.hardware` | 唯一 SDK 封装 | `orbbec_rgbd.OrbbecAlignedCamera`。`DEPTH_MODE_SPECS` 四档（`wide_detail` 1024×1024@15、`wide`、`near`、`far`）；主界面固定 `APP_DEPTH_MODE="wide_detail"`（0.25–2.21 m）+ RGB 1920×1080；构造默认却是 `near`（500–3860 mm），`scene_capture` / `top_scan` 用的是默认。`AlignedFrame` 数组可能别名 SDK 缓冲，保留必须 copy |
-| `femto.reports` | 研发报告 | `scene_quality_report`（实拍验收 spec）、`scene_scale_validation`（尺度测距，`accepted=null` 除非给容差）、`research_validation`（重复测量记录） |
-| `femto.tracking` | 里程计与运动检查 | `moving_quality.POLICY`（离线与在线共用门限）、`scene_pose_estimator`（顺序 Hybrid RGB-D 里程计 + 双向一致性 + 关键帧筛选 + 背景运动预检）、`scene_live_tracker`（在线跟踪、W0）、`local_tracking_*`、`local_frame_selection`、`local_stability*` |
-| `femto.temporal` | 固定机位时域 burst | `scene_temporal_fusion`、`temporal_keyframe`（逐帧深度质量 → 连续 confidence → 加权中值 → 关键帧派生数据集；关键帧按钮走这条链）、`scene_static_fusion` / `scene_keyframe`（只剩测试与 temporal 链调用） |
-| `femto.local` | 局部补采离线阶段 | `local_pose_refinement`（精配准候选）、`local_temporal_support`（五帧支持 Mask）、`local_comparison` / `local_comparison_viewer`（A/B/C 对照）、`local_parameter_study`、`local_geometry_diagnostics` |
-| `femto.capture` | 数据集写入与采集工作线程 | `scene_capture`（`write_calibration`、`create_session`、CLI `near` 档 JPEG 采集）、`local_raw_writer`、`local_live_preview`、`local_capture.LocalCapture`（局部补采工作线程）、`scene_segmented_capture`（历史四档采集，其 `depth_cloud()` 是全项目 K6 反投影的正典实现）、`top_scan`（人体 MediaPipe 分支） |
-| `femto.pipeline` | 端到端编排 | `complete_demo.run_demo`（校验 → 位姿 → 重建 → 转换 → HTML/质量报告 → 查看器）、`synthetic_scene_demo`、`scene_to_nerfstudio`（RDF→RUB 转换、严格分区）、`local_processing` / `local_offline`（Windows Job Object 子进程、发布凭证）、`local_interrupted`、`reconstruction_sources`（关键帧/移动两类成功来源的 marker）、`depth_quality_replay` |
-| `femto.gsplat` | 产品 3DGS | `scene_gsplat_trainer`（`PROFILES`、`assess_training_input`、`runtime_python`）、`scene_gsplat_data` / `_export` / `_metrics` / `_guard` / `_viewer` / `_acceptance`、`gsplat_backend`（UI 跨环境控制）、`scene_single_gs*`（单帧固定视角 GS）、`scene_3dgs`（内部 Splatfacto 对照，不可运行）。这些模块及 viewer 只能在函数内 `import torch` |
-| `femto.annotation` | 标注与固定 RGB 几何 | `scene_annotations`（绑定网格 SHA-256 与 W0 来源）、`scene_annotation_ui`、`scene_surface_picker`、`fixed_rgb_geometry`（K6 去畸变初始照片 → 射线打到 W0 网格）、`measurement_audit`、`region_texture`、`square_brush`、`local_history` |
-| `femto.planning` | 区域规划工作台 | `region_*`、`metric_region_path`、`serpentine_path`、`route_*`、`path_presentation`、`planning_*`、`coverage_*`、`surface_spacing*`，以及宿主窗口 `fixed_rgb_viewer`（也是 `.region.zip` 规划工作台）和 `export_history` |
-| `femto.viewer` | 独立进程的查看器 | `scene_demo_viewer`（Open3D 几何查看器 + 表面选点/测距/圈选）、`live_point_cloud`（实时点云子进程）、`view_latest`、`segmented_cloud_viewer`、`depth_debug_viewer`、`export_preview` |
-| `femto.app` | Tk 主界面 | `femto_control_app`（~2100 行；单一 `FemtoCamera` 线程独占 SDK，命令队列 + 事件队列；`ttk.Notebook` 两页：tab 0 默认为**局部移动补采** `app_local_panel.LocalPanel`，tab 1 为固定采集与高级功能；`SCAN_MODE_KEYS=("keyframe","moving")`，**没有 static 模式**）、`app_local_history`、`app_local_comparison`、`app_temporal` / `app_temporal_panel` |
+| 层 | 子包 | 职责 | 主要模块 |
+|---|---|---|---|
+| 0 | `femto` | 叶子工具 | `io_utils`（唯一的 JSON / JSONL / 图片读写实现；`cv2` 延迟导入，gsplat 运行时可用）、`ui_i18n`（`tr(language, key)`，只覆盖高级页、Open3D 查看器和 gsplat 查看器；其余窗口用内联 `(zh, en)` 元组，`test_ui_i18n` 要求 zh/en 键集一致）、`paths`（`REPO_ROOT` 等数据树位置与 `child_path`） |
+| 1 | `femto.depth` | 逐帧深度质量 | `depth_quality`（保守补洞，`DepthQualityConfig` 只能收紧）、`depth_error_check`、`temporal_depth_fusion`、`temporal_depth_layer`（时域中间层，含 `prepared_depth` / `load_temporal_confidence`）；置信度层 1.0 原始 / 0.3 修复 / 0 未知，每次派生深度都有同名 float32 confidence |
+| 2 | `femto.dataset` | 数据集 schema 与门禁 | `scene_dataset_validator`、`scene_data_kind`（只有原始 manifest `camera.device=="Orbbec Femto Bolt"` 才是 `real_femto`）、`local_reference`（`CALIBRATION_FILES`、参考证据）、`calibration_files.write_calibration`、`scene_gsplat_split`（严格 train/val/test 分区）、`single_frame_source.resolve_source`（关键帧模型 / 照片的单帧来源解析） |
+| 3 | `femto.geometry` | 反投影与网格原语 | `pose_geometry`（人体分支无畸变针孔）、`depth_cloud`（全项目 K6 反投影的正典实现）、`rgbd_frames`（`distortion_maps` / `prepare_rgbd` / `load_poses`）、`fusion`（Open3D 原生 IO 兜底）、`multiview_texture`、`single_frame_mesh` / `single_frame_quality`、`scene_gaussian`（未训练初值）、`depth_confidence_cloud` |
+| 4 | `femto.hardware` | 唯一 SDK 封装 | `orbbec_rgbd.OrbbecAlignedCamera`。`DEPTH_MODE_SPECS` 四档（`wide_detail` 1024×1024@15、`wide`、`near`、`far`）；主界面固定 `APP_DEPTH_MODE="wide_detail"`（0.25–2.21 m）+ RGB 1920×1080；构造默认却是 `near`（500–3860 mm），`scene_capture` / `top_scan` 用的是默认。`AlignedFrame` 数组可能别名 SDK 缓冲，保留必须 copy |
+| 5 | `femto.reports` | 研发报告 | `scene_quality_report`（实拍验收 spec）、`scene_scale_validation`（尺度测距，`accepted=null` 除非给容差）、`research_validation`（重复测量记录） |
+| 6 | `femto.annotation` | 标注与固定 RGB 几何 | `scene_annotations`（绑定网格 SHA-256 与 W0 来源；`validate_exclusions`）、`scene_annotation_ui`、`scene_surface_picker`、`fixed_rgb_geometry`（K6 去畸变初始照片 → 射线打到 W0 网格）、`measurement_audit`、`region_texture`、`square_brush` |
+| 7 | `femto.tracking` | 里程计与运动检查 | `moving_quality`（`POLICY` 离线与在线共用门限、`pose_diversity`）、`scene_pose_estimator`（顺序 Hybrid RGB-D 里程计 + 双向一致性 + 关键帧筛选 + 背景运动预检）、`scene_live_tracker`（在线跟踪、W0）、`local_tracking_*`、`local_frame_selection`（视角接纳 + `local_workspace` 采集包络 30 mm / 10°）、`local_stability*` |
+| 8 | `femto.temporal` | 固定机位时域 burst | `scene_temporal_fusion`、`temporal_keyframe`（逐帧深度质量 → 连续 confidence → 加权中值 → 关键帧派生数据集；关键帧按钮走这条链）、`scene_static_fusion` / `scene_keyframe`（只剩测试与 temporal 链调用） |
+| 9 | `femto.local` | 局部补采离线阶段 | `local_pose_refinement`（精配准候选）、`local_temporal_support`（五帧支持 Mask）、`local_geometry`（观测支持三角面过滤）、`local_processing`（处理报告 schema 与 HTML）、`local_geometry_diagnostics` |
+| 10 | `femto.planning` | 区域规划工作台 | `region_*`、`metric_region_path`、`serpentine_path`、`route_*`、`path_presentation`、`planning_*`、`coverage_*`、`surface_spacing*`，以及宿主窗口 `fixed_rgb_viewer`（也是 `.region.zip` 规划工作台）和 `export_history` |
+| 11 | `femto.viewer` | 独立进程的查看器 | `scene_demo_viewer`（Open3D 几何查看器 + 表面选点/测距/圈选）、`live_point_cloud`（实时点云子进程）、`view_latest`、`segmented_cloud_viewer`、`depth_debug_viewer`、`export_preview` |
+| 12 | `femto.pipeline` | 端到端编排 | `scene_reconstruction`（K6 去畸变 → 世界变换 → TSDF，补洞帧 10:3 重复积分）、`complete_demo.run_demo`（校验 → 位姿 → 重建 → 转换 → HTML/质量报告 → 查看器）、`synthetic_scene_demo`、`scene_to_nerfstudio`（RDF→RUB 转换、严格分区）、`local_offline`（Windows Job Object 子进程、发布凭证）、`local_comparison` / `local_comparison_viewer`（A/B/C 对照）、`local_parameter_study`、`local_interrupted`、`local_history`（结果目录）、`reconstruction_sources`（关键帧/移动两类成功来源的 marker）、`depth_quality_replay` |
+| 13 | `femto.gsplat` | 产品 3DGS | `scene_gsplat_trainer`（`PROFILES`、`assess_training_input`、`runtime_python`）、`scene_gsplat_data` / `_export` / `_metrics` / `_guard` / `_viewer` / `_acceptance`、`gsplat_backend`（UI 跨环境控制）、`scene_single_gs*`（单帧固定视角 GS）、`scene_3dgs`（内部 Splatfacto 对照，不可运行）。这些模块及 viewer 只能在函数内 `import torch` |
+| 14 | `femto.capture` | 数据集写入与采集工作线程 | `scene_capture`（`create_session`、`depth_preview`、CLI `near` 档 JPEG 采集）、`scan_session`（`ActiveScan`、`save_scan_frame` / `finalize_scan` / `save_rgbd_photo`、运动提示状态机、`wait_for_aligned_frame`）、`local_raw_writer`、`local_live_preview`、`local_capture.LocalCapture`（局部补采工作线程）、`scene_segmented_capture`（历史四档采集）、`top_scan`（人体 MediaPipe 分支） |
+| 15 | `femto.app` | Tk 主界面 | `femto_control_app`（~1700 行；单一 `FemtoCamera` 线程独占 SDK，命令队列 + 事件队列；`ttk.Notebook` 两页：tab 0 默认为**局部移动补采** `app_local_panel.LocalPanel`，tab 1 为固定采集与高级功能；`SCAN_MODE_KEYS=("keyframe","moving")`，**没有 static 模式**；`scan_session` 的名字仍可从这里 import，供旧写法的测试使用）、`app_local_history`、`app_local_comparison`、`app_temporal` / `app_temporal_panel` |
 
-`tools/` 存放实验与安装脚本（`download_model`、`download_verified_file`、`patch_gsplat_windows`、五个对照实验脚本、迁移脚本 `_migrate_packages.py`），它们在文件头把仓库根目录加入 `sys.path`，以 `python tools\<name>.py` 运行。
+`tools/` 存放实验与安装脚本（`download_model`、`download_verified_file`、`patch_gsplat_windows`、五个对照实验脚本）、分层检查 `check_layering.py`，以及已执行完毕的迁移脚本 `_migrate_packages.py` / `_restructure_layers.py`；它们在文件头把仓库根目录加入 `sys.path`，以 `python tools\<name>.py` 运行。
 
 ### 三条采集/建模链
 
@@ -181,7 +184,7 @@ CLI `scene_capture.py`（`near` 档、JPEG）与 GUI 采集（`wide_detail`、�
 - **W0**：局部补采会话首个有效彩色相机的位置与朝向，参考帧 Pose 精确为单位矩阵（atol 1e-9）。`T_W0_Ct` 把当前彩色相机 RDF 变到 W0。最终网格已经在 W0，查看器与标注**不再乘任何相机变换**。`origin_reference.kind` 只有在 `local_geometry.json`、`reconstruction_report.json`、源 manifest、跟踪报告、首帧 Pose 全部一致时才是 `initial_color_camera`，否则是 `model_coordinate_origin / unknown`，固定 RGB 窗口会拒绝打开。这些校验用绝对路径，复制/移动结果目录会让来源降级为 unknown；`.region.zip` 工程原样携带来源不再校验。
 - Nerfstudio/OpenGL 导出用 `CV_CAMERA_TO_OPENGL_CAMERA = diag(1,-1,-1,1)` 右乘做 RDF→RUB；`scene_gsplat_data.opengl_c2w_to_rdf` 训练前转回，所以训练后 Gaussian PLY、Seed PLY、SPZ 声明都在 RDF 世界系。区域/路径 GLB 通过场景节点 `diag(1,-1,-1,1)` 转 glTF，PLY/CSV 保持 W0 RDF 米。
 - 显示层翻转只作用于副本：`view_latest.py` 翻 Y，`export_preview.py` 对 PLY 乘 `[1,-1,-1]`，`scene_demo_viewer.py` 不翻几何而是把相机 up 设为 `(0,-1,0)`。
-- 两套反投影并存：场景链（`scene_segmented_capture.depth_cloud`、`live_point_cloud`、`scene_reconstruction`）用 K6 去畸变射线；人体分支（`pose_geometry` / `fusion` / `top_scan`）用无畸变针孔。同一像素两者点不同，不要混用。
+- 两套反投影并存：场景链（`femto.geometry.depth_cloud`、`live_point_cloud`、`scene_reconstruction`）用 K6 去畸变射线；人体分支（`pose_geometry` / `fusion` / `top_scan`）用无畸变针孔。同一像素两者点不同，不要混用。
 - 时域支持 Mask 在 K6 去畸变**之前**的原始对齐像素格；`scene_to_nerfstudio` 把补洞深度与 confidence 按最近邻重映射到去畸变格。
 - 角度显示 `R = Rz(roll)·Ry(yaw)·Rx(pitch)`，奇异时不显示。
 

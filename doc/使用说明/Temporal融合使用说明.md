@@ -19,9 +19,9 @@
 已有固定数据集回放（项目根目录执行）：
 
 ```powershell
-.venv/Scripts/python.exe scene_temporal_fusion.py datasets/scene_20260909_103220 --mode fast --frames 5
-.venv/Scripts/python.exe scene_temporal_fusion.py datasets/scene_20260909_103220 --mode quality --frames 10
-.venv/Scripts/python.exe scene_temporal_fusion.py datasets/scene_20260909_103220 --mode quality --frames 15
+.venv/Scripts/python.exe -m femto.temporal.scene_temporal_fusion datasets/scene_20260909_103220 --mode fast --frames 5
+.venv/Scripts/python.exe -m femto.temporal.scene_temporal_fusion datasets/scene_20260909_103220 --mode quality --frames 10
+.venv/Scripts/python.exe -m femto.temporal.scene_temporal_fusion datasets/scene_20260909_103220 --mode quality --frames 15
 ```
 
 `--start 20` 表示从第20个记录开始，要求真实不同且时间戳递增的帧。数据集必须已经声明fixed_camera=true，程序不把移动数据改标为固定。
@@ -29,9 +29,9 @@
 新采集：固定摄像头与场景，关闭占用相机的其他采集程序后双击 `start_temporal_fusion.cmd`，默认5帧。也可以执行：
 
 ```powershell
-.venv/Scripts/python.exe scene_temporal_fusion.py --capture --mode fast
-.venv/Scripts/python.exe scene_temporal_fusion.py --capture --mode quality
-.venv/Scripts/python.exe scene_temporal_fusion.py --capture --frames 10
+.venv/Scripts/python.exe -m femto.temporal.scene_temporal_fusion --capture --mode fast
+.venv/Scripts/python.exe -m femto.temporal.scene_temporal_fusion --capture --mode quality
+.venv/Scripts/python.exe -m femto.temporal.scene_temporal_fusion --capture --frames 10
 ```
 
 fast默认5帧，quality默认15帧，均支持显式5/10/15帧。新采集沿用wide_detail、1920×1080 RGB、15FPS、250–2210mm、K6标定。取帧循环只做有限数量的帧拷贝；关闭相机后才编码PNG和进行质量分析。不会自动停止现有GUI相机，也不会覆盖当前模型指针。SDK中途异常/设备断开仍可能打断采集；常规读超时已获得的帧按incomplete_capture保存，禁止融合不完整序列。

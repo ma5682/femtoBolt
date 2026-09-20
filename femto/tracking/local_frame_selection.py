@@ -117,3 +117,16 @@ class ViewSelector:
     def accept(self, view):
         if view is not None:
             self.views.append(view)
+
+
+LOCAL_RADIUS_M = .03  # Acquisition envelope, not measurement accuracy.
+
+LOCAL_ROTATION_DEG = 10.0  # Total rotation relative to W0, not per Euler axis.
+
+def local_workspace(transform):
+    transform=np.asarray(transform,dtype=float)
+    radius=float(np.linalg.norm(transform[:3,3]));angle=rotation_deg(transform)
+    return dict(radius_m=radius,limit_m=LOCAL_RADIUS_M,rotation_deg=angle,
+                rotation_limit_deg=LOCAL_ROTATION_DEG,
+                within_limit=bool(np.isfinite([radius,angle]).all() and
+                    radius<=LOCAL_RADIUS_M+1e-12 and angle<=LOCAL_ROTATION_DEG+1e-9))

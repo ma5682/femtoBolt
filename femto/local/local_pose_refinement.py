@@ -9,7 +9,7 @@ import numpy as np
 import open3d as o3d
 import cv2
 from femto.io_utils import imread_unicode as _read_image
-from femto.geometry.scene_reconstruction import _distortion_maps,_prepare_rgbd,_load_poses
+from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps, prepare_rgbd as _prepare_rgbd, load_poses as _load_poses
 from femto.dataset.scene_dataset_validator import validate_pose
 from femto.tracking.moving_quality import rotation_deg,cycle_consistency
 
@@ -168,7 +168,7 @@ def refine(dataset,output):
     manifest['refinement_source_dataset']=str(dataset)
     (derived/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     quality=json.loads((dataset/'pose_quality_report.json').read_text(encoding='utf-8-sig'))
-    from femto.pipeline.scene_to_nerfstudio import pose_diversity
+    from femto.tracking.moving_quality import pose_diversity
     quality['translation_span_m'],quality['rotation_span_deg']=pose_diversity(newposes)
     quality['refinement_report']=str(report_path)
     quality['limitations']=quality.get('limitations',[])+report['limitations']

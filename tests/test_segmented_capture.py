@@ -12,7 +12,8 @@ from femto.app.femto_control_app import FemtoControlApp, save_rgbd_photo
 from femto.geometry.fusion import read_geometry_safe
 from femto.hardware.orbbec_rgbd import AlignedFrame, DEPTH_MODE_SPECS
 from femto.geometry.pose_geometry import Intrinsics
-from femto.capture.scene_segmented_capture import TUNED_DEPTH_MODES, audit_static_views, capture_three_modes, depth_cloud, merge_segments, save_segment
+from femto.capture.scene_segmented_capture import TUNED_DEPTH_MODES, audit_static_views, capture_three_modes, merge_segments, save_segment
+from femto.geometry.depth_cloud import depth_cloud
 
 
 DISTORTION = {

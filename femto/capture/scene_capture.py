@@ -18,6 +18,7 @@ from femto.hardware.orbbec_rgbd import OrbbecAlignedCamera
 
 
 from femto.paths import REPO_ROOT as ROOT
+from femto.dataset.calibration_files import write_calibration
 DEFAULT_DATASETS = ROOT / "datasets"
 MIN_DEPTH_MM = 500.0
 MAX_DEPTH_MM = 3860.0
@@ -51,29 +52,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--auto-start", action="store_true")
     parser.add_argument("--no-window", action="store_true")
     return parser.parse_args()
-
-
-def write_calibration(session: Path, camera: OrbbecAlignedCamera, intrinsics: Any) -> None:
-    """Save raw factory calibration and the aligned RGB-D pixel-grid intrinsic."""
-    calibration = camera.calibration
-    json_dump(session / "calibration" / "color_intrinsic.json", intrinsics.to_dict())
-    json_dump(
-        session / "calibration" / "depth_intrinsic.json",
-        calibration["depth_intrinsic"],
-    )
-    json_dump(
-        session / "calibration" / "depth_to_color.json",
-        calibration["depth_to_color"],
-    )
-    json_dump(
-        session / "calibration" / "distortion.json",
-        {
-            "rgb": calibration["rgb_distortion"],
-            "depth": calibration["depth_distortion"],
-        },
-    )
-    json_dump(session / "calibration" / "factory_calibration.json", calibration)
-    json_dump(session / "calibration" / "camera_metadata.json", camera.metadata)
 
 
 def create_session(output_root: Path) -> Path:

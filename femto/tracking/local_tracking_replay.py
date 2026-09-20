@@ -43,7 +43,7 @@ LEGACY_FLAT_MODULES = {
     'io_utils': 'femto.io_utils',
     'moving_quality': 'femto.tracking.moving_quality',
     'scene_dataset_validator': 'femto.dataset.scene_dataset_validator',
-    'scene_reconstruction': 'femto.geometry.scene_reconstruction',
+    'scene_reconstruction': 'femto.pipeline.scene_reconstruction',
     'local_tracking_background': 'femto.tracking.local_tracking_background',
     'local_tracking_diagnostics': 'femto.tracking.local_tracking_diagnostics',
 }
@@ -110,7 +110,7 @@ def replay(source, output, *, baseline=None, variants=('baseline', 'optimized'))
                 record['selected_for_fusion'] = False
                 record['replay_keyframe_admitted']=False
                 if variant!='baseline' and saved.get('selected_for_fusion') and record['state']=='tracking':
-                    from femto.capture.local_capture import local_workspace
+                    from femto.tracking.local_frame_selection import local_workspace
                     safe=(local_workspace(record['T_WC'])['within_limit'] and not record.get('motion_discontinuity')
                           and record.get('continuity',{}).get('current_frame_verified')
                           and record.get('step_m',0.)<=.003 and record.get('step_deg',0.)<=1.)

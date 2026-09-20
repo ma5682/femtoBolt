@@ -56,7 +56,7 @@ def diagnose(model,point,check=lambda:None,progress=lambda stage:None):
         if calibration_identity(raw_dataset)!=calibration:raise ValueError('原始会话标定不匹配')
         if tracking['session_id']!=local['session_id'] or tracking['reference_frame_id']!=local['reference_frame_id']:raise ValueError('跟踪来源与模型原点不匹配')
         from femto.io_utils import imread_unicode as _read_image
-        from femto.geometry.scene_reconstruction import _distortion_maps
+        from femto.geometry.rgbd_frames import distortion_maps as _distortion_maps
         mx,my,k,w,h=_distortion_maps(dataset)
         report['source_hashes']={str(p.resolve()):digest(p) for p in (dataset/'manifest.json',dataset/'frames.jsonl',tracking_path,record_path)}
         for frame in frames:

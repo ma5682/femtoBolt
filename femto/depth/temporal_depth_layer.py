@@ -2,6 +2,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
+from femto.depth.depth_quality import process_depth_quality
+from femto.paths import child_path
 
 
 @dataclass(frozen=True)
@@ -38,3 +40,20 @@ def load_temporal_layer(directory):
     names=('fused_confidence','source_count','temporal_variance','original_support_count',
            'filled_support_count','selected_original')
     return TemporalDepthLayer(depth,*(np.load(root/(name+'.npy'),allow_pickle=False) for name in names)).validate()
+
+
+def load_temporal_confidence(dataset, frame, depth):
+    path=child_path(Path(dataset),frame['depth_confidence'])
+    c=np.load(path,allow_pickle=False).astype(np.float32)
+    if c.shape!=depth.shape or not np.isfinite(c).all() or np.any((c<0)|(c>1)) or np.any((depth==0)&(c>0)) or np.any((depth>0)&(c==0)):
+        raise ValueError('Invalid temporal confidence/provenance grid')
+    return c
+
+def prepared_depth(dataset,frame,depth,low,high,output,rgb_bgr,*,keep_artifacts=True):
+    """Do not run hole filling again on a fused depth and promote confidence."""
+    if 'depth_confidence' not in frame:
+        return process_depth_quality(depth,low,high,output,rgb_bgr=rgb_bgr,
+                                     keep_artifacts=keep_artifacts)
+    c=load_temporal_confidence(dataset,frame,depth)
+    return depth.copy(),c,dict(original_invalid_rate=float((depth==0).mean()),filled_invalid_rate=float((depth==0).mean()),
+                              repaired_pixels=0,policy='preserved_temporal_confidence'),dict(confidence=str(Path(dataset)/frame['depth_confidence']))

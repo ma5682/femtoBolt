@@ -11,6 +11,7 @@ from femto.depth.depth_quality import process_depth_quality
 from femto.io_utils import imread_unicode as _read, imwrite_unicode, write_json as json_dump
 from femto.depth.temporal_depth_fusion import confidence_weighted_median
 from femto.temporal.scene_temporal_fusion import audit_temporal_motion, _hash, _child
+from femto.depth.temporal_depth_layer import load_temporal_confidence, prepared_depth  # noqa: F401  (re-export)
 
 
 def assess_temporal_scene(raw, rgb, low, high):
@@ -185,7 +186,7 @@ def build_temporal_keyframe(source, progress=lambda text:None):
     json_dump(output/'temporal_report.json',report)
     progress('cloud')
     from types import SimpleNamespace
-    from femto.capture.scene_segmented_capture import depth_cloud
+    from femto.geometry.depth_cloud import depth_cloud
     from femto.geometry.depth_confidence_cloud import write_confident_point_cloud, build_confident_depth_cloud
     selected_rgb=_read(dataset/frame['rgb'],cv2.IMREAD_COLOR)
     distortion=json.loads((dataset/'calibration/distortion.json').read_text())['rgb']
@@ -198,19 +199,3 @@ def build_temporal_keyframe(source, progress=lambda text:None):
     return dataset,report
 
 
-def load_temporal_confidence(dataset, frame, depth):
-    path=_child(Path(dataset),frame['depth_confidence'])
-    c=np.load(path,allow_pickle=False).astype(np.float32)
-    if c.shape!=depth.shape or not np.isfinite(c).all() or np.any((c<0)|(c>1)) or np.any((depth==0)&(c>0)) or np.any((depth>0)&(c==0)):
-        raise ValueError('Invalid temporal confidence/provenance grid')
-    return c
-
-
-def prepared_depth(dataset,frame,depth,low,high,output,rgb_bgr,*,keep_artifacts=True):
-    """Do not run hole filling again on a fused depth and promote confidence."""
-    if 'depth_confidence' not in frame:
-        return process_depth_quality(depth,low,high,output,rgb_bgr=rgb_bgr,
-                                     keep_artifacts=keep_artifacts)
-    c=load_temporal_confidence(dataset,frame,depth)
-    return depth.copy(),c,dict(original_invalid_rate=float((depth==0).mean()),filled_invalid_rate=float((depth==0).mean()),
-                              repaired_pixels=0,policy='preserved_temporal_confidence'),dict(confidence=str(Path(dataset)/frame['depth_confidence']))

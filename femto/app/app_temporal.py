@@ -10,7 +10,7 @@ import json
 import numpy as np
 
 from femto.io_utils import imwrite_unicode, write_json as json_dump
-from femto.capture.scene_capture import write_calibration
+from femto.dataset.calibration_files import write_calibration
 
 
 class TemporalBurst:
