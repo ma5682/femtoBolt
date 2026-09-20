@@ -11,4 +11,4 @@ chcp 65001 >nul
 echo Installing the official torchvision AlexNet checkpoint for LPIPS evaluation.
 echo Default source: %USERPROFILE%\Downloads\alexnet-owt-7be5be79.pth  (override with --source PATH)
 echo The file is verified against the official SHA-256 before it is copied into the torch hub cache.
-"C:\FemtoGsplatRuntime\Scripts\python.exe" scene_gsplat_trainer.py install-lpips %*
+"C:\FemtoGsplatRuntime\Scripts\python.exe" -m femto.gsplat.scene_gsplat_trainer install-lpips %*

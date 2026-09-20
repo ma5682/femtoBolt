@@ -3,12 +3,12 @@ from pathlib import Path
 from unittest.mock import patch
 import numpy as np
 from tests import test_coverage_inspection as fixtures
-from surface_spacing import surface_spacing_plan
-from surface_spacing_report import spacing_report,show_spacing_report
-from planning_state import validate,parameters,state
-from region_path import export_path,load_path,path_summary
-from fixed_rgb_geometry import polygon_contains
-from region_path_guard import constrain_path
+from femto.planning.surface_spacing import surface_spacing_plan
+from femto.planning.surface_spacing_report import spacing_report,show_spacing_report
+from femto.planning.planning_state import validate,parameters,state
+from femto.planning.region_path import export_path,load_path,path_summary
+from femto.annotation.fixed_rgb_geometry import polygon_contains
+from femto.planning.region_path_guard import constrain_path
 
 class SurfaceSpacingTests(unittest.TestCase):
     def setUp(self):
@@ -22,7 +22,7 @@ class SurfaceSpacingTests(unittest.TestCase):
         # Independent exact Euclidean distance to all source segments on this flat
         # fixture bounds any graph surface distance, even when trusted-face removal
         # changes the seed set and produces non-horizontal contours.
-        from region_coverage import point_segment_distance
+        from femto.planning.region_coverage import point_segment_distance
         for row in rows[::7]:
             sources=[c for c in p['segments'] if abs(c[0]['surface_level_m']-row['preceding_level_m'])<1e-9]
             exact=min(float(point_segment_distance(np.asarray([row['xyz_m']]),np.asarray(a['xyz_m']),np.asarray(b['xyz_m']))[0])*1000 for c in sources for a,b in zip(c,c[1:]))
@@ -81,7 +81,7 @@ class SurfaceSpacingTests(unittest.TestCase):
     def test_report_click_locates_chain_point(self):
         import tkinter as tk
         from types import SimpleNamespace
-        from path_presentation import show_presentation
+        from femto.planning.path_presentation import show_presentation
         p=self.plan();root=tk.Tk();root.withdraw()
         try:
             show_presentation(root,SimpleNamespace(rgb=np.zeros((85,85,3),np.uint8),projection=self.projection),self.region,p)
@@ -101,11 +101,11 @@ class SurfaceWorkflowTests(unittest.TestCase):
     tearDown=workflow_fixtures.PlanningStateTests.tearDown
     pump=workflow_fixtures.PlanningStateTests.pump
     def test_mode_request_ui_draft_recovery_and_cancel(self):
-        from planning_drafts import Journal,snapshot,read
+        from femto.planning.planning_drafts import Journal,snapshot,read
         v=self.viewer;before=copy.deepcopy(v._requests)
-        with patch('fixed_rgb_viewer.simpledialog.askfloat',side_effect=[4,None]):v.plan_surface_spacing()
+        with patch('femto.planning.fixed_rgb_viewer.simpledialog.askfloat',side_effect=[4,None]):v.plan_surface_spacing()
         self.assertEqual(v._requests,before);self.assertIs(v.current_region_path(),self.plan)
-        with patch('fixed_rgb_viewer.simpledialog.askfloat',side_effect=[4,1,2,0,1]),patch.object(v,'work') as work:
+        with patch('femto.planning.fixed_rgb_viewer.simpledialog.askfloat',side_effect=[4,1,2,0,1]),patch.object(v,'work') as work:
             v.plan_surface_spacing()
         request=v._requests[self.region['annotation_id']]
         self.assertEqual(request['kind'],'surface_spacing');self.assertFalse(v.planning_state()['can_use'])
@@ -114,7 +114,7 @@ class SurfaceWorkflowTests(unittest.TestCase):
         v.draft_journal.submit(snapshot(v));v.draft_journal.wait()
         self.assertEqual(read(v.draft_journal.path,self.model)['parameters'],v._requests)
         v._requests={}
-        with patch('fixed_rgb_viewer.messagebox.askyesnocancel',return_value=True):v.offer_recovery()
+        with patch('femto.planning.fixed_rgb_viewer.messagebox.askyesnocancel',return_value=True):v.offer_recovery()
         self.pump();self.assertEqual(v._requests[self.region['annotation_id']],request)
         self.assertIsNone(v.current_region_path())
         data=json.loads(v.draft_journal.path.read_text(encoding='utf-8'));del data['parameters'][self.region['annotation_id']]['values']['boundary_margin_mm']

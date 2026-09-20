@@ -5,11 +5,11 @@ import unittest
 
 import numpy as np
 
-from scene_gsplat_split import make_split, validate_split, file_sha256
-from scene_gsplat_trainer import means_learning_rate
-from scene_to_nerfstudio import convert
-from synthetic_scene_demo import generate_dataset
-from scene_gsplat_data import load_gsplat_dataset
+from femto.dataset.scene_gsplat_split import make_split, validate_split, file_sha256
+from femto.gsplat.scene_gsplat_trainer import means_learning_rate
+from femto.pipeline.scene_to_nerfstudio import convert
+from femto.pipeline.synthetic_scene_demo import generate_dataset
+from femto.gsplat.scene_gsplat_data import load_gsplat_dataset
 from PIL import Image
 
 

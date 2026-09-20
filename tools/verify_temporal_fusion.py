@@ -9,9 +9,9 @@ import cv2
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))  # tools/ scripts import repository-root modules
-from io_utils import imwrite_unicode, write_json as json_dump
-from temporal_depth_fusion import fuse_temporal_depth
+sys.path.insert(0, str(REPO_ROOT))  # tools/ scripts import the femto package from the repository root
+from femto.io_utils import imwrite_unicode, write_json as json_dump
+from femto.depth.temporal_depth_fusion import fuse_temporal_depth
 
 
 def run():

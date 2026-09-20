@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 
 import numpy as np
-from region_path import raster_path, export_path, signature, load_path, path_summary
+from femto.planning.region_path import raster_path, export_path, signature, load_path, path_summary
 
 
 class Projection:
@@ -85,7 +85,7 @@ class RegionPathTests(unittest.TestCase):
 
     def test_real_projection_preserves_surface_and_pixel_mapping(self):
         import open3d as o3d
-        from fixed_rgb_geometry import FixedProjection
+        from femto.annotation.fixed_rgb_geometry import FixedProjection
         mesh = o3d.geometry.TriangleMesh()
         mesh.vertices = o3d.utility.Vector3dVector([[-.5, -.5, .5], [.5, -.5, .5],
                                                    [.5, .5, .5], [-.5, .5, .5]])

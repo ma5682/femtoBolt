@@ -2,7 +2,7 @@ import copy,json,tempfile,unittest
 from pathlib import Path
 from unittest import mock
 import numpy as np
-import research_validation as v
+import femto.reports.research_validation as v
 
 class ValidationWorkflowTests(unittest.TestCase):
     def setUp(self):
@@ -63,7 +63,7 @@ class ValidationWorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.run_record()
     def test_atomic_failure_and_cancel_preserve_valid_record(self):
         a=self.run_record();before=a.read_bytes()
-        with mock.patch('research_validation.os.replace',side_effect=OSError('disk full')):
+        with mock.patch('femto.reports.research_validation.os.replace',side_effect=OSError('disk full')):
             with self.assertRaises(OSError):self.run_record('2')
         self.assertEqual(a.read_bytes(),before);self.assertEqual(len(list((self.root/'runs').iterdir())),1)
         with self.assertRaises(RuntimeError):v.record(self.root/'spec.json',self.root/'obs.json',self.root/'runs','3',check=lambda:(_ for _ in ()).throw(RuntimeError('cancel')))

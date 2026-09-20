@@ -9,10 +9,10 @@ import time
 import unittest
 from unittest import mock
 
-from local_capture import LocalCapture
-from local_offline import LocalOfflineJob, PublicationError, publish_result
-from io_utils import load_json_object as read_json
-from local_processing import SCHEMA
+from femto.capture.local_capture import LocalCapture
+from femto.pipeline.local_offline import LocalOfflineJob, PublicationError, publish_result
+from femto.io_utils import load_json_object as read_json
+from femto.pipeline.local_processing import SCHEMA
 
 
 def write(path, value):
@@ -51,7 +51,7 @@ class OfflineTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def test_pending_results_are_not_restored_until_publication_commits(self):
-        from reconstruction_sources import mode_of, restore
+        from femto.pipeline.reconstruction_sources import mode_of, restore
         _, outputs, result, _ = result_fixture(self.root)
         self.assertIsNone(mode_of(result))
         self.assertIsNone(restore(outputs)['moving'])
@@ -62,7 +62,7 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual((outputs / 'latest_complete_demo.txt').read_text(), str(result / 'reconstruction'))
 
     def test_damaged_or_cancelled_receipts_cannot_break_or_bypass_restore(self):
-        from reconstruction_sources import mode_of,restore
+        from femto.pipeline.reconstruction_sources import mode_of,restore
         _,outputs,result,_=result_fixture(self.root)
         publication=publish_result(result,outputs,'one')
         for bad in ([],dict(publication,schema='unsupported-v999'),dict(publication,status='cancelled')):
@@ -86,7 +86,7 @@ class OfflineTests(unittest.TestCase):
         self.assertFalse(list(outputs.glob('latest*.txt')))
 
     def test_partial_publication_failure_restores_existing_indexes(self):
-        import local_offline
+        import femto.pipeline.local_offline as local_offline
         _, outputs, result, _ = result_fixture(self.root)
         before = {}
         for name in ('latest_complete_demo.txt', 'latest_moving_reconstruction.txt'):
@@ -108,7 +108,7 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual(read_json(result / 'publication.json')['status'], 'failed')
 
     def test_cancel_during_publication_rolls_back_before_completion_receipt(self):
-        import local_offline
+        import femto.pipeline.local_offline as local_offline
         _,outputs,result,_=result_fixture(self.root)
         marker=outputs/'latest_complete_demo.txt'
         marker.write_text('previous',encoding='utf-8')
@@ -128,7 +128,7 @@ class OfflineTests(unittest.TestCase):
 
     def test_application_shutdown_cancels_even_before_sdk_owner_returns(self):
         from test_local_capture import make_camera
-        from femto_control_app import FemtoControlApp
+        from femto.app.femto_control_app import FemtoControlApp
         from types import SimpleNamespace
         stop=threading.Event()
         session_cancel=threading.Event()
@@ -138,13 +138,13 @@ class OfflineTests(unittest.TestCase):
             capture.thread.join(2)
         app=SimpleNamespace(capturing=False,processing=True,stop_event=stop,command_queue=queue.Queue(),
             temporal_collecting=False,point_cloud_preview=None,root=mock.Mock(),_t=lambda key:key)
-        with mock.patch('femto_control_app.messagebox.askyesno',return_value=True):
+        with mock.patch('femto.app.femto_control_app.messagebox.askyesno',return_value=True):
             FemtoControlApp.close(app)
         self.assertFalse(session_cancel.is_set())  # SDK owner has not handled its finally/queue yet.
         self.assertTrue(capture._cancelled())
         self.assertTrue(app.root.destroy.called)
         _,outputs,result,_=result_fixture(self.root/'model')
-        from local_comparison import StageStopped
+        from femto.local.local_comparison import StageStopped
         with self.assertRaises(StageStopped):
             publish_result(result,outputs,'one',cancelled=capture._cancelled)
         self.assertFalse(list(outputs.glob('latest*.txt')))
@@ -166,7 +166,7 @@ class OfflineTests(unittest.TestCase):
         self.assertFalse(capture.processing_cancel.is_set())
 
     def test_late_completed_worker_after_cancel_never_publishes(self):
-        from local_comparison import StageStopped
+        from femto.local.local_comparison import StageStopped
         dataset, outputs, result, quality = result_fixture(self.root)
         cancel = threading.Event()
         job = LocalOfflineJob(dataset, self.root / 'job', outputs, 'one', cancel.is_set)
@@ -176,7 +176,7 @@ class OfflineTests(unittest.TestCase):
             write(job.output / 'worker_result.json', dict(status='complete', result=str(result), session_id='one'))
             cancel.set()
             return dict(elapsed_s=.1, returncode=0)
-        with mock.patch('local_comparison.supervise', side_effect=completed):
+        with mock.patch('femto.local.local_comparison.supervise', side_effect=completed):
             with self.assertRaises(StageStopped) as raised:
                 job.run()
         self.assertEqual(raised.exception.status, 'cancelled')
@@ -193,7 +193,7 @@ class OfflineTests(unittest.TestCase):
             write(job.output/'created_result.json',dict(result=str(foreign),session_id='current'))
             write(job.output/'worker_result.json',dict(status='complete',result=str(foreign),session_id='current'))
             return dict(elapsed_s=.1,returncode=0)
-        with mock.patch('local_comparison.supervise',side_effect=wrong_result):
+        with mock.patch('femto.local.local_comparison.supervise',side_effect=wrong_result):
             with self.assertRaisesRegex(ValueError,'ownership'):
                 job.run()
         self.assertIsNone(job.result)
@@ -214,13 +214,13 @@ class OfflineTests(unittest.TestCase):
         offline = mock.Mock(path=self.root / 'missing/report.json', report=dict(state='failed'))
         offline.run.side_effect = OSError('original processing failure')
         offline.terminal.side_effect = OSError('journal disk failure')
-        with mock.patch('local_capture.LiveTracker', return_value=tracker), \
-             mock.patch('local_capture.PairEstimator'), \
-             mock.patch('local_live_preview.LivePreviewWorker'), \
-             mock.patch('femto_control_app.finalize_scan'), \
+        with mock.patch('femto.capture.local_capture.LiveTracker', return_value=tracker), \
+             mock.patch('femto.capture.local_capture.PairEstimator'), \
+             mock.patch('femto.capture.local_live_preview.LivePreviewWorker'), \
+             mock.patch('femto.app.femto_control_app.finalize_scan'), \
              mock.patch.object(capture, '_write_tracking_report'), \
              mock.patch.object(capture, '_export_poses', return_value=self.root / 'posed'), \
-             mock.patch('local_offline.LocalOfflineJob', return_value=offline):
+             mock.patch('femto.pipeline.local_offline.LocalOfflineJob', return_value=offline):
             capture._run()
         events = []
         while not capture.events.empty():
@@ -232,7 +232,7 @@ class OfflineTests(unittest.TestCase):
         self.assertFalse(terminal[0]['failure']['successful_model_published'])
 
     def test_processing_exception_keeps_original_error_when_journal_fails(self):
-        from local_processing import LocalProcessing
+        from femto.pipeline.local_processing import LocalProcessing
         dataset, _, _, _ = result_fixture(self.root)
         job = LocalProcessing(dataset, self.root / 'processing')
         with mock.patch.object(job, 'publish', side_effect=OSError('journal failure')):
@@ -243,7 +243,7 @@ class OfflineTests(unittest.TestCase):
 
     def test_real_offline_subprocess_finishes_without_touching_sources_or_latest(self):
         from test_local_comparison import make_fixture
-        from local_comparison import changed_files, fingerprints
+        from femto.local.local_comparison import changed_files, fingerprints
         dataset = make_fixture(self.root / 'fixture')
         manifest = read_json(dataset / 'manifest.json')
         before = fingerprints(p for p in (self.root / 'fixture').rglob('*') if p.is_file())
@@ -271,7 +271,7 @@ class OfflineTests(unittest.TestCase):
     def test_live_processing_cancel_control_and_late_events_are_session_bound(self):
         import gc
         import tkinter as tk
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         gc.collect()
         with mock.patch.object(control.FemtoControlApp, '_start_camera'), \
              mock.patch.object(control.FemtoControlApp, '_load_latest_paths'):

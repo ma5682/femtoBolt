@@ -5,9 +5,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 import numpy as np
-from moving_quality import frame_quality, cycle_consistency, select_keyframes, capture_feedback
-import scene_pose_estimator as estimator
-from femto_control_app import ActiveScan, harvest_capture_motion
+from femto.tracking.moving_quality import frame_quality, cycle_consistency, select_keyframes, capture_feedback
+import femto.tracking.scene_pose_estimator as estimator
+from femto.app.femto_control_app import ActiveScan, harvest_capture_motion
 
 class MovingQualityTests(unittest.TestCase):
     def test_depth_and_blur_hints_do_not_modify_source(self):

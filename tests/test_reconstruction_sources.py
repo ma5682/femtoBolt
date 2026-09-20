@@ -4,13 +4,13 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch, Mock
 
-import reconstruction_sources as sources
+import femto.pipeline.reconstruction_sources as sources
 
 
 class SourceTests(unittest.TestCase):
     def test_gui_mode_switch_keeps_both_sources_and_missing_source_disables(self):
         import tkinter as tk
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         with patch.object(control.FemtoControlApp, '_start_camera'), patch.object(control.FemtoControlApp, '_load_latest_paths'):
             root = tk.Tk()
             root.withdraw()
@@ -32,7 +32,7 @@ class SourceTests(unittest.TestCase):
                     self.assertEqual(app.view_button['text'], app._t(f'app.view_model.{mode}'))
                     with patch.object(control.subprocess, 'Popen') as viewer:
                         app.view_model()
-                        self.assertEqual(viewer.call_args.args[0][2], str(expected / 'reconstruction'))
+                        self.assertEqual(viewer.call_args.args[0][3], str(expected / 'reconstruction'))
                 app.latest_keyframe_result = None
                 app._set_action_state()
                 self.assertEqual(str(app.single_train_button['state']), 'disabled')
@@ -62,7 +62,7 @@ class SourceTests(unittest.TestCase):
             frame_count=1 if fixed else 90, created_local=date)))
         return folder.resolve()
 
-    @patch('scene_single_gs.resolve_source')
+    @patch('femto.gsplat.scene_single_gs.resolve_source')
     def test_alternating_and_restart_preserve_each_mode(self, resolve):
         with TemporaryDirectory() as td:
             root = Path(td)
@@ -75,7 +75,7 @@ class SourceTests(unittest.TestCase):
             self.assertEqual(sources.restore(root), dict(keyframe=newer, moving=moving))
             self.assertEqual((root / sources.MARKERS['moving']).read_text(), str(moving))
 
-    @patch('scene_single_gs.resolve_source')
+    @patch('femto.gsplat.scene_single_gs.resolve_source')
     def test_legacy_discovery_rejects_synthetic_and_incomplete(self, resolve):
         with TemporaryDirectory() as td:
             root = Path(td)
@@ -87,7 +87,7 @@ class SourceTests(unittest.TestCase):
             self.assertEqual(sources.restore(root), dict(keyframe=None, moving=good))
 
     def test_training_dispatch_ignores_shared_result_and_selector(self):
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         app = control.FemtoControlApp.__new__(control.FemtoControlApp)
         app.processing = app.capturing = app.photo_saving = False
         app.latest_result = Path('unrelated')
@@ -100,7 +100,7 @@ class SourceTests(unittest.TestCase):
             app.train_3dgs()
             self.assertEqual(thread.call_args.kwargs['args'][1], Path('moving'))
         app.processing = False
-        with patch.object(control.threading, 'Thread') as thread, patch('scene_single_gs.launch', return_value=Path('model')) as launch:
+        with patch.object(control.threading, 'Thread') as thread, patch('femto.gsplat.scene_single_gs.launch', return_value=Path('model')) as launch:
             app.train_single_gs()
             thread.call_args.kwargs['target']()
             self.assertEqual(launch.call_args.args[0], Path('fixed'))

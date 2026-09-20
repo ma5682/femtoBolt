@@ -5,11 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
 import open3d as o3d
-from scene_annotations import AnnotationStore
-from fixed_rgb_geometry import FixedProjection,polygon_contains
-from region_coverage import coverage_plan
-from region_path import export_path,load_path,raster_path
-from region_exclusions import allowed_region
+from femto.annotation.scene_annotations import AnnotationStore
+from femto.annotation.fixed_rgb_geometry import FixedProjection,polygon_contains
+from femto.planning.region_coverage import coverage_plan
+from femto.planning.region_path import export_path,load_path,raster_path
+from femto.planning.region_exclusions import allowed_region
 
 
 class ExclusionTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class ExclusionTests(unittest.TestCase):
             self.assertIn('forbidden_region_W0',scene.graph.nodes)
 
     def test_save_load_undo_invalidates_signature(self):
-        from region_path import signature
+        from femto.planning.region_path import signature
         with tempfile.TemporaryDirectory() as tmp:
             store=AnnotationStore(self.mesh,Path(tmp)/'mesh.ply')
             r=store.add_region(dict(self.region,exclusion_polygons=[]));before=signature(r)

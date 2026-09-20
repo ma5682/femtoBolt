@@ -8,7 +8,7 @@ import unittest
 import numpy as np
 import open3d as o3d
 
-import scene_scale_validation as scale
+import femto.reports.scene_scale_validation as scale
 
 
 def _build_reconstruction(root: Path, points: np.ndarray) -> Path:

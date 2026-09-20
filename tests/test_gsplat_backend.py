@@ -8,9 +8,9 @@ from unittest import mock
 
 import numpy as np
 
-import gsplat_backend
-from scene_gsplat_export import read_trained_gaussian_ply, write_trained_gaussian_ply
-from scene_gsplat_trainer import PROFILES
+import femto.gsplat.gsplat_backend as gsplat_backend
+from femto.gsplat.scene_gsplat_export import read_trained_gaussian_ply, write_trained_gaussian_ply
+from femto.gsplat.scene_gsplat_trainer import PROFILES
 
 
 def _write_demo(root: Path, nerfstudio: Path) -> None:
@@ -30,7 +30,7 @@ class GsplatBackendTests(unittest.TestCase):
             manifest = {'source_dataset': str(root / 'source'),
                         'initialization': {'voxel_m': 0.005, 'max_points': 12345}}
             (original / 'conversion_manifest.json').write_text(json.dumps(manifest))
-            with mock.patch('scene_to_nerfstudio.convert') as conversion:
+            with mock.patch('femto.pipeline.scene_to_nerfstudio.convert') as conversion:
                 prepared = gsplat_backend.prepare_training_input(original)
             self.assertNotEqual(prepared, original)
             self.assertEqual(prepared.parent, original.parent)
@@ -42,7 +42,7 @@ class GsplatBackendTests(unittest.TestCase):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / 'transforms.json').write_text(json.dumps({'dataset_split': {}}))
-            with mock.patch('scene_to_nerfstudio.convert') as conversion:
+            with mock.patch('femto.pipeline.scene_to_nerfstudio.convert') as conversion:
                 self.assertEqual(gsplat_backend.prepare_training_input(root), root.resolve())
             conversion.assert_not_called()
 
@@ -82,13 +82,12 @@ class GsplatBackendTests(unittest.TestCase):
             iterations=800,
             export_spz=False,
         )
-        self.assertEqual(command[2], "train")
+        self.assertEqual(command[1:4], ["-m", "femto.gsplat.scene_gsplat_trainer", "train"])
         self.assertIn("--profile", command)
         self.assertEqual(command[command.index("--profile") + 1], "balanced")
         self.assertEqual(command[command.index("--output") + 1], str(Path("output")))
         self.assertEqual(command[command.index("--iterations") + 1], "800")
         self.assertIn("--no-spz", command)
-        self.assertTrue(command[1].endswith("scene_gsplat_trainer.py"))
 
     def test_unknown_profile_is_rejected_before_launching_a_process(self) -> None:
         with self.assertRaises(ValueError):

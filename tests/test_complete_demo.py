@@ -9,15 +9,15 @@ import cv2
 import numpy as np
 import open3d as o3d
 
-from fusion import read_geometry_safe
-from io_utils import imwrite_unicode
-from scene_dataset_validator import validate_pose
-from scene_gaussian import export_gaussian_initialization
-from scene_keyframe import build_fixed_keyframe_dataset
-from scene_reconstruction import reconstruct_scene
-from scene_static_fusion import build_static_median_dataset
-from scene_to_nerfstudio import convert
-from synthetic_scene_demo import _look_at_rdf, generate_dataset
+from femto.geometry.fusion import read_geometry_safe
+from femto.io_utils import imwrite_unicode
+from femto.dataset.scene_dataset_validator import validate_pose
+from femto.geometry.scene_gaussian import export_gaussian_initialization
+from femto.temporal.scene_keyframe import build_fixed_keyframe_dataset
+from femto.geometry.scene_reconstruction import reconstruct_scene
+from femto.temporal.scene_static_fusion import build_static_median_dataset
+from femto.pipeline.scene_to_nerfstudio import convert
+from femto.pipeline.synthetic_scene_demo import _look_at_rdf, generate_dataset
 
 
 class CompleteDemoTests(unittest.TestCase):

@@ -6,11 +6,11 @@ import json
 
 import numpy as np
 
-import depth_quality
-from depth_quality import DepthQualityConfig, assess_and_fill_depth, process_depth_quality
-from depth_error_check import depth_error_check
-from depth_confidence_cloud import build_confident_depth_cloud, write_confident_point_cloud
-from depth_debug_viewer import DepthDebugData, DepthDebugViewer, MODES, GREEN, YELLOW, RED
+import femto.depth.depth_quality as depth_quality
+from femto.depth.depth_quality import DepthQualityConfig, assess_and_fill_depth, process_depth_quality
+from femto.depth.depth_error_check import depth_error_check
+from femto.geometry.depth_confidence_cloud import build_confident_depth_cloud, write_confident_point_cloud
+from femto.viewer.depth_debug_viewer import DepthDebugData, DepthDebugViewer, MODES, GREEN, YELLOW, RED
 
 
 class DepthErrorDebugTests(TestCase):

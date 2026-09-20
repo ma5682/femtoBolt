@@ -11,18 +11,18 @@ import cv2
 import numpy as np
 from PIL import Image
 
-import gsplat_backend
-from femto_control_app import (
+import femto.gsplat.gsplat_backend as gsplat_backend
+from femto.app.femto_control_app import (
     ActiveScan,
     harvest_capture_motion,
     update_capture_motion_state,
     wait_for_aligned_frame,
 )
-from scene_gsplat_acceptance import build_acceptance_report, input_provenance
-from scene_gsplat_data import load_gsplat_dataset, opengl_c2w_to_rdf
-from scene_gsplat_trainer import assess_training_input
-from scene_gsplat_split import make_split, file_sha256
-from scene_pose_estimator import assess_background_motion, assess_rgb_motion_pair, estimate_poses
+from femto.gsplat.scene_gsplat_acceptance import build_acceptance_report, input_provenance
+from femto.gsplat.scene_gsplat_data import load_gsplat_dataset, opengl_c2w_to_rdf
+from femto.gsplat.scene_gsplat_trainer import assess_training_input
+from femto.dataset.scene_gsplat_split import make_split, file_sha256
+from femto.tracking.scene_pose_estimator import assess_background_motion, assess_rgb_motion_pair, estimate_poses
 
 
 def write_json(path, value):
@@ -308,7 +308,7 @@ class RealFemtoClosureTests(unittest.TestCase):
             mask[: max(1, len(source) // 10)] = 1
             return np.eye(3, dtype=np.float64), mask
 
-        with mock.patch("scene_pose_estimator.cv2.findHomography", side_effect=low_consensus):
+        with mock.patch("femto.tracking.scene_pose_estimator.cv2.findHomography", side_effect=low_consensus):
             report = assess_rgb_motion_pair(base, shifted, scale=0.5)
         self.assertFalse(report["reliable"])
         self.assertIsNone(report["appears_fixed"])
@@ -351,7 +351,7 @@ class RealFemtoClosureTests(unittest.TestCase):
             base = self._textured_rgb()
             frames = self._write_motion_sequence(root, [base] * 5)
             with mock.patch(
-                "scene_pose_estimator.assess_rgb_motion_pair",
+                "femto.tracking.scene_pose_estimator.assess_rgb_motion_pair",
                 side_effect=[fixed, unreliable, unreliable, fixed, fixed],
             ):
                 report = assess_background_motion(root, frames, scale=0.5)
@@ -447,7 +447,7 @@ class RealFemtoClosureTests(unittest.TestCase):
             before = hashlib.sha256((root / "frames.jsonl").read_bytes()).hexdigest()
             output = root / "derived" / "rejected"
             motion = {"reliable": True, "homography_inlier_ratio": 1., "median_background_displacement_px": .1}
-            with mock.patch("scene_pose_estimator.assess_background_motion", return_value=motion):
+            with mock.patch("femto.tracking.scene_pose_estimator.assess_background_motion", return_value=motion):
                 with self.assertRaises(ValueError):
                     estimate_poses(root, output)
             report = json.loads((output / "pose_quality_report.json").read_text(encoding="utf-8-sig"))

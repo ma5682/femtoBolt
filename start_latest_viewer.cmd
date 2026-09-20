@@ -7,5 +7,5 @@ if not exist ".venv\Scripts\python.exe" (
   pause
   exit /b 1
 )
-".venv\Scripts\python.exe" -u "view_latest.py"
+".venv\Scripts\python.exe" -u -m femto.viewer.view_latest
 if errorlevel 1 pause

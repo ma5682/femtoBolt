@@ -66,7 +66,7 @@ Femto Bolt → RGB-D 原始数据 → 标定 / Pose / 坐标 → Point Cloud / T
 全部从仓库根目录运行。
 
 ```powershell
-# 单元测试（约 600 个用例，unittest；.venv 里固定 8 个因缺 torch 跳过；会弹出真实 Tk 窗口，需交互桌面会话）
+# 单元测试（约 700 个用例，unittest；.venv 里固定 8 个因缺 torch 跳过；会弹出真实 Tk 窗口，需交互桌面会话）
 .venv\Scripts\python.exe -X utf8 -m unittest discover -s tests
 
 # 单个文件 / 单个用例（只用这两种形式；点分模块名 `-m unittest tests.test_x` 会因兄弟 import 风格不一致而 ModuleNotFoundError）
@@ -80,60 +80,66 @@ C:\FemtoGsplatRuntime\Scripts\python.exe -m unittest discover -s tests -p "test_
 .venv\Scripts\python.exe commercial_compliance_check.py     # 或 .\check_commercial_readiness.cmd
 
 # 不接相机的端到端回归：合成真值 RGB-D → 校验 → TSDF → Nerfstudio → Gaussian 初值（改几何链路后最有价值）
-.venv\Scripts\python.exe complete_demo.py --mode synthetic --no-viewer
+.venv\Scripts\python.exe -m femto.pipeline.complete_demo --mode synthetic --no-viewer
 # 已采集真实原始数据的重新处理（失败会阻断，不回退到 synthetic）
-.venv\Scripts\python.exe complete_demo.py --mode latest --no-viewer
+.venv\Scripts\python.exe -m femto.pipeline.complete_demo --mode latest --no-viewer
 
 # 相机连通性冒烟测试（拍一张 RGB-D 后退出）
-.venv\Scripts\python.exe femto_control_app.py --smoke-test
+.venv\Scripts\python.exe -m femto.app.femto_control_app --smoke-test
 
 # 数据集门禁 / Nerfstudio 转换 / 实拍验收报告 / 尺度验证
-.venv\Scripts\python.exe scene_dataset_validator.py         # 默认 datasets/latest_scene.txt
-.venv\Scripts\python.exe scene_to_nerfstudio.py
+.venv\Scripts\python.exe -m femto.dataset.scene_dataset_validator         # 默认 datasets/latest_scene.txt
+.venv\Scripts\python.exe -m femto.pipeline.scene_to_nerfstudio
 .\生成实拍验收报告.cmd <结果目录> --spec <field_acceptance_spec.json>
-.venv\Scripts\python.exe scene_scale_validation.py --pick --ground-truth-mm 300 --label ruler_300mm
+.venv\Scripts\python.exe -m femto.reports.scene_scale_validation --pick --ground-truth-mm 300 --label ruler_300mm
 
 # 正式产品 3DGS（.venv-gsplat，.cmd 会加载 VsDevCmd + CUDA 环境）
 .\start_direct_gsplat_status.cmd                            # runtime + LPIPS 权重 + 最近输入是否达标
 .\start_direct_gsplat_train.cmd --profile low_vram          # low_vram | balanced | quality
-.venv\Scripts\python.exe gsplat_backend.py train --require-real --profile low_vram   # UI 等价入口，会自动补做严格分区转换
-.\.venv-gsplat\Scripts\python.exe scene_gsplat_export.py outputs\direct_gsplat_xxx   # 已有 PLY 的官方 SPZ 转换
+.venv\Scripts\python.exe -m femto.gsplat.gsplat_backend train --require-real --profile low_vram   # UI 等价入口，会自动补做严格分区转换
+C:\FemtoGsplatRuntime\Scripts\python.exe -m femto.gsplat.scene_gsplat_export outputs\direct_gsplat_xxx   # 已有 PLY 的官方 SPZ 转换
 .\start_direct_gsplat_viewer.cmd outputs\direct_gsplat_xxx --orbit 3 --width 320 --data-kind synthetic
-.venv\Scripts\python.exe scene_gsplat_acceptance.py
+.venv\Scripts\python.exe -m femto.gsplat.scene_gsplat_acceptance
 
 # 离线局部工具（不开相机）
-.venv\Scripts\python.exe local_comparison.py <local_posed_dataset> <new_dir>      # 同源 A/B/C 几何对照
-.venv\Scripts\python.exe local_interrupted.py <session_dir> --output <dir>      # 失跟会话的合格前缀重建
-.venv\Scripts\python.exe local_tracking_replay.py <session_dir> --output <dir>  # 只读跟踪回放
-.venv\Scripts\python.exe depth_quality_replay.py <photo_or_scene_dir>           # 深度补洞回放
+.venv\Scripts\python.exe -m femto.local.local_comparison <local_posed_dataset> <new_dir>      # 同源 A/B/C 几何对照
+.venv\Scripts\python.exe -m femto.pipeline.local_interrupted <session_dir> --output <dir>      # 失跟会话的合格前缀重建
+.venv\Scripts\python.exe -m femto.tracking.local_tracking_replay <session_dir> --output <dir>  # 只读跟踪回放
+.venv\Scripts\python.exe -m femto.pipeline.depth_quality_replay <photo_or_scene_dir>           # 深度补洞回放
 .\start_fixed_rgb_viewer.cmd [结果目录|*.region.zip]                            # 固定 RGB 标注 / 规划工作台
 .\start_region_planner.cmd                                                       # 选 .region.zip 打开规划工作台
 ```
 
 需要相机的 GUI 入口：`start_femto_app.cmd`（主界面，`pythonw`）、`start_scene_capture.cmd`、`start_real_scene_demo.cmd`、`start_temporal_fusion.cmd`、`start_top_scan.cmd`。`一键清理历史.cmd` / `清理历史数据.ps1` 把 `datasets/scene_*`、`outputs/complete_demo_*` 及三个 marker 移入回收站（需输入 `DELETE`），不会清 `datasets/latest_scene.txt` 和 `latest_keyframe_reconstruction.txt`，会留下悬空指针。
 
-训练器排错：`set FEMTO_GSPLAT_DEBUG=1` 后 `scene_gsplat_trainer.py` 打印完整 traceback，否则只输出 `{"status":"blocked","error":...}`。
+训练器排错：`set FEMTO_GSPLAT_DEBUG=1` 后 `scene_gsplat_trainer` 打印完整 traceback，否则只输出 `{"status":"blocked","error":...}`。
 
 ## 架构
 
-模块只有一层，全部在根目录（约 110 个 `.py`），互相直接 import，无包结构。按前缀分组：
+2026-09-20 起源码位于 `femto/` 包（约 130 个模块、16 个子包），根目录只保留 `commercial_compliance_check.py`、`.cmd` 入口、`tests/` 与 `tools/`。**文件基名沿用迁移前的名字**（例如 `scene_capture.py` 现在是 `femto/capture/scene_capture.py`），文档和历史记录里的模块名仍然可以直接对应到文件。所有入口一律 `python -m femto.<pkg>.<module>`，从仓库根目录运行；子进程也全部改为 `-m` 加 `cwd=REPO_ROOT`，没有任何按脚本路径启动的地方。`femto/paths.py` 提供 `REPO_ROOT / DATASETS_ROOT / OUTPUTS_ROOT / PHOTOS_ROOT / MODELS_ROOT / LOG_ROOT`，模块内不要再写 `Path(__file__).resolve().parent` 去找数据树。
 
-| 前缀 / 模块 | 职责 |
-|---|---|
-| `orbbec_rgbd.py` | 唯一 SDK 封装。`DEPTH_MODE_SPECS` 四档（`wide_detail` 1024×1024@15、`wide`、`near`、`far`）；主界面固定 `APP_DEPTH_MODE="wide_detail"`（0.25–2.21 m）+ RGB 1920×1080；构造默认却是 `near`（500–3860 mm），`scene_capture.py`/`top_scan.py` 用的是默认。`AlignedFrame` 数组可能别名 SDK 缓冲，保留必须 copy |
-| `femto_control_app.py` | Tk 主界面（~2100 行）。单一 `FemtoCamera` 线程独占 SDK，命令队列 + 事件队列；`ttk.Notebook` 两页：tab 0 默认为**局部移动补采**（`app_local_panel.LocalPanel`），tab 1 为固定采集与高级功能（拍照、关键帧、移动采集、时域融合、3DGS、报告）。`SCAN_MODE_KEYS=("keyframe","moving")`，**没有 static 模式** |
-| `app_local_*.py` / `local_*.py` / `scene_live_tracker.py` | 局部补采工作台：在线 RGB-D 里程计、W0 参考、视角接纳、实时累计预览、离线收尾（精配准候选、五帧支持 Mask、TSDF、发布凭证）、历史、A/B/C 对照、参数研究、失跟前缀重建、回放诊断 |
-| `app_temporal*.py` / `temporal_*.py` / `scene_temporal_fusion.py` | 固定机位时域 burst（1/5/10/15 帧）：逐帧深度质量 → 连续 confidence → 加权中值 → 关键帧派生数据集。关键帧按钮走这条链，不再是单帧选优 |
-| `depth_quality.py` / `depth_error_check.py` / `depth_confidence_cloud.py` / `depth_debug_viewer.py` | 保守空间补洞与置信度层（1.0 原始 / 0.3 修复 / 0 未知）；每次派生深度都有同名 float32 confidence |
-| `io_utils.py` | 全仓库唯一的 JSON / JSONL / 图片读写实现：`load_json`（utf-8-sig）、`load_json_object`、`load_jsonl`、`write_json`（原子写 + 建父目录，`indent=2`）、`write_json_strict`（另拒绝 NaN）、`write_jsonl`、`append_jsonl`、`imread_unicode`（失败抛 `ImageCodecError`）、`imread_unicode_or_none`（校验器用）、`imwrite_unicode`。`cv2` 只在图片函数内延迟导入，因此 gsplat 运行时也能 import。各模块用 `from io_utils import write_json as json_dump` 之类的别名保留旧名字，测试里的 `mock.patch("<module>.imwrite_unicode")` 仍然有效 |
-| `scene_capture.py` / `scene_pose_estimator.py` / `moving_quality.py` / `scene_dataset_validator.py` / `scene_data_kind.py` | 原始数据集写入（`write_calibration`、`create_session`）、顺序 Hybrid RGB-D 里程计 + 双向一致性 + 关键帧筛选、背景运动预检、门禁、来源分类（只有原始 manifest `camera.device=="Orbbec Femto Bolt"` 才是 `real_femto`） |
-| `scene_reconstruction.py` / `multiview_texture.py` / `single_frame_mesh.py` / `single_frame_quality.py` / `scene_keyframe.py` / `scene_static_fusion.py` | K6 去畸变 → 世界变换 → TSDF（补洞帧 10:3 重复积分）→ Mesh/纹理图集；单帧像素相邻网格；关键帧选优（只被 temporal 链和测试调用）；固定中值融合（只剩测试调用） |
-| `complete_demo.py` / `synthetic_scene_demo.py` / `scene_quality_report.py` / `scene_scale_validation.py` / `reconstruction_sources.py` | 编排：校验 → 位姿 → 重建 → 转换 → HTML/质量报告 → 查看器；合成真值生成；实拍验收 spec；尺度测距（`accepted=null` 除非给容差）；关键帧/移动两类成功来源的 marker |
-| `scene_to_nerfstudio.py` / `scene_gaussian.py` / `scene_gsplat_*.py` / `gsplat_backend.py` / `scene_single_gs*.py` / `scene_3dgs.py` | 3DGS 输入转换（严格 train/val/test 分区）、未训练初值、产品训练器/数据/导出/指标/显存守卫/实验、UI 跨环境控制、单帧固定视角 GS、内部 Splatfacto 对照（不可运行） |
-| `scene_demo_viewer.py` / `scene_annotation_ui.py` / `scene_annotations.py` / `scene_surface_picker.py` / `fixed_rgb_geometry.py` / `fixed_rgb_viewer.py` / `measurement_audit.py` / `export_history.py` / `export_preview.py` / `region_texture.py` | Open3D 几何查看器 + 表面选点/测距/圈选；标注数据模型（绑定网格 SHA-256 与 W0 来源）；固定初始 RGB 照片上的标注窗口（也是规划工作台宿主）；手工尺量记录；导出目录与预览 |
-| `region_*.py` / `metric_region_path.py` / `serpentine_path.py` / `route_motion.py` / `path_presentation.py` / `planning_*.py` / `coverage_inspection.py` | 独立区域规划工作台：`.region.zip` 工程、禁区、四种路线算法、覆盖估计、运动演示、状态机/草稿/任务边界（**Codex 正在活跃开发**） |
-| `live_point_cloud.py` / `view_latest.py` / `segmented_cloud_viewer.py` / `scene_segmented_capture.py` / `top_scan.py` / `pose_geometry.py` / `fusion.py` | 实时点云子进程；人体 MediaPipe 分支（无畸变针孔，与场景链 K6 反投影不可混用）；历史四档采集（GUI 入口已移除，但其 `depth_cloud()` 是全项目 K6 反投影的正典实现）；Open3D 原生 IO 兜底 |
-| `ui_i18n.py` | 中英字符串 `tr(language, key)`，只覆盖高级页、Open3D 查看器和 gsplat 查看器；局部页、历史、对照、固定 RGB、规划窗口用内联 `(zh, en)` 元组。新增文案两种语言都要加，`test_ui_i18n` 要求 zh/en 键集一致 |
+子包按依赖层次自下而上排列，原则上只允许上层 import 下层；当前仍有 21 条"下层惰性 import 上层"的边（见 `技术路线.md` 2026-09-20 包结构条目），属于待解的循环依赖，新代码不要再增加：
+
+| 子包 | 职责 | 主要模块 |
+|---|---|---|
+| `femto` | 叶子工具 | `io_utils`（唯一的 JSON / JSONL / 图片读写实现；`cv2` 延迟导入，gsplat 运行时可用）、`ui_i18n`（`tr(language, key)`，只覆盖高级页、Open3D 查看器和 gsplat 查看器；其余窗口用内联 `(zh, en)` 元组，`test_ui_i18n` 要求 zh/en 键集一致）、`paths` |
+| `femto.depth` | 逐帧深度质量 | `depth_quality`（保守补洞，`DepthQualityConfig` 只能收紧）、`depth_error_check`、`temporal_depth_fusion`、`temporal_depth_layer`；置信度层 1.0 原始 / 0.3 修复 / 0 未知，每次派生深度都有同名 float32 confidence |
+| `femto.dataset` | 数据集 schema 与门禁 | `scene_dataset_validator`、`scene_data_kind`（只有原始 manifest `camera.device=="Orbbec Femto Bolt"` 才是 `real_femto`）、`local_reference`、`scene_gsplat_split`（严格 train/val/test 分区） |
+| `femto.geometry` | 反投影、TSDF、网格 | `pose_geometry`（人体分支无畸变针孔）、`fusion`（Open3D 原生 IO 兜底）、`scene_reconstruction`（K6 去畸变 → 世界变换 → TSDF，补洞帧 10:3 重复积分）、`multiview_texture`、`single_frame_mesh` / `single_frame_quality`、`scene_gaussian`（未训练初值）、`depth_confidence_cloud`、`local_geometry` |
+| `femto.hardware` | 唯一 SDK 封装 | `orbbec_rgbd.OrbbecAlignedCamera`。`DEPTH_MODE_SPECS` 四档（`wide_detail` 1024×1024@15、`wide`、`near`、`far`）；主界面固定 `APP_DEPTH_MODE="wide_detail"`（0.25–2.21 m）+ RGB 1920×1080；构造默认却是 `near`（500–3860 mm），`scene_capture` / `top_scan` 用的是默认。`AlignedFrame` 数组可能别名 SDK 缓冲，保留必须 copy |
+| `femto.reports` | 研发报告 | `scene_quality_report`（实拍验收 spec）、`scene_scale_validation`（尺度测距，`accepted=null` 除非给容差）、`research_validation`（重复测量记录） |
+| `femto.tracking` | 里程计与运动检查 | `moving_quality.POLICY`（离线与在线共用门限）、`scene_pose_estimator`（顺序 Hybrid RGB-D 里程计 + 双向一致性 + 关键帧筛选 + 背景运动预检）、`scene_live_tracker`（在线跟踪、W0）、`local_tracking_*`、`local_frame_selection`、`local_stability*` |
+| `femto.temporal` | 固定机位时域 burst | `scene_temporal_fusion`、`temporal_keyframe`（逐帧深度质量 → 连续 confidence → 加权中值 → 关键帧派生数据集；关键帧按钮走这条链）、`scene_static_fusion` / `scene_keyframe`（只剩测试与 temporal 链调用） |
+| `femto.local` | 局部补采离线阶段 | `local_pose_refinement`（精配准候选）、`local_temporal_support`（五帧支持 Mask）、`local_comparison` / `local_comparison_viewer`（A/B/C 对照）、`local_parameter_study`、`local_geometry_diagnostics` |
+| `femto.capture` | 数据集写入与采集工作线程 | `scene_capture`（`write_calibration`、`create_session`、CLI `near` 档 JPEG 采集）、`local_raw_writer`、`local_live_preview`、`local_capture.LocalCapture`（局部补采工作线程）、`scene_segmented_capture`（历史四档采集，其 `depth_cloud()` 是全项目 K6 反投影的正典实现）、`top_scan`（人体 MediaPipe 分支） |
+| `femto.pipeline` | 端到端编排 | `complete_demo.run_demo`（校验 → 位姿 → 重建 → 转换 → HTML/质量报告 → 查看器）、`synthetic_scene_demo`、`scene_to_nerfstudio`（RDF→RUB 转换、严格分区）、`local_processing` / `local_offline`（Windows Job Object 子进程、发布凭证）、`local_interrupted`、`reconstruction_sources`（关键帧/移动两类成功来源的 marker）、`depth_quality_replay` |
+| `femto.gsplat` | 产品 3DGS | `scene_gsplat_trainer`（`PROFILES`、`assess_training_input`、`runtime_python`）、`scene_gsplat_data` / `_export` / `_metrics` / `_guard` / `_viewer` / `_acceptance`、`gsplat_backend`（UI 跨环境控制）、`scene_single_gs*`（单帧固定视角 GS）、`scene_3dgs`（内部 Splatfacto 对照，不可运行）。这些模块及 viewer 只能在函数内 `import torch` |
+| `femto.annotation` | 标注与固定 RGB 几何 | `scene_annotations`（绑定网格 SHA-256 与 W0 来源）、`scene_annotation_ui`、`scene_surface_picker`、`fixed_rgb_geometry`（K6 去畸变初始照片 → 射线打到 W0 网格）、`measurement_audit`、`region_texture`、`square_brush`、`local_history` |
+| `femto.planning` | 区域规划工作台 | `region_*`、`metric_region_path`、`serpentine_path`、`route_*`、`path_presentation`、`planning_*`、`coverage_*`、`surface_spacing*`，以及宿主窗口 `fixed_rgb_viewer`（也是 `.region.zip` 规划工作台）和 `export_history` |
+| `femto.viewer` | 独立进程的查看器 | `scene_demo_viewer`（Open3D 几何查看器 + 表面选点/测距/圈选）、`live_point_cloud`（实时点云子进程）、`view_latest`、`segmented_cloud_viewer`、`depth_debug_viewer`、`export_preview` |
+| `femto.app` | Tk 主界面 | `femto_control_app`（~2100 行；单一 `FemtoCamera` 线程独占 SDK，命令队列 + 事件队列；`ttk.Notebook` 两页：tab 0 默认为**局部移动补采** `app_local_panel.LocalPanel`，tab 1 为固定采集与高级功能；`SCAN_MODE_KEYS=("keyframe","moving")`，**没有 static 模式**）、`app_local_history`、`app_local_comparison`、`app_temporal` / `app_temporal_panel` |
+
+`tools/` 存放实验与安装脚本（`download_model`、`download_verified_file`、`patch_gsplat_windows`、五个对照实验脚本、迁移脚本 `_migrate_packages.py`），它们在文件头把仓库根目录加入 `sys.path`，以 `python tools\<name>.py` 运行。
 
 ### 三条采集/建模链
 
@@ -150,7 +156,7 @@ CLI `scene_capture.py`（`near` 档、JPEG）与 GUI 采集（`wide_detail`、�
 ### 3DGS 分派
 
 - 主界面"训练写实 3DGS"只用 `latest_moving_result`；"关键帧 3DGS"只用 `latest_keyframe_result`；模式下拉只决定下一次采集和"查看最新三维模型"打开哪个，不重定向训练来源。
-- 链：`femto_control_app._train_3dgs_worker` → `gsplat_backend.prepare_training_input`（缺 `dataset_split` 的旧转换自动重转到同级 `nerfstudio_strict_<ns>/`）→ `assess_training_input(require_real=True)`（委托 `scene_gsplat_trainer.assess_training_input`）→ runtime ready 且 lpips_ready → 子进程 `C:\FemtoGsplatRuntime\...\python.exe scene_gsplat_trainer.py train …`，stdout 每行一个含 `step` 的 JSON 作为进度。CLI 训练器不会自动重转，缺严格分区直接 blocked。
+- 链：`femto_control_app._train_3dgs_worker` → `gsplat_backend.prepare_training_input`（缺 `dataset_split` 的旧转换自动重转到同级 `nerfstudio_strict_<ns>/`）→ `assess_training_input(require_real=True)`（委托 `scene_gsplat_trainer.assess_training_input`）→ runtime ready 且 lpips_ready → 子进程 `C:\FemtoGsplatRuntime\...\python.exe -m femto.gsplat.scene_gsplat_trainer train …`（`cwd=REPO_ROOT`），stdout 每行一个含 `step` 的 JSON 作为进度。CLI 训练器不会自动重转，缺严格分区直接 blocked。
 - `scene_3dgs.py` 的旧门禁（读 manifest 跨度、不知道分区）只服务已死的 Splatfacto 路径，不是正式口径。
 - 单帧 GS：`scene_single_gs.launch` 在 `.venv` 里 `prepare`（要求来源 `demo_summary.frame_count==1 && fixed_camera`，源 manifest `status=derived_fixed_camera_keyframe`），再子进程在 gsplat 运行时 `train`：冻结几何，只优化 SH0/opacity/scale，500 步、≤300k 点、1920 宽；输出 `outputs/single_gs_*`，marker `outputs/latest_single_gs.txt`；`viewmat=I`、`T_WC=null`，永远不是多视角验收。
 - torch 延迟导入规则：`gsplat_backend` 被 `femto_control_app` 顶层 import，而它顶层 import `scene_gsplat_trainer`（进而 guard/data/export/metrics），因此这些模块及 viewer / single_gs 都只能在函数内 `import torch`。测试里需要 torch 的文件用 `try/except` + `skipIf`。
@@ -194,7 +200,7 @@ CLI `scene_capture.py`（`near` 档、JPEG）与 GUI 采集（`wide_detail`、�
 - **CUDA JIT / SPZ C++ reader** 怕中文路径：gsplat 走 `C:\FemtoGsplatRuntime` 联接，SPZ 导出先复制到 ASCII 临时目录（回退 `C:/FemtoSpzTmp`）。MediaPipe 模型复制到 `%LOCALAPPDATA%\FemtoPatientPose\models`。
 - `start_femto_app.cmd` 用 `pythonw.exe`，`femto_control_app.main()` 仅在流为 None 时把 stdout/stderr 追加到 `Log/femto_control_*.log`；GUI 崩溃先看 `Log/`（还有 `OrbbecSDK.log.txt`、`live_point_cloud.log`、`export_preview.log`）。
 - JSON 一律 `json.dumps(..., ensure_ascii=False)` 写、`encoding="utf-8-sig"` 读（部分 marker 带 BOM）。`.cmd` 里的中文提示需要 `chcp 65001`；gsplat `.cmd` 另设 `PYTHONUTF8=1`、`VSLANG=1033`。
-- `commercial_compliance_check.py` 的 `EXCLUDED_SCAN_DIRS` 含三个 venv 及 `outputs`、`datasets`、`references`、`__pycache__`；`tests/` 会被扫描。AST 扫描用 `ast.parse(read_bytes())`，BOM 不能藏受限导入。`release_ready` 是常量 False；缺 SPZ zlib DLL 是无条件 error，无 SPZ 运行时的机器过不了开发基线。
+- `commercial_compliance_check.py` 的 `EXCLUDED_SCAN_DIRS` 含三个 venv 及 `outputs`、`datasets`、`references`、`__pycache__`；`femto/`、`tools/` 和 `tests/` 都会被扫描。AST 扫描用 `ast.parse(read_bytes())`，BOM 不能藏受限导入。`release_ready` 是常量 False；缺 SPZ zlib DLL 是无条件 error，无 SPZ 运行时的机器过不了开发基线。
 
 ## 目录产物与 marker 文件
 
@@ -220,11 +226,11 @@ CLI `scene_capture.py`（`near` 档、JPEG）与 GUI 采集（`wide_detail`、�
 
 ## 测试约定
 
-- `tests/` 没有 `__init__.py`，也没有 conftest。必须从根目录 `python -m unittest discover -s tests`（不要 `-t .`、不要进 `tests/` 里跑、不要点分模块名）：7 个文件用 `from tests.test_x import …`，5 个用裸 `from test_x import …`，只有这种跑法两种都能解析。`outputs/*_validation/run_regression.py` 是交付轮留下的子集跑法（同时把根目录和 `tests/` 塞进 sys.path）。
+- `tests/` 没有 `__init__.py`，也没有 conftest。必须从根目录 `python -m unittest discover -s tests`（不要 `-t .`、不要进 `tests/` 里跑、不要点分模块名）：7 个文件用 `from tests.test_x import …`，5 个用裸 `from test_x import …`，只有这种跑法两种都能解析。产品代码一律 `from femto.<pkg>.<module> import …`；`mock.patch` 的字符串目标也必须是完整包路径（如 `"femto.temporal.scene_temporal_fusion.imwrite_unicode"`）。`outputs/*_validation/run_regression.py` 是交付轮留下的子集跑法（同时把根目录和 `tests/` 塞进 sys.path）。
 - 8 个跳过是结构性的（`test_gsplat_guard` 6 个 + `test_depth_confidence_integration` 2 个，缺 torch）；`.venv` 里跳过数 ≠8 说明环境变了。
 - 大量测试会打开真实 Tk 窗口并按 1120×720 / 1000×720 / 760×520 / 600×400 断言布局，不要在无桌面会话跑，跑时别碰鼠标键盘；`test_local_comparison` 与 `test_planning_recovery` 会真正起子进程。Tk 测试结束前要 `after_cancel` 所有定时器再 `destroy` + `gc.collect()`。
-- 驱动 `_camera_worker` 的测试必须 patch `femto_control_app.OrbbecAlignedCamera` 与 `DATASETS_ROOT`；`Class.__new__(Class)` + 手工设属性构造"裸实例"是常见写法，改构造函数时要同步测试里的 `bare()` helper。
-- 共享 fixture：`tests/test_segmented_capture.make_frame/make_camera`、`tests/test_fixed_rgb_experience.make_model`、`tests/test_scene_annotation_origin.local_evidence`、`synthetic_scene_demo.generate_dataset`。fixture 一律显式标 synthetic，只有原始 manifest `camera.device` 精确等于 `Orbbec Femto Bolt` 才能得到 `real_femto`。
+- 驱动 `_camera_worker` 的测试必须 patch `femto.app.femto_control_app.OrbbecAlignedCamera` 与 `DATASETS_ROOT`；`Class.__new__(Class)` + 手工设属性构造"裸实例"是常见写法，改构造函数时要同步测试里的 `bare()` helper。
+- 共享 fixture：`tests/test_segmented_capture.make_frame/make_camera`、`tests/test_fixed_rgb_experience.make_model`、`tests/test_scene_annotation_origin.local_evidence`、`femto.pipeline.synthetic_scene_demo.generate_dataset`。fixture 一律显式标 synthetic，只有原始 manifest `camera.device` 精确等于 `Orbbec Femto Bolt` 才能得到 `real_femto`。
 - `test_scene_gsplat_product` 等在 `.venv` 跑是靠 torch 延迟导入；不要把 torch 提到模块顶层。
 
 ## 当前状态（读最新事实请看 `技术路线.md` 顶部）

@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import numpy as np
 import open3d as o3d
 
-from scene_annotations import AnnotationStore
-from measurement_audit import (distance_record, summarize, save_record, save_report,
+from femto.annotation.scene_annotations import AnnotationStore
+from femto.annotation.measurement_audit import (distance_record, summarize, save_record, save_report,
                                build_audit, layer_contract, fingerprint)
 
 

@@ -4,9 +4,9 @@ import unittest
 from unittest import mock
 import numpy as np
 from PIL import Image
-from io_utils import load_json as read_json, write_json
-from scene_single_gs import prepare, seed_arrays, resolve_source
-from scene_single_gs_viewer import FixedViewport, load_viewport, SingleViewer, native_render_size
+from femto.io_utils import load_json as read_json, write_json
+from femto.gsplat.scene_single_gs import prepare, seed_arrays, resolve_source
+from femto.gsplat.scene_single_gs_viewer import FixedViewport, load_viewport, SingleViewer, native_render_size
 
 
 class SingleGsTests(unittest.TestCase):
@@ -47,7 +47,7 @@ class SingleGsTests(unittest.TestCase):
             self.assertIs(view.view,before)
 
     def test_full_hd_render_budget_is_explicit_and_keeps_multiview_default(self):
-        from scene_gsplat_viewer import plan_render_budget
+        from femto.gsplat.scene_gsplat_viewer import plan_render_budget
         options=dict(free_cuda_bytes=6*1024**3,total_cuda_bytes=8*1024**3)
         default=plan_render_budget(220000,1920,1080,**options)
         full=plan_render_budget(220000,1920,1080,max_pixels=1920*1080,**options)

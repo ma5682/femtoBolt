@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 import zipfile
 
-from scene_gsplat_metrics import lpips_backbone_status
+from femto.gsplat.scene_gsplat_metrics import lpips_backbone_status
 
 
 ROOT = Path(__file__).resolve().parent

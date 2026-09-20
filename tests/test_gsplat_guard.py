@@ -9,8 +9,8 @@ try:
     from gsplat.strategy import DefaultStrategy
 except ImportError:
     torch = None
-from scene_gsplat_guard import ResourceLimitError, check_memory, bounded_strategy_class
-import scene_gsplat_trainer as trainer
+from femto.gsplat.scene_gsplat_guard import ResourceLimitError, check_memory, bounded_strategy_class
+import femto.gsplat.scene_gsplat_trainer as trainer
 
 
 @unittest.skipIf(torch is None, 'Requires dedicated .venv-gsplat runtime')

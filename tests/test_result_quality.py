@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 import unittest
 import numpy as np
 from tests.test_scale_validation import _build_reconstruction
-from scene_quality_report import SPEC_SCHEMA, build_report, evaluate_field_spec, write_report, render_report, dump
+from femto.reports.scene_quality_report import SPEC_SCHEMA, build_report, evaluate_field_spec, write_report, render_report, dump
 
 class ResultQualityTests(unittest.TestCase):
     def trial(self,root,index,length=.3,kind='Orbbec Femto Bolt'):

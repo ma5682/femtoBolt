@@ -5,7 +5,7 @@ import tempfile
 from unittest import mock
 import numpy as np
 import open3d as o3d
-from local_pose_refinement import approve,stable_shape,solve,metrics,refine
+from femto.local.local_pose_refinement import approve,stable_shape,solve,metrics,refine
 
 
 class RefinementTests(unittest.TestCase):
@@ -39,7 +39,7 @@ class RefinementTests(unittest.TestCase):
         self.assertLess(metrics(source,target,t)['median_m'],.0005)
 
     def test_derived_export_preserves_reference_and_raw_and_fallback_publishes_no_dataset(self):
-        from synthetic_scene_demo import generate_dataset
+        from femto.pipeline.synthetic_scene_demo import generate_dataset
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);source=generate_dataset(root/'raw',frames=4,width=128,height=96)
             rows=[json.loads(s) for s in (source/'frames.jsonl').read_text().splitlines()]
@@ -50,7 +50,7 @@ class RefinementTests(unittest.TestCase):
             path=source/'manifest.json';m=json.loads(path.read_text());m['local_capture']={'measured_only':True};path.write_text(json.dumps(m))
             (source/'pose_quality_report.json').write_text('{}')
             before={p:p.read_bytes() for p in source.rglob('*') if p.is_file()}
-            with mock.patch('local_pose_refinement.stable_shape',return_value=True),mock.patch('local_pose_refinement.approve',return_value=[]):
+            with mock.patch('femto.local.local_pose_refinement.stable_shape',return_value=True),mock.patch('femto.local.local_pose_refinement.approve',return_value=[]):
                 output,report=refine(source,root/'accepted')
             self.assertTrue(report['accepted'])
             self.assertEqual(report['adoption_policy'],'all_views_must_pass; one rejected frame keeps the entire online pose set')
@@ -61,7 +61,7 @@ class RefinementTests(unittest.TestCase):
             np.testing.assert_allclose(poses[0]['T_WC'],np.eye(4),atol=1e-9)
             self.assertEqual(poses[1]['pose_source'],'offline_robust_icp_research_grade')
             self.assertEqual(before,{p:p.read_bytes() for p in source.rglob('*') if p.is_file()})
-            with mock.patch('local_pose_refinement.stable_shape',return_value=False):
+            with mock.patch('femto.local.local_pose_refinement.stable_shape',return_value=False):
                 output,report=refine(source,root/'rejected')
             self.assertFalse(report['accepted']);self.assertEqual(output,source.resolve())
             self.assertFalse((root/'rejected/dataset').exists())

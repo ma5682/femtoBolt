@@ -2,8 +2,8 @@ import unittest
 import numpy as np
 import open3d as o3d
 from types import SimpleNamespace
-from region_coverage import coverage_plan,evaluate_coverage
-from path_presentation import motion_position,render_diagram
+from femto.planning.region_coverage import coverage_plan,evaluate_coverage
+from femto.planning.path_presentation import motion_position,render_diagram
 
 
 class CoverageTests(unittest.TestCase):
@@ -61,7 +61,7 @@ class CoverageTests(unittest.TestCase):
         import tempfile
         import zipfile
         from pathlib import Path
-        from region_path import export_path,load_path
+        from femto.planning.region_path import export_path,load_path
         plan=coverage_plan(self.projection,self.mesh,self.region,4,25)
         store=SimpleNamespace(mesh=self.mesh,source='mesh.ply',digest='hash',origin_reference={},local_context=None)
         with tempfile.TemporaryDirectory() as folder:

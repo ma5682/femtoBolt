@@ -9,10 +9,10 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from fixed_rgb_viewer import FixedRGBViewer
-from planning_state import state, parameters, validate
-from region_path import raster_path, export_path, load_path
-from region_project import save_project, open_project
+from femto.planning.fixed_rgb_viewer import FixedRGBViewer
+from femto.planning.planning_state import state, parameters, validate
+from femto.planning.region_path import raster_path, export_path, load_path
+from femto.planning.region_project import save_project, open_project
 from tests.test_fixed_rgb_experience import make_model
 
 
@@ -63,7 +63,7 @@ class PlanningStateTests(unittest.TestCase):
         self.assertFalse(reports[0].winfo_exists())
         self.assertIsNone(v.current_region_path())
         self.assertTrue(v._plan_buttons['export_region_path'].instate(['disabled']))
-        with mock.patch('region_path.export_path') as export:
+        with mock.patch('femto.planning.region_path.export_path') as export:
             v.export_region_path();export.assert_not_called()
         with self.assertRaises(ValueError):
             export_path(self.plan,self.model.store,self.folder/'bad',self.model.store.regions[0])
@@ -159,7 +159,7 @@ class PlanningStateTests(unittest.TestCase):
         with self.assertRaises(ValueError):open_project(self.folder/'bad.zip',self.folder/'bad-work')
 
     def test_old_json_requires_original_signature_and_recomputation(self):
-        from region_path import signature
+        from femto.planning.region_path import signature
         folder=export_path(self.plan,self.model.store,self.folder/'exports')
         path=folder/'path.json';payload=json.loads(path.read_text(encoding='utf-8'))
         payload.pop('plan_binding');payload['region_signature']=signature(self.region)

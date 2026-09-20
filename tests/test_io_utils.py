@@ -11,7 +11,7 @@ from unittest import mock
 import cv2
 import numpy as np
 
-from io_utils import (
+from femto.io_utils import (
     ImageCodecError,
     append_jsonl,
     imread_unicode,

@@ -9,10 +9,10 @@ from unittest import mock
 import numpy as np
 import open3d as o3d
 
-from live_point_cloud import CalibratedCloudBuilder, LivePointCloudPreview, focus_bounds
-from pose_geometry import Intrinsics
-from scene_segmented_capture import depth_cloud
-from femto_control_app import FemtoControlApp
+from femto.viewer.live_point_cloud import CalibratedCloudBuilder, LivePointCloudPreview, focus_bounds
+from femto.geometry.pose_geometry import Intrinsics
+from femto.capture.scene_segmented_capture import depth_cloud
+from femto.app.femto_control_app import FemtoControlApp
 
 
 class LivePointCloudTests(unittest.TestCase):
@@ -67,7 +67,7 @@ class LivePointCloudTests(unittest.TestCase):
         app = FemtoControlApp.__new__(FemtoControlApp)
         app.language = "en"
         app.event_queue = queue.Queue()
-        with mock.patch("femto_control_app.run_demo") as reconstruct, mock.patch("femto_control_app.build_fixed_keyframe_dataset") as keyframe:
+        with mock.patch("femto.app.femto_control_app.run_demo") as reconstruct, mock.patch("femto.app.femto_control_app.build_fixed_keyframe_dataset") as keyframe:
             for mode in ("static", "wide"):
                 app._reconstruction_worker(Path("unused_source"), mode)
                 event, message = app.event_queue.get_nowait()

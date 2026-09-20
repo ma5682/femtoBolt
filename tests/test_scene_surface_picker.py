@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 import open3d as o3d
-from scene_surface_picker import SurfacePicker
+from femto.annotation.scene_surface_picker import SurfacePicker
 
 
 class SurfacePickerTests(unittest.TestCase):

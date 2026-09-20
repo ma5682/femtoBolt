@@ -7,5 +7,5 @@ if not exist ".venv\Scripts\python.exe" (
   pause
   exit /b 1
 )
-".venv\Scripts\python.exe" -u "scene_capture.py"
+".venv\Scripts\python.exe" -u -m femto.capture.scene_capture
 if errorlevel 1 pause

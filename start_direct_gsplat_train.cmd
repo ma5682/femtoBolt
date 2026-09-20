@@ -19,4 +19,4 @@ set "VSLANG=1033"
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 chcp 65001 >nul
-"C:\FemtoGsplatRuntime\Scripts\python.exe" scene_gsplat_trainer.py train %*
+"C:\FemtoGsplatRuntime\Scripts\python.exe" -m femto.gsplat.scene_gsplat_trainer train %*

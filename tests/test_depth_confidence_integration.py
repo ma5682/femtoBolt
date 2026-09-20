@@ -9,7 +9,7 @@ try:
 except ImportError:
     torch = None
 
-from scene_gsplat_metrics import metric_depth_loss_torch
+from femto.gsplat.scene_gsplat_metrics import metric_depth_loss_torch
 
 
 @unittest.skipIf(torch is None, 'direct gsplat runtime test requires PyTorch')

@@ -5,10 +5,10 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 from types import SimpleNamespace
-from scene_annotations import AnnotationStore
-from fixed_rgb_geometry import FixedProjection
-from region_project import save_project,open_project
-from region_coverage import coverage_plan
+from femto.annotation.scene_annotations import AnnotationStore
+from femto.annotation.fixed_rgb_geometry import FixedProjection
+from femto.planning.region_project import save_project,open_project
+from femto.planning.region_coverage import coverage_plan
 
 
 class ProjectTests(unittest.TestCase):
@@ -24,7 +24,7 @@ class ProjectTests(unittest.TestCase):
             model=SimpleNamespace(store=store,projection=projection,rgb=np.full((50,50,3),100,np.uint8),view_reference=view,max_radius_mm=0.)
             plan=coverage_plan(projection,mesh,region,4,20,boundary_margin_mm=0)
             bundle=save_project(model,region,root/'a.zip',plan)
-            from export_history import scan_exports,register_project
+            from femto.planning.export_history import scan_exports,register_project
             self.assertEqual(scan_exports(root)[0]['project'],bundle.resolve())
             register_project(root,bundle)
             self.assertEqual(len([r for r in scan_exports(root) if r['kind']=='区域工程 / 方案']),1)

@@ -5,9 +5,9 @@ from types import SimpleNamespace
 from pathlib import Path
 import numpy as np
 import open3d as o3d
-from region_coverage import coverage_plan
-from region_path_guard import constrain_path,coverage_report_text
-from region_path import export_path,load_path
+from femto.planning.region_coverage import coverage_plan
+from femto.planning.region_path_guard import constrain_path,coverage_report_text
+from femto.planning.region_path import export_path,load_path
 
 
 class GuardTests(unittest.TestCase):

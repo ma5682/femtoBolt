@@ -9,7 +9,7 @@ from unittest import mock
 
 import numpy as np
 
-from local_live_preview import ObservedAccumulator,LivePreviewWorker
+from femto.capture.local_live_preview import ObservedAccumulator,LivePreviewWorker
 from tests.test_segmented_capture import make_camera,make_frame
 
 
@@ -68,8 +68,8 @@ class WorkerTests(unittest.TestCase):
             self.assertTrue(any(m.startswith(BLOCKED_IMPORT_PREFIXES) for m in modules))
 
     def test_saved_rgbd_in_same_origin_latest_mailbox_and_raw_unchanged(self):
-        from femto_control_app import ActiveScan,save_scan_frame
-        from scene_capture import write_calibration
+        from femto.app.femto_control_app import ActiveScan,save_scan_frame
+        from femto.capture.scene_capture import write_calibration
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)
             for name in ('rgb','depth','pose','derived'):(root/name).mkdir()
@@ -98,7 +98,7 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(report['status'],'closed')
 
     def test_corrupt_input_reports_preview_failure_without_modifying_raw(self):
-        from scene_capture import write_calibration
+        from femto.capture.scene_capture import write_calibration
         with tempfile.TemporaryDirectory() as td:
             root=Path(td);write_calibration(root,make_camera('wide_detail',20),make_camera('wide_detail',20).intrinsics)
             worker=LivePreviewWorker(root,'bad',250,2210)
@@ -111,7 +111,7 @@ class WorkerTests(unittest.TestCase):
 
 class PreviewGuiTests(unittest.TestCase):
     def test_live_snapshot_controls_highlight_and_session_isolation(self):
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
             root=tk.Tk();root.withdraw()
             try:
@@ -139,7 +139,7 @@ class PreviewGuiTests(unittest.TestCase):
                 root.destroy()
 
     def test_capture_notification_survives_next_pose_update(self):
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
             root=tk.Tk();root.withdraw()
             try:

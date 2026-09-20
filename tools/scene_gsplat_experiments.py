@@ -9,10 +9,10 @@ import subprocess
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))  # tools/ scripts import repository-root modules
-from gsplat_backend import runtime_environment, runtime_python
-from io_utils import write_json as dump
-from scene_gsplat_split import file_sha256
+sys.path.insert(0, str(REPO_ROOT))  # tools/ scripts import the femto package from the repository root
+from femto.gsplat.gsplat_backend import runtime_environment, runtime_python
+from femto.io_utils import write_json as dump
+from femto.dataset.scene_gsplat_split import file_sha256
 
 
 def rank(report: dict) -> tuple:
@@ -36,7 +36,7 @@ def run_suite(input_dir: Path, output: Path, iterations: int) -> None:
             return cache[key]
         folder = output / f'run_{len(cache):02d}'
         folder.mkdir()
-        command = [str(runtime_python()), str(REPO_ROOT / 'scene_gsplat_trainer.py'),
+        command = [str(runtime_python()), '-m', 'femto.gsplat.scene_gsplat_trainer',
                    'train', '--input', str(input_dir.resolve()), '--output', str(folder.resolve()),
                    '--profile', 'low_vram', '--iterations', str(iterations),
                    '--grow-grad2d', str(gradient), '--depth-weight', str(depth),
@@ -45,7 +45,7 @@ def run_suite(input_dir: Path, output: Path, iterations: int) -> None:
         dump(folder / 'command.json', {'argv': command})
         print(f'START {folder.name}: {key}', flush=True)
         with (folder / 'trainer_stdout.log').open('w', encoding='utf-8') as log:
-            result = subprocess.run(command, env=runtime_environment(), stdout=log,
+            result = subprocess.run(command, cwd=REPO_ROOT, env=runtime_environment(), stdout=log,
                                     stderr=subprocess.STDOUT,
                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         if result.returncode:
@@ -94,8 +94,8 @@ def run_suite(input_dir: Path, output: Path, iterations: int) -> None:
 
 def evaluate_run(run: Path, input_dir: Path, output: Path) -> None:
     import torch
-    from scene_gsplat_data import load_gsplat_dataset
-    from scene_gsplat_trainer import TrainerConfig, _load_checkpoint, evaluate_model
+    from femto.gsplat.scene_gsplat_data import load_gsplat_dataset
+    from femto.gsplat.scene_gsplat_trainer import TrainerConfig, _load_checkpoint, evaluate_model
     config = TrainerConfig(**json.loads((run / 'training_config.json').read_text(encoding='utf-8')))
     dataset = load_gsplat_dataset(input_dir, downscale=config.downscale, minimum_frames=12)
     checkpoint = _load_checkpoint(run / 'checkpoints/latest.pt', dataset, 'cpu')

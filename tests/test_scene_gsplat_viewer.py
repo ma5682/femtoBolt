@@ -9,7 +9,7 @@ from unittest import mock
 
 import numpy as np
 
-import scene_gsplat_viewer as viewer
+import femto.gsplat.scene_gsplat_viewer as viewer
 
 
 class RenderBudgetTests(unittest.TestCase):

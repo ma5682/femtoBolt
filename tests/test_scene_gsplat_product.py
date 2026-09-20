@@ -17,9 +17,9 @@ from commercial_compliance_check import (
     REQUIRED_LICENSES,
     SPZ_STATIC_COMPONENTS,
 )
-from scene_gsplat_data import CV_CAMERA_TO_OPENGL_CAMERA, load_gsplat_dataset, opengl_c2w_to_rdf, read_xyzrgb_ply
-from scene_gsplat_export import export_run_spz, write_trained_gaussian_ply
-from scene_gsplat_metrics import (
+from femto.gsplat.scene_gsplat_data import CV_CAMERA_TO_OPENGL_CAMERA, load_gsplat_dataset, opengl_c2w_to_rdf, read_xyzrgb_ply
+from femto.gsplat.scene_gsplat_export import export_run_spz, write_trained_gaussian_ply
+from femto.gsplat.scene_gsplat_metrics import (
     LPIPS_BACKBONE_FILE,
     depth_metrics_numpy,
     install_lpips_backbone,
@@ -173,7 +173,7 @@ class DirectGsplatProductTests(unittest.TestCase):
                 "spz_gaussian_count": 12,
                 "roundtrip_count_matches": True,
             }
-            with mock.patch("scene_gsplat_export.export_official_spz", return_value=spz):
+            with mock.patch("femto.gsplat.scene_gsplat_export.export_official_spz", return_value=spz):
                 export_run_spz(run)
 
             report = json.loads((run / "training_report.json").read_text(encoding="utf-8"))

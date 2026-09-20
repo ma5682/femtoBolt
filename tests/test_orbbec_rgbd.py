@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from orbbec_rgbd import FRAME_METADATA_FIELDS, OrbbecAlignedCamera, read_frame_metadata
-from pose_geometry import Intrinsics
+from femto.hardware.orbbec_rgbd import FRAME_METADATA_FIELDS, OrbbecAlignedCamera, read_frame_metadata
+from femto.geometry.pose_geometry import Intrinsics
 
 
 class _FakeFrame:

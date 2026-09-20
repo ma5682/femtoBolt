@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import numpy as np
 import open3d as o3d
 import trimesh
-from region_path import export_path,signature
-from export_history import scan_exports
+from femto.planning.region_path import export_path,signature
+from femto.planning.export_history import scan_exports
 
 
 class PackageTests(unittest.TestCase):

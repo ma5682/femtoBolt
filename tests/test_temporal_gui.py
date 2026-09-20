@@ -9,8 +9,8 @@ from unittest import mock
 import numpy as np
 import tkinter as tk
 
-import femto_control_app as control
-from app_temporal import TemporalBurst, process_burst
+import femto.app.femto_control_app as control
+from femto.app.app_temporal import TemporalBurst, process_burst
 from tests.test_segmented_capture import make_camera, make_frame
 
 
@@ -49,7 +49,7 @@ class TemporalGuiTests(unittest.TestCase):
         burst.append(frame,camera.intrinsics)
         frame.depth_mm[:]=900
         self.assertEqual(burst.frames[0].depth_mm[0,0],500)
-        with TemporaryDirectory() as td, mock.patch('scene_temporal_fusion.build_temporal_dataset') as fuse:
+        with TemporaryDirectory() as td, mock.patch('femto.temporal.scene_temporal_fusion.build_temporal_dataset') as fuse:
             events=queue.Queue(); process_burst(burst,Path(td),events,fuse=False)
             result=list(events.queue)[-1][1]
             self.assertEqual(result['status'],'cancelled_or_incomplete')
@@ -83,7 +83,7 @@ class TemporalGuiTests(unittest.TestCase):
 
     def test_panel_options_and_busy_state_without_camera(self):
         with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'), \
-             mock.patch('app_temporal_panel.TemporalPanel.restore_last'):
+             mock.patch('femto.app.app_temporal_panel.TemporalPanel.restore_last'):
             root=tk.Tk(); root.withdraw()
             try:
                 app=control.FemtoControlApp(root)
@@ -112,7 +112,7 @@ class TemporalGuiTests(unittest.TestCase):
 
     def test_completed_result_buttons_and_no_old_model_reassignment(self):
         with TemporaryDirectory() as td, mock.patch.object(control.FemtoControlApp,'_start_camera'), \
-             mock.patch.object(control.FemtoControlApp,'_load_latest_paths'),mock.patch('app_temporal_panel.TemporalPanel.restore_last'):
+             mock.patch.object(control.FemtoControlApp,'_load_latest_paths'),mock.patch('femto.app.app_temporal_panel.TemporalPanel.restore_last'):
             root=tk.Tk(); root.withdraw()
             try:
                 app=control.FemtoControlApp(root); app.open_temporal_panel()
@@ -122,9 +122,9 @@ class TemporalGuiTests(unittest.TestCase):
                 app.event_queue.put(('temporal_finished',dict(status='completed',output=str(output),source=str(output),report=report)))
                 app._poll_events(); app.temporal_panel.update_controls()
                 self.assertEqual(str(app.temporal_panel.buttons['cloud']['state']),'normal')
-                with mock.patch('app_temporal_panel.subprocess.Popen') as launch:
+                with mock.patch('femto.app.app_temporal_panel.subprocess.Popen') as launch:
                     app.temporal_panel.open_result('cloud')
-                    self.assertIn('segmented_cloud_viewer.py',launch.call_args.args[0][1])
+                    self.assertEqual(launch.call_args.args[0][1:3],['-m','femto.viewer.segmented_cloud_viewer'])
                 self.assertIsNone(app.latest_result)
             finally:
                 for timer in root.tk.call('after','info'): root.after_cancel(timer)
@@ -132,7 +132,7 @@ class TemporalGuiTests(unittest.TestCase):
 
     def test_visible_panel_layout_at_default_window_size(self):
         with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'), \
-             mock.patch('app_temporal_panel.TemporalPanel.restore_last'):
+             mock.patch('femto.app.app_temporal_panel.TemporalPanel.restore_last'):
             root=tk.Tk()
             try:
                 app=control.FemtoControlApp(root); app.open_temporal_panel()

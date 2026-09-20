@@ -16,8 +16,8 @@ from types import SimpleNamespace
 import numpy as np
 from PIL import Image, ImageTk
 
-from local_capture import LocalCapture
-from scene_live_tracker import LiveTracker, PairEstimator, PairEstimationError
+from femto.capture.local_capture import LocalCapture
+from femto.tracking.scene_live_tracker import LiveTracker, PairEstimator, PairEstimationError
 from test_segmented_capture import make_frame, make_camera
 
 
@@ -39,8 +39,8 @@ class PairRetryTests(unittest.TestCase):
         answers = [(True, translation(.31), None), (True, np.eye(4), None),
                    (True, solution, None), (True, np.linalg.inv(solution), None)]
         evaluation = SimpleNamespace(fitness=.95, inlier_rmse=.005)
-        with mock.patch('scene_live_tracker.o3d.pipelines.odometry.compute_rgbd_odometry', side_effect=answers) as solve, \
-                mock.patch('scene_live_tracker.o3d.pipelines.registration.evaluate_registration', return_value=evaluation):
+        with mock.patch('femto.tracking.scene_live_tracker.o3d.pipelines.odometry.compute_rgbd_odometry', side_effect=answers) as solve, \
+                mock.patch('femto.tracking.scene_live_tracker.o3d.pipelines.registration.evaluate_registration', return_value=evaluation):
             result, metrics = pair.estimate(('a', 'k', 'ca'), ('b', 'k', 'cb'), initial_transform=seed)
         np.testing.assert_array_equal(result, solution)
         self.assertFalse(np.array_equal(result, seed))
@@ -86,9 +86,9 @@ class PairRetryTests(unittest.TestCase):
                  (np.eye(4), .9, np.inf, 'rmse')]
         for transform, fitness, rmse, check in cases:
             with self.subTest(check=check, fitness=fitness, rmse=rmse), \
-                    mock.patch('scene_live_tracker.o3d.pipelines.odometry.compute_rgbd_odometry',
+                    mock.patch('femto.tracking.scene_live_tracker.o3d.pipelines.odometry.compute_rgbd_odometry',
                         side_effect=[(True, transform, None), (True, np.linalg.inv(transform), None)]), \
-                    mock.patch('scene_live_tracker.o3d.pipelines.registration.evaluate_registration',
+                    mock.patch('femto.tracking.scene_live_tracker.o3d.pipelines.registration.evaluate_registration',
                         return_value=SimpleNamespace(fitness=fitness, inlier_rmse=rmse)):
                 with self.assertRaises(PairEstimationError) as caught:
                     pair.estimate((None, None, None), (None, None, None))
@@ -102,7 +102,7 @@ class TrackerContinuityTests(unittest.TestCase):
         self.estimator = mock.Mock()
         self.estimator.prepare.side_effect = lambda frame: frame.frame_index
         self.tracker = LiveTracker(self.estimator, 250, 2210, clock=lambda: self.now)
-        self.quality = mock.patch('scene_live_tracker.frame_quality', return_value=dict(usable=True))
+        self.quality = mock.patch('femto.tracking.scene_live_tracker.frame_quality', return_value=dict(usable=True))
         self.quality.start()
         self.addCleanup(self.quality.stop)
 
@@ -195,9 +195,9 @@ class CaptureFailureTests(unittest.TestCase):
         self.wait_for('local_pose')
         return capture
 
-    @mock.patch('complete_demo.run_demo')
-    @mock.patch('scene_live_tracker.frame_quality', return_value=dict(usable=True))
-    @mock.patch('local_capture.PairEstimator')
+    @mock.patch('femto.pipeline.complete_demo.run_demo')
+    @mock.patch('femto.tracking.scene_live_tracker.frame_quality', return_value=dict(usable=True))
+    @mock.patch('femto.capture.local_capture.PairEstimator')
     def test_no_input_failure_has_persistent_reason_and_no_fake_frame(self, pair, quality, demo):
         capture = self.capture()
         payload = self.wait_for('local_error')
@@ -217,9 +217,9 @@ class CaptureFailureTests(unittest.TestCase):
         self.assertTrue((capture.session/row['rgb']).exists())
         self.assertIsNone(json.loads((capture.session/row['pose']).read_text())['T_WC'])
 
-    @mock.patch('complete_demo.run_demo')
-    @mock.patch('scene_live_tracker.frame_quality', return_value=dict(usable=True))
-    @mock.patch('local_capture.PairEstimator')
+    @mock.patch('femto.pipeline.complete_demo.run_demo')
+    @mock.patch('femto.tracking.scene_live_tracker.frame_quality', return_value=dict(usable=True))
+    @mock.patch('femto.capture.local_capture.PairEstimator')
     def test_device_error_is_not_overwritten_by_shutdown_cancellation(self, pair, quality, demo):
         capture = self.capture()
         capture.abort('camera_error', 'device read failed')
@@ -231,8 +231,8 @@ class CaptureFailureTests(unittest.TestCase):
         self.assertEqual(json.loads((capture.session/'derived/local_capture_report.json').read_text())['state'], 'error')
         demo.assert_not_called()
 
-    @mock.patch('scene_live_tracker.frame_quality', return_value=dict(usable=True))
-    @mock.patch('local_capture.PairEstimator')
+    @mock.patch('femto.tracking.scene_live_tracker.frame_quality', return_value=dict(usable=True))
+    @mock.patch('femto.capture.local_capture.PairEstimator')
     def test_report_separates_retry_from_rejected_frames_and_records_stage_timing(self, pair, quality):
         pair.return_value.estimate.return_value = (translation(-.03),
             {'initialization': 'previous_valid_step', 'attempts': [{'passed': False}, {'passed': True}]})
@@ -251,7 +251,7 @@ class CaptureFailureTests(unittest.TestCase):
         self.assertEqual(report['max_gap_s'], 2.)
 
     def test_sdk_read_error_is_forwarded_to_the_active_local_session(self):
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         from test_temporal_gui import TemporalGuiTests
         app = TemporalGuiTests().bare_app()
         camera = make_camera('wide_detail', 10)
@@ -261,14 +261,14 @@ class CaptureFailureTests(unittest.TestCase):
         local = mock.Mock()
         local.thread.is_alive.return_value = True
         with mock.patch.object(control, 'OrbbecAlignedCamera', return_value=camera) as factory, \
-                mock.patch('local_capture.LocalCapture', return_value=local):
+                mock.patch('femto.capture.local_capture.LocalCapture', return_value=local):
             app._camera_worker()
         factory.assert_called_once()
         local.abort.assert_called_once_with('camera_error', 'USB read fixture failure')
         self.assertTrue(any(kind=='camera_error' for kind, _ in app.event_queue.queue))
 
-    @mock.patch('femto_control_app.save_scan_frame', side_effect=OSError('raw storage fixture failure'))
-    @mock.patch('local_capture.PairEstimator')
+    @mock.patch('femto.app.femto_control_app.save_scan_frame', side_effect=OSError('raw storage fixture failure'))
+    @mock.patch('femto.capture.local_capture.PairEstimator')
     def test_raw_write_failure_is_reported_as_error_without_a_successful_pose(self, pair, save):
         capture = LocalCapture(make_camera('wide_detail', 10), self.root/'data', self.root/'out', self.events)
         self.addCleanup(lambda: (capture.finish(False), capture.thread.join(6)))
@@ -283,7 +283,7 @@ class CaptureFailureTests(unittest.TestCase):
         self.assertEqual(report['accepted_frames'], [])
 
     def test_finalization_updates_only_the_actual_session_root_marker(self):
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         protected = self.root/'unrelated_live_data'
         protected.mkdir()
         marker = protected/'latest_scene.txt'
@@ -301,7 +301,7 @@ class CaptureFailureTests(unittest.TestCase):
 class TrackingStatusUITests(unittest.TestCase):
     def setUp(self):
         gc.collect()
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         with mock.patch.object(control.FemtoControlApp, '_start_camera'), \
                 mock.patch.object(control.FemtoControlApp, '_load_latest_paths'):
             self.root = tk.Tk()

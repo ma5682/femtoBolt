@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from path_presentation import render_diagram
+from femto.planning.path_presentation import render_diagram
 
 
 class PresentationTests(unittest.TestCase):

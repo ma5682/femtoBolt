@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 import unittest
 import numpy as np
-from single_frame_mesh import build_pixel_mesh
+from femto.geometry.single_frame_mesh import build_pixel_mesh
 
 
 class PixelMeshTests(unittest.TestCase):

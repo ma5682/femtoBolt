@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 from PIL import Image
 
-from depth_quality import (
+from femto.depth.depth_quality import (
     DepthQualityConfig,
     assess_and_fill_depth,
     confidence_acceptance_mask,

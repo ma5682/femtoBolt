@@ -15,11 +15,11 @@ import uuid
 import numpy as np
 import open3d as o3d
 
-import app_local_panel
+import femto.app.app_local_panel as app_local_panel
 import test_scene_annotation_origin as origin
-from local_capture import LocalCapture
-from local_reference import calibration_identity, validate_reference_provenance
-from scene_annotations import AnnotationStore
+from femto.capture.local_capture import LocalCapture
+from femto.dataset.local_reference import calibration_identity, validate_reference_provenance
+from femto.annotation.scene_annotations import AnnotationStore
 from test_segmented_capture import make_frame, make_camera
 
 
@@ -36,7 +36,7 @@ class ReferenceProvenanceTests(unittest.TestCase):
         with mock.patch.object(LocalCapture, '_run'):
             capture = LocalCapture(make_camera('wide_detail', 10), self.root/'data', self.root/'out', queue.Queue())
             capture.thread.join()
-        from femto_control_app import save_scan_frame, finalize_scan
+        from femto.app.femto_control_app import save_scan_frame, finalize_scan
         for i in range(3):
             save_scan_frame(capture.scan, make_frame([500]*10, i+1), lossless=True)
         finalize_scan(capture.scan, capture.camera)
@@ -81,7 +81,7 @@ class ReferenceProvenanceTests(unittest.TestCase):
 
     def test_first_valid_frame_proof_and_performance_statistics_are_actual_records(self):
         events = queue.Queue()
-        with mock.patch('local_capture.PairEstimator'), mock.patch('scene_live_tracker.frame_quality',
+        with mock.patch('femto.capture.local_capture.PairEstimator'), mock.patch('femto.tracking.scene_live_tracker.frame_quality',
                 side_effect=[dict(usable=False, state='low_texture'), dict(usable=True)]):
             capture = LocalCapture(make_camera('wide_detail', 10), self.root/'data', self.root/'out', events)
             try:
@@ -143,7 +143,7 @@ class ReferenceProvenanceTests(unittest.TestCase):
 class WorkbenchSessionTests(unittest.TestCase):
     def setUp(self):
         gc.collect()
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         with mock.patch.object(control.FemtoControlApp, '_start_camera'), \
                 mock.patch.object(control.FemtoControlApp, '_load_latest_paths'):
             self.root = tk.Tk()
@@ -262,7 +262,7 @@ class CameraDispatchTests(unittest.TestCase):
         gc.collect()
 
     def test_commands_for_other_session_never_touch_current_worker(self):
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         import test_temporal_gui
         app = test_temporal_gui.TemporalGuiTests().bare_app()
         camera = make_camera('wide_detail', 10)
@@ -284,7 +284,7 @@ class CameraDispatchTests(unittest.TestCase):
         local = mock.Mock(session_id=session)
         local.closing.is_set.return_value = False
         with mock.patch.object(control, 'OrbbecAlignedCamera', return_value=camera), \
-                mock.patch('local_capture.LocalCapture', return_value=local) as factory:
+                mock.patch('femto.capture.local_capture.LocalCapture', return_value=local) as factory:
             app._camera_worker()
         self.assertEqual(factory.call_args.kwargs['session_id'], session)
         local.request.assert_not_called()
@@ -296,7 +296,7 @@ class CameraDispatchTests(unittest.TestCase):
         original = np.column_stack((np.arange(100001)*.001, np.zeros(100001), np.ones(100001)))
         cloud.points = o3d.utility.Vector3dVector(original)
         cloud.colors = o3d.utility.Vector3dVector(np.ones_like(original)*.5)
-        with mock.patch('scene_scale_validation.read_geometry_safe', return_value=cloud):
+        with mock.patch('femto.reports.scene_scale_validation.read_geometry_safe', return_value=cloud):
             result = app_local_panel.read_review_clouds(Path('fixture'))
         self.assertLessEqual(len(result['final'][0]), 35000)
         result['final'][0][:] = 999

@@ -4,12 +4,12 @@ from types import SimpleNamespace
 import numpy as np
 import open3d as o3d
 from tests import test_serpentine_path as fixtures
-from scene_annotations import AnnotationStore
-from fixed_rgb_geometry import FixedProjection,polygon_contains
-from coverage_inspection import inspected_serpentine_plan
-from coverage_inspector import render_map,crop_bounds,show_inspector
-from region_path import export_path,load_path
-from planning_state import validate,parameters,state
+from femto.annotation.scene_annotations import AnnotationStore
+from femto.annotation.fixed_rgb_geometry import FixedProjection,polygon_contains
+from femto.planning.coverage_inspection import inspected_serpentine_plan
+from femto.planning.coverage_inspector import render_map,crop_bounds,show_inspector
+from femto.planning.region_path import export_path,load_path
+from femto.planning.planning_state import validate,parameters,state
 
 class InspectionTests(unittest.TestCase):
     def surface(self,root,keep=None):
@@ -92,7 +92,7 @@ class InspectionTests(unittest.TestCase):
             island=[s for s in samples if s['eligible'] and s['pixel'][0]>64]
             self.assertTrue(island);self.assertTrue(all(not s['covered'] for s in island))
             self.assertTrue(any(s['reason']=='disconnected' for s in island))
-            from coverage_inspection import EVIDENCE
+            from femto.planning.coverage_inspection import EVIDENCE
             self.assertIn('未知',EVIDENCE['unknown']);self.assertIn('未知',EVIDENCE['algorithm_limit'])
 
     def test_selected_faces_and_roi_eligibility_are_distinct_from_unknown_geometry(self):
@@ -122,7 +122,7 @@ class InspectionTests(unittest.TestCase):
             self.assertEqual(old,before);validate(old,mesh,region)
 
     def test_report_size_and_cancellation_fail_before_publish(self):
-        from coverage_inspection import check_document_budget
+        from femto.planning.coverage_inspection import check_document_budget
         value={'samples':['bounded report']*100}
         before=copy.deepcopy(value)
         with self.assertRaisesRegex(ValueError,'可回读大小'):check_document_budget(value,limit=100)

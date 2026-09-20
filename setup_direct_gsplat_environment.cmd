@@ -90,7 +90,7 @@ set "DISTUTILS_USE_SDK=1"
 ".venv-gsplat\Scripts\python.exe" -m pip install --retries 12 --timeout 120 -r requirements-gsplat-lock.txt
 if errorlevel 1 goto :failed
 
-"C:\FemtoGsplatRuntime\Scripts\python.exe" patch_gsplat_windows.py
+"C:\FemtoGsplatRuntime\Scripts\python.exe" tools\patch_gsplat_windows.py
 if errorlevel 1 goto :failed
 
 ".venv-gsplat\Scripts\python.exe" -c "import torch,gsplat; assert torch.cuda.is_available(); print('Direct gsplat runtime ready:', torch.__version__, gsplat.__version__, torch.cuda.get_device_name(0))"

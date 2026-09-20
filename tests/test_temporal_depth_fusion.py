@@ -5,9 +5,9 @@ import json
 
 import numpy as np
 
-from temporal_depth_fusion import confidence_weighted_median, fuse_temporal_depth
-from scene_temporal_fusion import build_temporal_dataset, audit_temporal_motion
-from io_utils import imwrite_unicode
+from femto.depth.temporal_depth_fusion import confidence_weighted_median, fuse_temporal_depth
+from femto.temporal.scene_temporal_fusion import build_temporal_dataset, audit_temporal_motion
+from femto.io_utils import imwrite_unicode
 
 
 class TemporalDepthTests(TestCase):
@@ -101,7 +101,7 @@ class TemporalDepthTests(TestCase):
     def test_motion_failure_saves_report_no_geometry(self):
         with TemporaryDirectory() as td:
             source=self.fixture(Path(td)/'scene')
-            with mock.patch('scene_temporal_fusion.assess_rgb_motion_pair',return_value=dict(reliable=True,appears_fixed=False)):
+            with mock.patch('femto.temporal.scene_temporal_fusion.assess_rgb_motion_pair',return_value=dict(reliable=True,appears_fixed=False)):
                 output=build_temporal_dataset(source)
             self.assertFalse((output/'fused_pointcloud.ply').exists())
             self.assertIn('rejected',json.loads((output/'temporal_report.json').read_text())['status'])
@@ -116,10 +116,10 @@ class TemporalDepthTests(TestCase):
             with self.assertRaises(ValueError): build_temporal_dataset(source)
 
     def test_capture_uses_bounded_read_burst_before_encoding(self):
-        from scene_temporal_fusion import capture_temporal_frames
-        from orbbec_rgbd import AlignedFrame
+        from femto.temporal.scene_temporal_fusion import capture_temporal_frames
+        from femto.hardware.orbbec_rgbd import AlignedFrame
         from types import SimpleNamespace
-        from pose_geometry import Intrinsics
+        from femto.geometry.pose_geometry import Intrinsics
         events=[]
         distortion=dict(model='BROWN_CONRADY_K6',**{k:0 for k in ('k1','k2','k3','k4','k5','k6','p1','p2')})
         camera=mock.MagicMock()
@@ -133,8 +133,8 @@ class TemporalDepthTests(TestCase):
         camera.read.side_effect=read
         def write(*args,**kwargs):
             events.append('encode'); return imwrite_unicode(*args,**kwargs)
-        with TemporaryDirectory() as td, mock.patch('orbbec_rgbd.OrbbecAlignedCamera',return_value=camera), \
-             mock.patch('scene_temporal_fusion.imwrite_unicode',side_effect=write):
+        with TemporaryDirectory() as td, mock.patch('femto.hardware.orbbec_rgbd.OrbbecAlignedCamera',return_value=camera), \
+             mock.patch('femto.temporal.scene_temporal_fusion.imwrite_unicode',side_effect=write):
             output=capture_temporal_frames(Path(td),5)
             self.assertEqual(events[:5],['read']*5)
             self.assertEqual(events.count('read'),5)

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import numpy as np
 import open3d as o3d
 import trimesh
-from metric_region_path import metric_path
-from region_path import export_path, load_path
+from femto.planning.metric_region_path import metric_path
+from femto.planning.region_path import export_path, load_path
 
 
 def grid(tilt=0., hole=False):

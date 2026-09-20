@@ -6,7 +6,7 @@ import time
 import tkinter as tk
 import unittest
 from unittest import mock
-from local_history import scan_history,existing_actions,set_record_deleted,set_records_deleted
+from femto.annotation.local_history import scan_history,existing_actions,set_record_deleted,set_records_deleted
 
 
 def write(path,data):
@@ -80,7 +80,7 @@ class HistoryTests(unittest.TestCase):
     def test_batch_delete_selected_history_records_and_undo(self):
         failed=self.datasets/'scene_20260915_local_b'
         write(failed/'derived/local_failure.json',dict(error='tracking_lost',session_id='b'))
-        from app_local_history import LocalHistoryWindow
+        from femto.app.app_local_history import LocalHistoryWindow
         root=tk.Tk();root.withdraw()
         try:
             window=LocalHistoryWindow(root,self.datasets,self.outputs)
@@ -90,7 +90,7 @@ class HistoryTests(unittest.TestCase):
             window.tree.selection_set('0','1')
             window.selected()
             self.assertEqual(len(window.selected_rows()),2)
-            with mock.patch('app_local_history.messagebox.askyesno',return_value=True) as ask:
+            with mock.patch('femto.app.app_local_history.messagebox.askyesno',return_value=True) as ask:
                 window.buttons['delete'].invoke()
                 self.assertIn('2',ask.call_args.args[1])
             deadline=time.monotonic()+5
@@ -106,7 +106,7 @@ class HistoryTests(unittest.TestCase):
 
     def test_history_window_opens_correct_model_and_report_without_acquisition(self):
         gc.collect()
-        from app_local_history import LocalHistoryWindow
+        from femto.app.app_local_history import LocalHistoryWindow
         root=tk.Tk();root.withdraw()
         try:
             window=LocalHistoryWindow(root,self.datasets,self.outputs)
@@ -117,17 +117,17 @@ class HistoryTests(unittest.TestCase):
             self.assertNotIn('compare',window.buttons)
             self.assertNotIn('report',window.buttons)
             self.assertFalse(window.quality_text.winfo_ismapped())
-            with mock.patch('app_local_history.subprocess.Popen') as launch:
+            with mock.patch('femto.app.app_local_history.subprocess.Popen') as launch:
                 window.open('fixed')
                 args=launch.call_args.args[0]
-                self.assertTrue(args[1].endswith('fixed_rgb_viewer.py'))
-                self.assertEqual(Path(args[2]),self.result/'reconstruction')
-            with mock.patch('app_local_history.os.startfile') as open_file:
+                self.assertEqual(args[1:3],['-m','femto.planning.fixed_rgb_viewer'])
+                self.assertEqual(Path(args[3]),self.result/'reconstruction')
+            with mock.patch('femto.app.app_local_history.os.startfile') as open_file:
                 window.open('report');self.assertTrue(open_file.called)
-            with mock.patch('app_local_history.messagebox.askyesno',return_value=False):
+            with mock.patch('femto.app.app_local_history.messagebox.askyesno',return_value=False):
                 window.open('delete');self.assertEqual(len(scan_history(self.datasets,self.outputs)),1)
             self.assertIn('删除选中记录',window.buttons['delete'].cget('text'))
-            with mock.patch('app_local_history.messagebox.askyesno',return_value=True):
+            with mock.patch('femto.app.app_local_history.messagebox.askyesno',return_value=True):
                 window.buttons['delete'].invoke()
             deadline=time.monotonic()+5
             while window.loading and time.monotonic()<deadline:root.update();time.sleep(.01)

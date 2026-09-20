@@ -6,10 +6,10 @@ from pathlib import Path
 import sys
 import cv2
 import numpy as np
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/ scripts import repository-root modules
-from io_utils import imread_unicode as _read_image
-from scene_reconstruction import _distortion_maps
-from moving_quality import rotation_deg
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/ scripts import the femto package from the repository root
+from femto.io_utils import imread_unicode as _read_image
+from femto.geometry.scene_reconstruction import _distortion_maps
+from femto.tracking.moving_quality import rotation_deg
 
 
 def diagnose(source, output):

@@ -10,9 +10,9 @@ from unittest import mock
 
 import numpy as np
 
-from local_reference import calibration_identity, reference_provenance
-from local_temporal_support import MASK_SOURCE_SCHEMA, filtered_depth, prepare
-from io_utils import imread_unicode as _read_image, imwrite_unicode
+from femto.dataset.local_reference import calibration_identity, reference_provenance
+from femto.local.local_temporal_support import MASK_SOURCE_SCHEMA, filtered_depth, prepare
+from femto.io_utils import imread_unicode as _read_image, imwrite_unicode
 import cv2
 
 
@@ -121,7 +121,7 @@ class TemporalBindingTests(unittest.TestCase):
         self.source, self.raw = make_source(self.root)
 
     def prepare(self, name='masks'):
-        with mock.patch('local_temporal_support.audit_temporal_motion',
+        with mock.patch('femto.local.local_temporal_support.audit_temporal_motion',
                         return_value=(np.zeros((20, 20), bool), dict(passed=True))):
             return prepare(self.source, self.root/name)
 
@@ -269,7 +269,7 @@ class TemporalBindingTests(unittest.TestCase):
             depth[1, 1] += 1
             imwrite_unicode(path, depth)
             return np.zeros((20, 20), bool), dict(passed=True)
-        with mock.patch('local_temporal_support.audit_temporal_motion', side_effect=audit):
+        with mock.patch('femto.local.local_temporal_support.audit_temporal_motion', side_effect=audit):
             with self.assertRaisesRegex(ValueError, 'Source changed'):
                 prepare(self.source, self.root/'changed')
 

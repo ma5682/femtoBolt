@@ -7,7 +7,7 @@ import tkinter as tk
 import unittest
 from unittest import mock
 
-from app_local_comparison import ComparisonWindow, comparison_source, progress_text
+from femto.app.app_local_comparison import ComparisonWindow, comparison_source, progress_text
 
 
 def write(path, value):
@@ -53,8 +53,8 @@ class ComparisonControlsTests(unittest.TestCase):
                 time.sleep(.01)
             stopped.set()
             return dict(state='cancelled', stages=[])
-        with mock.patch('app_local_comparison.comparison_source', return_value=Path('fixture')), \
-             mock.patch('local_comparison.run_comparison', side_effect=compare):
+        with mock.patch('femto.app.app_local_comparison.comparison_source', return_value=Path('fixture')), \
+             mock.patch('femto.local.local_comparison.run_comparison', side_effect=compare):
             window.start()
             self.assertTrue(started.wait(2))
             poll_timer = window.timer

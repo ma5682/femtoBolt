@@ -18,10 +18,10 @@ from unittest import mock
 import numpy as np
 import open3d as o3d
 
-from fixed_rgb_geometry import FixedProjection, FixedRGBModel, GeometryTaskCancelled
-from scene_annotations import AnnotationStore, region_boundary
-from local_history import scan_history, existing_actions
-from local_processing import empty_report
+from femto.annotation.fixed_rgb_geometry import FixedProjection, FixedRGBModel, GeometryTaskCancelled
+from femto.annotation.scene_annotations import AnnotationStore, region_boundary
+from femto.annotation.local_history import scan_history, existing_actions
+from femto.pipeline.local_processing import empty_report
 
 
 def quad(z=.5, left=-.2, right=.2, top=-.2, bottom=.2):
@@ -162,9 +162,9 @@ class GeometryExperienceTests(unittest.TestCase):
 
     def test_display_budget_rejects_before_committing_region(self):
         model=make_model(self.folder)
-        with mock.patch('fixed_rgb_geometry.MAX_BOUNDARY_SAMPLES',1):
+        with mock.patch('femto.annotation.fixed_rgb_geometry.MAX_BOUNDARY_SAMPLES',1):
             with self.assertRaisesRegex(ValueError,'budget'):model.region(POLYGON,'B','')
-        with mock.patch('fixed_rgb_geometry.MAX_OVERLAY_BYTES',1):
+        with mock.patch('femto.annotation.fixed_rgb_geometry.MAX_OVERLAY_BYTES',1):
             with self.assertRaisesRegex(ValueError,'budget'):model.region(POLYGON,'B','')
         self.assertEqual(model.store.regions,[]);self.assertFalse(model.store.dirty)
 
@@ -172,7 +172,7 @@ class GeometryExperienceTests(unittest.TestCase):
         rec=self.folder/'reconstruction';rec.mkdir()
         write_json(rec/'reconstruction_report.json',{})
         (rec/'scene_tsdf_mesh_m.ply').write_bytes(b'ply\nformat ascii 1.0\nelement vertex 4000001\nelement face 4000001\nend_header\n')
-        with mock.patch('fixed_rgb_geometry.read_geometry_safe') as read:
+        with mock.patch('femto.annotation.fixed_rgb_geometry.read_geometry_safe') as read:
             with self.assertRaisesRegex(ValueError,'budget'):FixedRGBModel(rec)
         read.assert_not_called()
 
@@ -203,7 +203,7 @@ class FixedViewerExperienceTests(unittest.TestCase):
         self.make_view('zh')
 
     def make_view(self,language):
-        from fixed_rgb_viewer import FixedRGBViewer
+        from femto.planning.fixed_rgb_viewer import FixedRGBViewer
         if hasattr(self,'viewer'):self.viewer.close(force=True)
         self.root=tk.Tk()
         with mock.patch.object(FixedRGBViewer,'work'):
@@ -297,13 +297,13 @@ class FixedViewerExperienceTests(unittest.TestCase):
         self.assertEqual(len(self.model.store.points),count)
 
     def test_region_selection_isolates_boundaries_exclusions_and_fill(self):
-        from fixed_rgb_geometry import selected_surface_mask
+        from femto.annotation.fixed_rgb_geometry import selected_surface_mask
         v=self.viewer;model=self.model
         first=model.region([[54,26],[74,26],[74,47],[54,47]],'A','')
         second=model.region([[26,54],[47,54],[47,74],[26,74]],'B','')
         model.store.set_exclusions(0,[[[55,30],[60,30],[60,35],[55,35]]])
         v.refresh_items(('region',second['annotation_id']))
-        with mock.patch('fixed_rgb_geometry.selected_surface_mask',wraps=selected_surface_mask) as fill:
+        with mock.patch('femto.annotation.fixed_rgb_geometry.selected_surface_mask',wraps=selected_surface_mask) as fill:
             v.draw()
             self.assertEqual(fill.call_args.args[1],second['triangle_indices'])
         self.assertFalse(v.canvas.find_withtag(first['annotation_id']))
@@ -313,7 +313,7 @@ class FixedViewerExperienceTests(unittest.TestCase):
         self.assertTrue(v.canvas.find_withtag(first['annotation_id']))
         self.assertFalse(v.canvas.find_withtag(second['annotation_id']))
         self.assertTrue(v.canvas.find_withtag('forbidden'))
-        with mock.patch('fixed_rgb_geometry.selected_surface_mask',wraps=selected_surface_mask) as fill:
+        with mock.patch('femto.annotation.fixed_rgb_geometry.selected_surface_mask',wraps=selected_surface_mask) as fill:
             v.select_all()
             self.assertEqual(fill.call_args.args[1],sorted(set(first['triangle_indices']+second['triangle_indices'])))
         self.assertTrue(v.canvas.find_withtag(first['annotation_id']))
@@ -345,19 +345,19 @@ class FixedViewerExperienceTests(unittest.TestCase):
         v=self.viewer;self.click_pixel();self.click_pixel(30,40);xyz=copy.deepcopy(self.model.store.points[1]['point_world_m'])
         v.name.set('Edited');v.note.set('Pending note')
         v.items.selection_clear(0,'end');v.items.selection_set(0)
-        with mock.patch('fixed_rgb_viewer.messagebox.askyesnocancel',return_value=None):v.select()
+        with mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askyesnocancel',return_value=None):v.select()
         self.assertEqual(v.focus,('point',1));self.assertEqual(v.items.curselection(),(1,));self.assertTrue(v.pending_edits())
         v.items.selection_clear(0,'end');v.items.selection_set(0)
-        with mock.patch('fixed_rgb_viewer.messagebox.askyesnocancel',return_value=True):v.select()
+        with mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askyesnocancel',return_value=True):v.select()
         self.assertEqual(v.focus,('point',0));self.assertEqual(self.model.store.points[1]['name'],'Edited')
         self.assertEqual(self.model.store.points[1]['point_world_m'],xyz)
 
     def test_close_and_load_warn_for_dirty_edit_and_polygon_without_discard_on_cancel(self):
         v=self.viewer;self.click_pixel();path=self.model.store.save(Path(self.temp.name)/'saved')
         v.name.set('Unapplied');v.polygon=[[10,10],[80,10],[80,80]]
-        with mock.patch('fixed_rgb_viewer.messagebox.askokcancel',return_value=False) as ask:
+        with mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askokcancel',return_value=False) as ask:
             v.close();self.assertFalse(v.closed);self.assertIn('名称 / 备注',ask.call_args.args[1])
-            with mock.patch('fixed_rgb_viewer.filedialog.askopenfilename',return_value=str(path)):v.load()
+            with mock.patch('femto.planning.fixed_rgb_viewer.filedialog.askopenfilename',return_value=str(path)):v.load()
         self.assertEqual(v.name.get(),'Unapplied');self.assertEqual(len(v.polygon),3);self.assertFalse(v.busy)
 
     def test_rejected_load_preserves_current_annotations_draft_fields_and_dirty(self):
@@ -366,7 +366,7 @@ class FixedViewerExperienceTests(unittest.TestCase):
         data=json.loads(path.read_text(encoding='utf-8'));data['geometry_sha256']='different'
         bad=Path(self.temp.name)/'bad.json';write_json(bad,data)
         signature=self.model.store.content_signature();old_store=self.model.store;readout=v.readout.get()
-        with mock.patch('fixed_rgb_viewer.filedialog.askopenfilename',return_value=str(bad)),mock.patch('fixed_rgb_viewer.messagebox.askokcancel',return_value=True):v.load()
+        with mock.patch('femto.planning.fixed_rgb_viewer.filedialog.askopenfilename',return_value=str(bad)),mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askokcancel',return_value=True):v.load()
         self.wait_idle()
         self.assertIs(self.model.store,old_store);self.assertEqual(self.model.store.content_signature(),signature)
         self.assertEqual(v.readout.get(),readout);self.assertEqual(v.name.get(),'Keep draft edit');self.assertEqual(len(v.polygon),3)
@@ -377,7 +377,7 @@ class FixedViewerExperienceTests(unittest.TestCase):
         self.assertFalse(self.model.store.dirty);self.assertIn('没有未保存',v.save_state.get())
         saved=next((self.model.reconstruction/'annotations').glob('*/annotations.json'));before=saved.read_bytes()
         self.click_pixel(30,40);v.polygon=[[10,10],[80,10],[80,80]]
-        with mock.patch('fixed_rgb_viewer.filedialog.askopenfilename',return_value=str(saved)),mock.patch('fixed_rgb_viewer.messagebox.askokcancel',return_value=True):v.load()
+        with mock.patch('femto.planning.fixed_rgb_viewer.filedialog.askopenfilename',return_value=str(saved)),mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askokcancel',return_value=True):v.load()
         self.wait_idle()
         self.assertEqual(len(self.model.store.points),1);self.assertFalse(self.model.store.dirty);self.assertEqual(v.polygon,[])
         self.assertEqual(v.focus,('point',0));self.assertEqual(saved.read_bytes(),before)
@@ -410,7 +410,7 @@ class FixedViewerExperienceTests(unittest.TestCase):
             self.assertGreater(v.canvas.winfo_height(),100)
 
     def test_square_brush_erase_undo_and_finish(self):
-        from square_brush import polygon_mask
+        from femto.annotation.square_brush import polygon_mask
         v=self.viewer;v.show_axes.set(False);v.mode.set('region');v.change_mode()
         v.brush_size.set(160)
         self.click_pixel(40,40)
@@ -439,7 +439,7 @@ class FixedViewerExperienceTests(unittest.TestCase):
         self.assertEqual(v.polygon,[]);v.busy=False
 
     def test_brush_moves_reuse_background_and_preserve_every_segment(self):
-        from square_brush import stroke,mask_polygon
+        from femto.annotation.square_brush import stroke,mask_polygon
         v=self.viewer;v.show_axes.set(False);v.mode.set('region');v.change_mode()
         self.click_pixel(25,25)
         expected=v._brush_mask.copy();last=v._brush_last.copy()
@@ -458,9 +458,9 @@ class FixedViewerExperienceTests(unittest.TestCase):
         v.undo();self.assertEqual(v.polygon,[])
 
     def test_brush_cache_reused_and_invalidated_by_polygon(self):
-        from square_brush import polygon_mask
+        from femto.annotation.square_brush import polygon_mask
         v=self.viewer;polygon=[[10,10],[30,10],[30,30],[10,30]]
-        with mock.patch('square_brush.polygon_mask',wraps=polygon_mask) as raster:
+        with mock.patch('femto.annotation.square_brush.polygon_mask',wraps=polygon_mask) as raster:
             first=v.cached_brush_mask('work',polygon)
             self.assertIs(v.cached_brush_mask('work',copy.deepcopy(polygon)),first)
             self.assertEqual(raster.call_count,1)
@@ -536,10 +536,10 @@ class FixedViewerExperienceTests(unittest.TestCase):
     def test_mode_change_can_preserve_or_explicitly_discard_draft(self):
         v=self.viewer;v.mode.set('region');v.change_mode();v.polygon=[[20,20],[80,20],[80,80]]
         v.mode.set('point')
-        with mock.patch('fixed_rgb_viewer.messagebox.askokcancel',return_value=False):v.change_mode()
+        with mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askokcancel',return_value=False):v.change_mode()
         self.assertEqual(v.mode.get(),'region');self.assertEqual(len(v.polygon),3)
         v.mode.set('point')
-        with mock.patch('fixed_rgb_viewer.messagebox.askokcancel',return_value=True):v.change_mode()
+        with mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askokcancel',return_value=True):v.change_mode()
         self.assertEqual(v.polygon,[]);self.assertEqual(self.model.store.regions,[])
 
     def test_close_cancels_worker_and_drops_late_callback(self):
@@ -636,7 +636,7 @@ class HistoryExperienceTests(unittest.TestCase):
         self.assertFalse(existing_actions(row)['fixed'])
 
     def test_history_comparison_launches_only_for_eligible_published_model(self):
-        from app_local_history import LocalHistoryWindow
+        from femto.app.app_local_history import LocalHistoryWindow
         source,result=history_fixture(self.folder)
         write_json(result/'publication.json',dict(schema='femto-local-publication-v1',status='published',
                    session_id='fixture',result=str(result.resolve())))
@@ -647,7 +647,7 @@ class HistoryExperienceTests(unittest.TestCase):
             deadline=time.monotonic()+5
             while window.loading and time.monotonic()<deadline:root.update();time.sleep(.01)
             self.assertFalse(window.loading)
-            with mock.patch.dict('sys.modules',{'app_local_comparison':SimpleNamespace(ComparisonWindow=launch)}):
+            with mock.patch.dict('sys.modules',{'femto.app.app_local_comparison':SimpleNamespace(ComparisonWindow=launch)}):
                 window.open('compare')
                 launch.assert_called_once_with(window.window,str(result.resolve()),self.folder/'outputs','zh')
                 write_json(result/'publication.json',dict(schema='femto-local-publication-v1',status='cancelled',
@@ -660,19 +660,19 @@ class HistoryExperienceTests(unittest.TestCase):
         del root,window;gc.collect()
 
     def test_refresh_preserves_selected_key_and_quality_summary_at_small_size(self):
-        from app_local_history import LocalHistoryWindow
+        from femto.app.app_local_history import LocalHistoryWindow
         for language in ('zh','en'):
             root=tk.Tk();root.withdraw();window=None
             def row(key):
                 return dict(key=key,name=key,result=None,source=str(self.folder),session_id=key,state='recorded',count=1,
                             error=None,fixed=False,mesh=None,report=None,time=1,quality=empty_report())
             try:
-                with mock.patch('app_local_history.scan_history',return_value=[row('a'),row('b')]):
+                with mock.patch('femto.app.app_local_history.scan_history',return_value=[row('a'),row('b')]):
                     window=LocalHistoryWindow(root,self.folder/'datasets',self.folder/'outputs',language)
                     deadline=time.monotonic()+3
                     while window.loading and time.monotonic()<deadline:root.update();time.sleep(.01)
                 window.tree.selection_set('1');window.selected()
-                with mock.patch('app_local_history.scan_history',return_value=[row('c'),row('a'),row('b')]):
+                with mock.patch('femto.app.app_local_history.scan_history',return_value=[row('c'),row('a'),row('b')]):
                     window.refresh();deadline=time.monotonic()+3
                     while window.loading and time.monotonic()<deadline:root.update();time.sleep(.01)
                 self.assertEqual(window.current()['key'],'b')
@@ -689,14 +689,14 @@ class HistoryExperienceTests(unittest.TestCase):
             del root,window;gc.collect()
 
     def test_closed_history_ignores_late_scan_and_budget_can_cancel(self):
-        from app_local_history import LocalHistoryWindow
+        from femto.app.app_local_history import LocalHistoryWindow
         cancel=threading.Event();cancel.set();history_fixture(self.folder)
         with self.assertRaisesRegex(RuntimeError,'cancelled'):scan_history(self.folder/'datasets',self.folder/'outputs',cancel=cancel)
         with self.assertRaises(TimeoutError):scan_history(self.folder/'datasets',self.folder/'outputs',seconds=-1)
         root=tk.Tk();root.withdraw();started=threading.Event();release=threading.Event()
         def slow(*args,**kwargs):started.set();release.wait(3);return []
         try:
-            with mock.patch('app_local_history.scan_history',side_effect=slow):
+            with mock.patch('femto.app.app_local_history.scan_history',side_effect=slow):
                 window=LocalHistoryWindow(root,self.folder/'datasets',self.folder/'outputs')
                 self.assertTrue(started.wait(1));window.close();release.set()
                 deadline=time.monotonic()+1

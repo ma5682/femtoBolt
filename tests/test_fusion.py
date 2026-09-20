@@ -4,7 +4,7 @@ import numpy as np
 import open3d as o3d
 import trimesh
 
-from fusion import fill_small_mesh_holes
+from femto.geometry.fusion import fill_small_mesh_holes
 
 
 def boundary_edges(mesh: o3d.geometry.TriangleMesh) -> int:

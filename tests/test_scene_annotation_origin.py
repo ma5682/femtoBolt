@@ -10,11 +10,11 @@ from unittest import mock
 import numpy as np
 import open3d as o3d
 
-import scene_demo_viewer as viewer
-from scene_annotations import (
+import femto.viewer.scene_demo_viewer as viewer
+from femto.annotation.scene_annotations import (
     AnnotationStore, distance_m, distance_to_origin_m, point_readout_mm,
 )
-from scene_annotation_ui import surface_readout_text
+from femto.annotation.scene_annotation_ui import surface_readout_text
 
 
 def triangle(z=0.):

@@ -7,8 +7,8 @@ import sys
 import numpy as np
 from PIL import Image
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/ scripts import repository-root modules
-from depth_quality import DepthQualityConfig, assess_and_fill_depth
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/ scripts import the femto package from the repository root
+from femto.depth.depth_quality import DepthQualityConfig, assess_and_fill_depth
 
 
 def benchmark(directory: Path, repeats=10):

@@ -7,5 +7,5 @@ if not exist ".venv\Scripts\python.exe" (
   pause
   exit /b 1
 )
-".venv\Scripts\python.exe" -u "top_scan.py"
+".venv\Scripts\python.exe" -u -m femto.capture.top_scan
 if errorlevel 1 pause

@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest import mock
 import numpy as np
-from local_temporal_support import support_mask,stationary_window,filtered_depth,prepare
-from io_utils import imwrite_unicode
+from femto.local.local_temporal_support import support_mask,stationary_window,filtered_depth,prepare
+from femto.io_utils import imwrite_unicode
 from test_local_temporal_binding import make_source
 
 
@@ -46,8 +46,8 @@ class SupportTests(unittest.TestCase):
             self.assertIn('stopped_after',status)
 
     def test_reconstruction_uses_mask_and_keeps_initial_raw_cloud(self):
-        from scene_reconstruction import reconstruct_scene
-        from fusion import read_geometry_safe
+        from femto.geometry.scene_reconstruction import reconstruct_scene
+        from femto.geometry.fusion import read_geometry_safe
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)
             raw_depth=np.full((96,128),513,np.uint16);raw_depth[:,:64]=0;raw_depth[32:40,24:32]=513
@@ -56,7 +56,7 @@ class SupportTests(unittest.TestCase):
             # The original left-half integration assertions stay intact. This
             # source has only 64 valid pixels there, so the real >=80% retention
             # gate is also respected instead of constructing an unsupported mask.
-            with mock.patch('local_temporal_support.audit_temporal_motion',return_value=(motion,dict(passed=True))):
+            with mock.patch('femto.local.local_temporal_support.audit_temporal_motion',return_value=(motion,dict(passed=True))):
                 source,temporal=prepare(posed,root/'masks')
             self.assertEqual(temporal['applied_frames'],3)
             rows=[json.loads(s) for s in (source/'frames.jsonl').read_text().splitlines()]
@@ -66,7 +66,7 @@ class SupportTests(unittest.TestCase):
             self.assertGreater(report['metrics']['fused_point_count'],0)
             self.assertTrue(all(r.get('local_temporal_support') for r in rows))
             # Inspect integration calls rather than inferring support from mesh appearance.
-            import scene_reconstruction as reconstruction
+            import femto.geometry.scene_reconstruction as reconstruction
             original=reconstruction._prepare_rgbd;observations=[]
             def observe(color,depth,*args,**kwargs):
                 observations.append(depth.copy());return original(color,depth,*args,**kwargs)
@@ -97,7 +97,7 @@ class SupportTests(unittest.TestCase):
             root=Path(td);raw=np.full((5,5),513,np.uint16)
             posed,_=make_source(root,depth=raw,outlier=False)
             motion=np.zeros(raw.shape,bool);motion[0,0]=True
-            with mock.patch('local_temporal_support.audit_temporal_motion',return_value=(motion,dict(passed=True))):
+            with mock.patch('femto.local.local_temporal_support.audit_temporal_motion',return_value=(motion,dict(passed=True))):
                 dataset,_=prepare(posed,root/'masks')
             frame=next(json.loads(s) for s in (dataset/'frames.jsonl').read_text().splitlines() if json.loads(s)['frame']==2)
             path=Path(frame['local_temporal_support']['mask']);result=filtered_depth(dataset,frame,raw)
@@ -109,13 +109,13 @@ class SupportTests(unittest.TestCase):
             root=Path(td);dataset,raw=make_source(root,accepted=(0,),outlier_index=0)
             frame=json.loads((dataset/'frames.jsonl').read_text())
             before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
-            with mock.patch('local_temporal_support.audit_temporal_motion',return_value=(np.zeros((20,20),bool),dict(passed=True))):
+            with mock.patch('femto.local.local_temporal_support.audit_temporal_motion',return_value=(np.zeros((20,20),bool),dict(passed=True))):
                 derived,report=prepare(dataset,root/'out')
             self.assertEqual(report['applied_frames'],1);self.assertTrue(report['source_unchanged'])
             row=json.loads((derived/'frames.jsonl').read_text());d=np.full((20,20),500,np.uint16);d[0,0]=550
             self.assertEqual(filtered_depth(derived,row,d)[0,0],0)
             self.assertEqual((derived/row['pose']).read_bytes(),before[dataset/frame['pose']])
             self.assertTrue(all(p.read_bytes()==value for p,value in before.items()))
-            with mock.patch('local_temporal_support.audit_temporal_motion',return_value=(np.zeros((20,20),bool),dict(passed=False))):
+            with mock.patch('femto.local.local_temporal_support.audit_temporal_motion',return_value=(np.zeros((20,20),bool),dict(passed=False))):
                 derived,report=prepare(dataset,root/'skip')
             self.assertEqual(derived,dataset.resolve());self.assertEqual(report['applied_frames'],0)

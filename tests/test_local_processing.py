@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from local_processing import LocalProcessing, empty_report, format_quality, result_quality, temporal_summary
+from femto.pipeline.local_processing import LocalProcessing, empty_report, format_quality, result_quality, temporal_summary
 
 
 def write(path, value):
@@ -31,8 +31,8 @@ class ProcessingTests(unittest.TestCase):
         temporal = dict(applied_frames=0, frames=[
             dict(frame=7, applied=False, reason='no_stationary_five_frame_window'),
             dict(frame=9, applied=False, source_frames=[5,6,7,8,9], reason='image_motion_rejected')])
-        with mock.patch('local_pose_refinement.refine', return_value=(self.dataset, refinement)), \
-             mock.patch('local_temporal_support.prepare', return_value=(self.dataset, temporal)):
+        with mock.patch('femto.local.local_pose_refinement.refine', return_value=(self.dataset, refinement)), \
+             mock.patch('femto.local.local_temporal_support.prepare', return_value=(self.dataset, temporal)):
             job = LocalProcessing(self.dataset, self.root/'job', events.append)
             chosen, report = job.run()
         self.assertEqual(chosen, self.dataset)
@@ -48,7 +48,7 @@ class ProcessingTests(unittest.TestCase):
 
     def test_failed_stage_and_inconsistent_adoption_never_claim_success(self):
         job = LocalProcessing(self.dataset, self.root/'job')
-        with mock.patch('local_pose_refinement.refine', return_value=(self.dataset, dict(accepted=True))):
+        with mock.patch('femto.local.local_pose_refinement.refine', return_value=(self.dataset, dict(accepted=True))):
             with self.assertRaisesRegex(ValueError, 'decision'):
                 job.run()
         recorded = json.loads(job.path.read_text(encoding='utf-8'))
@@ -86,7 +86,7 @@ class ProcessingTests(unittest.TestCase):
     def test_quality_events_cannot_update_another_or_finished_session(self):
         import gc
         import tkinter as tk
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         gc.collect()
         with mock.patch.object(control.FemtoControlApp, '_start_camera'), \
              mock.patch.object(control.FemtoControlApp, '_load_latest_paths'):

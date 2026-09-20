@@ -6,7 +6,7 @@ import numpy as np
 import open3d as o3d
 from PIL import Image
 import trimesh
-from multiview_texture import project_visible, export_multiview_texture
+from femto.geometry.multiview_texture import project_visible, export_multiview_texture
 
 
 class MultiviewTextureTests(unittest.TestCase):

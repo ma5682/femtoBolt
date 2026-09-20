@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from square_brush import stroke, mask_polygon, polygon_mask
+from femto.annotation.square_brush import stroke, mask_polygon, polygon_mask
 
 
 class SquareBrushTests(unittest.TestCase):
@@ -42,5 +42,5 @@ class SquareBrushTests(unittest.TestCase):
         stroke(mask,(30,30),(900,800),40)
         polygon=mask_polygon(mask)
         self.assertLessEqual(len(polygon),512)
-        from fixed_rgb_geometry import polygon_contains
+        from femto.annotation.fixed_rgb_geometry import polygon_contains
         self.assertTrue(polygon_contains(np.linspace([30,30],[900,800],100),polygon).all())

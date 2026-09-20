@@ -4,17 +4,17 @@ import tempfile
 import unittest
 import numpy as np
 import trimesh
-from export_history import scan_exports,scan_region_exports,local_asset
-from export_preview import load_preview
+from femto.planning.export_history import scan_exports,scan_region_exports,local_asset
+from femto.viewer.export_preview import load_preview
 
 
 class ExportHistoryTests(unittest.TestCase):
     def test_windowless_output_streams_support_viewer_logging(self):
         import sys
         from unittest.mock import patch
-        from export_preview import ensure_output_streams
+        from femto.viewer.export_preview import ensure_output_streams
         with tempfile.TemporaryDirectory() as folder:
-            with patch('export_preview.__file__',str(Path(folder)/'export_preview.py')):
+            with patch('femto.viewer.export_preview.LOG_ROOT',Path(folder)/'Log'):
                 with patch.object(sys,'stdout',None),patch.object(sys,'stderr',None):
                     stream=ensure_output_streams()
                     try:

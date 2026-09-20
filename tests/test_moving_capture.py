@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 
-import femto_control_app as control
+import femto.app.femto_control_app as control
 from tests.test_segmented_capture import make_camera, make_frame
 
 

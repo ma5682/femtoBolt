@@ -6,10 +6,10 @@ import numpy as np
 import cv2
 from tests.test_fixed_rgb_experience import make_model,K,quad
 from tests.test_segmented_capture import make_frame
-from local_geometry_diagnostics import diagnose,render_comparison,save_diagnostics,digest
-from local_tracking_diagnostics import current_feedback
-from scene_live_tracker import LiveTracker
-from local_capture import LocalCapture
+from femto.local.local_geometry_diagnostics import diagnose,render_comparison,save_diagnostics,digest
+from femto.tracking.local_tracking_diagnostics import current_feedback
+from femto.tracking.scene_live_tracker import LiveTracker
+from femto.capture.local_capture import LocalCapture
 
 class CaptureDiagnosticsTests(unittest.TestCase):
     def test_early_sync_rejection_has_current_quality_and_update_time(self):
@@ -29,14 +29,14 @@ class CaptureDiagnosticsTests(unittest.TestCase):
         for change in ({'reference_frame_id':8},{'T_WC':np.full((4,4),np.nan).tolist()},{'quality':{'usable':False}},{'continuity':{'current_frame_verified':False}}):
             r=dict(good,**change);self.assertFalse(c._select(r,10.));self.assertEqual(r['selection']['reason'],'pose_quality_or_reference_mismatch')
     def test_world_point_reprojects_through_inverse_camera_pose(self):
-        from local_geometry_diagnostics import sample_view
+        from femto.local.local_geometry_diagnostics import sample_view
         t=np.eye(4);t[0,3]=.03
         r=sample_view([[.03,0,.5]],t,K,np.full((100,100),500,np.uint16),.25,2.21)
         np.testing.assert_allclose(r['pixel'],[50,50]);self.assertEqual(r['signed_residual_mm'],0.)
     def test_invalid_composed_pose_does_not_advance_origin(self):
         e=mock.Mock();e.estimate.return_value=(np.full((4,4),np.nan),{})
         t=LiveTracker(e,250,2210,clock=lambda:10.)
-        with mock.patch('scene_live_tracker.frame_quality',return_value={'usable':True}):
+        with mock.patch('femto.tracking.scene_live_tracker.frame_quality',return_value={'usable':True}):
             t.process(make_frame([500]*10,1),7,9.8);r=t.process(make_frame([500]*10,2),8,9.9)
         self.assertEqual(r['state'],'uncertain');self.assertEqual(r['rejection_reason'],'invalid_composed_pose')
         self.assertEqual(t.reference_id,7);self.assertEqual(t.last_valid_frame_id,7);np.testing.assert_array_equal(t.pose,np.eye(4))
@@ -45,7 +45,7 @@ class LocalEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.model=make_model(self.root)
         self.dataset=self.root/'dataset';self.dataset.mkdir();(self.dataset/'derived').mkdir();(self.dataset/'calibration').mkdir()
-        from local_reference import CALIBRATION_FILES,calibration_identity
+        from femto.dataset.local_reference import CALIBRATION_FILES,calibration_identity
         for name in CALIBRATION_FILES:(self.dataset/'calibration'/name).write_text('{}')
         def write(name,data):(self.dataset/name).write_text(json.dumps(data),encoding='utf-8')
         frames=[];records=[]
@@ -66,7 +66,7 @@ class LocalEvidenceTests(unittest.TestCase):
         (self.model.reconstruction/'reconstruction_report.json').write_text(json.dumps(dict(source_dataset=str(self.dataset),frames=frames)))
         self.model.store.origin_reference['source_dataset']=str(self.dataset)
         self.model.view_reference.update(depth_sha256=digest(self.dataset/'depth0.png'),rgb_sha256=digest(self.dataset/'rgb0.png'))
-        yy,xx=np.indices((100,100));self.patch=mock.patch('scene_reconstruction._distortion_maps',return_value=(xx.astype(np.float32),yy.astype(np.float32),K,100,100));self.patch.start()
+        yy,xx=np.indices((100,100));self.patch=mock.patch('femto.geometry.scene_reconstruction._distortion_maps',return_value=(xx.astype(np.float32),yy.astype(np.float32),K,100,100));self.patch.start()
         self.point=self.model.pick(50,50,'test','')
     def tearDown(self):self.patch.stop();self.tmp.cleanup()
     def set_depth(self,index,mm):
@@ -109,7 +109,7 @@ class GeometryProbeTests(unittest.TestCase):
 class FeedbackUITests(unittest.TestCase):
     def test_recovered_banner_clears_old_notice_and_shows_current_quality(self):
         import tkinter as tk
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         root=tk.Tk();root.geometry('1120x720')
         try:
             with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):

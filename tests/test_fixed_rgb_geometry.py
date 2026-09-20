@@ -9,9 +9,9 @@ from types import SimpleNamespace
 import tkinter as tk
 import numpy as np
 import open3d as o3d
-from fixed_rgb_geometry import FixedProjection, FixedRGBModel
-from scene_annotations import AnnotationStore
-from local_capture import LocalCapture
+from femto.annotation.fixed_rgb_geometry import FixedProjection, FixedRGBModel
+from femto.annotation.scene_annotations import AnnotationStore
+from femto.capture.local_capture import LocalCapture
 
 
 def plane(z=.5):
@@ -23,7 +23,7 @@ def plane(z=.5):
 
 class FixedProjectionTests(unittest.TestCase):
     def test_cloud_render_uses_nearest_vertex_and_radial_distance(self):
-        from fixed_rgb_geometry import render_vertex_cloud
+        from femto.annotation.fixed_rgb_geometry import render_vertex_cloud
         view=dict(uv=np.array([[1.,1.],[1.,1.],[2.,1.]]),z=np.array([.7,.5,.6]),
                   distance_mm=np.array([700.,500.,650.]),limits=(500.,700.))
         image,mask=render_vertex_cloud(view,4,3,1,[0,0],True)
@@ -32,7 +32,7 @@ class FixedProjectionTests(unittest.TestCase):
         np.testing.assert_array_equal(image[0,0],[8,18,28])
 
     def test_selected_fill_keeps_holes_and_tracks_zoom(self):
-        from fixed_rgb_geometry import selected_surface_mask,region_vertex_summary
+        from femto.annotation.fixed_rgb_geometry import selected_surface_mask,region_vertex_summary
         p=SimpleNamespace(ids=np.array([[0,-1],[1,2]]))
         np.testing.assert_array_equal(selected_surface_mask(p,[0,1],2,2,1,[0,0]),[[True,False],[True,False]])
         mask=selected_surface_mask(p,[0],5,5,2,[1,1])
@@ -92,7 +92,7 @@ class FixedProjectionTests(unittest.TestCase):
 
 class EnvelopeTests(unittest.TestCase):
     def test_total_rotation_and_radius_boundaries(self):
-        from local_capture import local_workspace
+        from femto.capture.local_capture import local_workspace
         def pose(degrees):
             t=np.eye(4);a=np.deg2rad(degrees)
             t[:3,:3]=[[np.cos(a),-np.sin(a),0],[np.sin(a),np.cos(a),0],[0,0,1]]
@@ -109,7 +109,7 @@ class EnvelopeTests(unittest.TestCase):
         c.accepted=[dict(T_WC=np.eye(4).tolist())];c.emit=mock.Mock()
         t=np.eye(4);t[0,3]=.031
         r=dict(state='tracking',T_WC=t.tolist(),step_m=0,step_deg=0)
-        with mock.patch('local_capture.time.monotonic',return_value=10.5):
+        with mock.patch('femto.capture.local_capture.time.monotonic',return_value=10.5):
             self.assertFalse(c._select(r,9.9));self.assertEqual(c.requested,10.)
             self.assertFalse(c._select(r,10.1));self.assertIsNone(c.requested)
             self.assertFalse(r['local_workspace']['within_limit'])
@@ -122,7 +122,7 @@ class EnvelopeTests(unittest.TestCase):
 class FixedViewerTests(unittest.TestCase):
     def test_zoom_pan_point_region_save_load_and_miss(self):
         gc.collect()
-        from fixed_rgb_viewer import FixedRGBViewer
+        from femto.planning.fixed_rgb_viewer import FixedRGBViewer
         with tempfile.TemporaryDirectory() as td:
             model=FixedRGBModel.__new__(FixedRGBModel);model.mesh=plane()
             model.reconstruction=Path(td)/'reconstruction';model.reconstruction.mkdir()
@@ -167,7 +167,7 @@ class FixedViewerTests(unittest.TestCase):
                     v.save()
                     saved=list((model.reconstruction/'annotations').glob('*/annotations.json'))
                     self.assertEqual(len(saved),1)
-                    with mock.patch('fixed_rgb_viewer.filedialog.askopenfilename',return_value=str(saved[0])):v.load()
+                    with mock.patch('femto.planning.fixed_rgb_viewer.filedialog.askopenfilename',return_value=str(saved[0])):v.load()
                     self.assertEqual(v.items.size(),3)
             finally:
                 v.close()

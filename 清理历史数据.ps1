@@ -5,7 +5,7 @@
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
-if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'fixed_rgb_viewer.py'))) {
+if (-not (Test-Path -LiteralPath (Join-Path $projectRoot 'commercial_compliance_check.py'))) {
     throw '请将脚本放在 Femto 项目根目录运行。'
 }
 if ($Interactive) {

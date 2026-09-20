@@ -12,7 +12,7 @@ rem build. The contrib wheel is a superset and both distributions share cv2,
 rem so install Orbbec without pulling a second conflicting OpenCV wheel.
 ".venv\Scripts\python.exe" -m pip install --no-deps pyorbbecsdk2==2.1.2
 if errorlevel 1 goto :failed
-".venv\Scripts\python.exe" download_model.py
+".venv\Scripts\python.exe" tools\download_model.py
 if errorlevel 1 goto :failed
 echo Environment is ready.
 exit /b 0

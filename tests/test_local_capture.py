@@ -11,8 +11,8 @@ import tkinter as tk
 
 import numpy as np
 import open3d as o3d
-from scene_live_tracker import LiveTracker, display_pose
-from local_capture import LocalCapture
+from femto.tracking.scene_live_tracker import LiveTracker, display_pose
+from femto.capture.local_capture import LocalCapture
 from tests.test_segmented_capture import make_frame, make_camera
 
 
@@ -22,7 +22,7 @@ class TrackerTests(unittest.TestCase):
         estimator.estimate.return_value=(np.eye(4) if transform is None else transform, {})
         return LiveTracker(estimator,250,2210,clock=lambda:10.)
 
-    @mock.patch('scene_live_tracker.frame_quality',return_value=dict(usable=True))
+    @mock.patch('femto.tracking.scene_live_tracker.frame_quality',return_value=dict(usable=True))
     def test_origin_and_inverse_translation(self, quality):
         forward=np.eye(4);forward[0,3]=-.03
         tracker=self.tracker(forward)
@@ -42,20 +42,20 @@ class TrackerTests(unittest.TestCase):
         t[:3,:3]=o3d.geometry.get_rotation_matrix_from_zyx([0,np.pi/2,0])
         self.assertIsNone(display_pose(t)['pitch_yaw_roll_deg'])
 
-    @mock.patch('scene_live_tracker.frame_quality',return_value=dict(usable=True))
+    @mock.patch('femto.tracking.scene_live_tracker.frame_quality',return_value=dict(usable=True))
     def test_invalid_first_frame_never_becomes_origin(self, quality):
         tracker=self.tracker();frame=make_frame([500]*10)
         frame.color_timestamp_us=7000
         result=tracker.process(frame,0,9.5)
         self.assertIsNone(result['T_WC']);self.assertIsNone(tracker.reference_id)
 
-    @mock.patch('scene_live_tracker.frame_quality',return_value=dict(usable=True))
+    @mock.patch('femto.tracking.scene_live_tracker.frame_quality',return_value=dict(usable=True))
     def test_lost_latches_and_does_not_relocalize(self, quality):
         tracker=self.tracker();tracker.process(make_frame([500]*10,1),0,7.9)
         result=tracker.process(make_frame([500]*10,2),1,9.9)
         self.assertEqual(result['state'],'lost');self.assertIsNone(result['T_WC'])
 
-    @mock.patch('scene_live_tracker.frame_quality',return_value=dict(usable=True))
+    @mock.patch('femto.tracking.scene_live_tracker.frame_quality',return_value=dict(usable=True))
     def test_duplicate_timestamp_and_pair_failure_do_not_advance_reference(self, quality):
         tracker=self.tracker();frame=make_frame([500]*10,1)
         tracker.process(frame,0,9.1)
@@ -84,7 +84,7 @@ class CaptureTests(unittest.TestCase):
     def test_request_uses_future_frame_and_waits_until_still(self):
         c=self.bare();t=np.eye(4);t[0,3]=.015
         record=dict(state='tracking',T_WC=t.tolist(),step_m=.01,step_deg=0.)
-        with mock.patch('local_capture.time.monotonic',return_value=10.5):
+        with mock.patch('femto.capture.local_capture.time.monotonic',return_value=10.5):
             self.assertFalse(c._select(record,9.9))
             self.assertFalse(c._select(record,10.2))
             record['step_m']=0.
@@ -93,18 +93,18 @@ class CaptureTests(unittest.TestCase):
 
     def test_pause_duplicate_and_expired_request(self):
         c=self.bare();r=dict(state='tracking',T_WC=np.eye(4).tolist(),step_m=0.,step_deg=0.)
-        with mock.patch('local_capture.time.monotonic',return_value=10.5):
+        with mock.patch('femto.capture.local_capture.time.monotonic',return_value=10.5):
             c.paused=True;self.assertFalse(c._select(r,10.2))
             c.paused=False;self.assertFalse(c._select(r,10.2))
             c.emit.assert_called_with('notice',key='duplicate')
         c.requested=10.
-        with mock.patch('local_capture.time.monotonic',return_value=14.):
+        with mock.patch('femto.capture.local_capture.time.monotonic',return_value=14.):
             self.assertFalse(c._select(r,10.2));self.assertIsNone(c.requested)
 
     def test_cancel_worker_saves_raw_without_publishing_model(self):
-        with TemporaryDirectory() as td, mock.patch('local_capture.PairEstimator') as pair, \
-                mock.patch('scene_live_tracker.frame_quality',return_value=dict(usable=True)), \
-                mock.patch('complete_demo.run_demo') as reconstruct:
+        with TemporaryDirectory() as td, mock.patch('femto.capture.local_capture.PairEstimator') as pair, \
+                mock.patch('femto.tracking.scene_live_tracker.frame_quality',return_value=dict(usable=True)), \
+                mock.patch('femto.pipeline.complete_demo.run_demo') as reconstruct:
             c=LocalCapture(make_camera('wide_detail',10),Path(td)/'data',Path(td)/'out',queue.Queue())
             c.submit(make_frame([500]*10,1))
             deadline=time.monotonic()+5
@@ -121,7 +121,7 @@ class CaptureTests(unittest.TestCase):
         with TemporaryDirectory() as td, mock.patch.object(LocalCapture,'_run'):
             c=LocalCapture(make_camera('wide_detail',10),Path(td)/'data',Path(td)/'out',queue.Queue())
             c.thread.join()
-            from femto_control_app import save_scan_frame,finalize_scan
+            from femto.app.femto_control_app import save_scan_frame,finalize_scan
             for i in range(3):save_scan_frame(c.scan,make_frame([500]*10,i+1),lossless=True)
             finalize_scan(c.scan,c.camera)
             before=c.scan.frames_log.read_bytes()
@@ -137,9 +137,9 @@ class CaptureTests(unittest.TestCase):
 
 class LocalIntegrationTests(unittest.TestCase):
     def test_real_rgbd_pair_backend_on_static_synthetic_frame(self):
-        from synthetic_scene_demo import generate_dataset
-        from scene_live_tracker import PairEstimator
-        from io_utils import imread_unicode as _read_image
+        from femto.pipeline.synthetic_scene_demo import generate_dataset
+        from femto.tracking.scene_live_tracker import PairEstimator
+        from femto.io_utils import imread_unicode as _read_image
         import cv2
         with TemporaryDirectory() as td:
             dataset=generate_dataset(Path(td)/'data',frames=4,width=512,height=288)
@@ -154,8 +154,8 @@ class LocalIntegrationTests(unittest.TestCase):
             self.assertTrue(metrics['cycle']['passed'])
 
     def test_local_complete_pipeline_keeps_origin_and_outputs_review_cloud(self):
-        from synthetic_scene_demo import generate_dataset
-        from complete_demo import run_demo
+        from femto.pipeline.synthetic_scene_demo import generate_dataset
+        from femto.pipeline.complete_demo import run_demo
         with TemporaryDirectory() as td:
             root=Path(td);dataset=generate_dataset(root/'data',frames=5,width=192,height=108)
             rows=[json.loads(s) for s in (dataset/'frames.jsonl').read_text().splitlines()]
@@ -174,10 +174,10 @@ class LocalIntegrationTests(unittest.TestCase):
             self.assertEqual(summary['data_kind'],'synthetic')
 
     def test_measured_geometry_and_annotation_lineage(self):
-        from synthetic_scene_demo import generate_dataset
-        from scene_reconstruction import reconstruct_scene
-        from fusion import read_geometry_safe
-        from scene_annotations import AnnotationStore
+        from femto.pipeline.synthetic_scene_demo import generate_dataset
+        from femto.geometry.scene_reconstruction import reconstruct_scene
+        from femto.geometry.fusion import read_geometry_safe
+        from femto.annotation.scene_annotations import AnnotationStore
         with TemporaryDirectory() as td:
             root=Path(td);dataset=generate_dataset(root/'data',frames=5,width=192,height=108)
             manifest=json.loads((dataset/'manifest.json').read_text())
@@ -204,7 +204,7 @@ class LocalIntegrationTests(unittest.TestCase):
             with self.assertRaises(ValueError):store.load(saved)
 
     def test_workbench_empty_start_and_old_tools_remain(self):
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
             root=tk.Tk();root.withdraw()
             try:
@@ -229,7 +229,7 @@ class LocalIntegrationTests(unittest.TestCase):
                 root.destroy()
 
     def test_local_camera_dispatch_does_not_open_second_sdk(self):
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         from tests.test_temporal_gui import TemporalGuiTests
         app=TemporalGuiTests().bare_app()
         camera=make_camera('wide_detail',10);camera.start.return_value=camera
@@ -243,7 +243,7 @@ class LocalIntegrationTests(unittest.TestCase):
         app.command_queue.put(('local_start',None))
         local=mock.Mock();local.closing.is_set.return_value=False
         with mock.patch.object(control,'OrbbecAlignedCamera',return_value=camera) as factory, \
-                mock.patch('local_capture.LocalCapture',return_value=local) as worker:
+                mock.patch('femto.capture.local_capture.LocalCapture',return_value=local) as worker:
             app._camera_worker()
         factory.assert_called_once();worker.assert_called_once()
         self.assertGreater(local.submit.call_count,0)
@@ -251,7 +251,7 @@ class LocalIntegrationTests(unittest.TestCase):
         self.assertFalse([e for e in app.event_queue.queue if e[0]=='camera_error'])
 
     def test_primary_controls_fit_minimum_window(self):
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
             root=tk.Tk()
             try:

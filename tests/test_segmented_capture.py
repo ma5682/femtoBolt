@@ -8,11 +8,11 @@ import cv2
 import numpy as np
 import open3d as o3d
 
-from femto_control_app import FemtoControlApp, save_rgbd_photo
-from fusion import read_geometry_safe
-from orbbec_rgbd import AlignedFrame, DEPTH_MODE_SPECS
-from pose_geometry import Intrinsics
-from scene_segmented_capture import TUNED_DEPTH_MODES, audit_static_views, capture_three_modes, depth_cloud, merge_segments, save_segment
+from femto.app.femto_control_app import FemtoControlApp, save_rgbd_photo
+from femto.geometry.fusion import read_geometry_safe
+from femto.hardware.orbbec_rgbd import AlignedFrame, DEPTH_MODE_SPECS
+from femto.geometry.pose_geometry import Intrinsics
+from femto.capture.scene_segmented_capture import TUNED_DEPTH_MODES, audit_static_views, capture_three_modes, depth_cloud, merge_segments, save_segment
 
 
 DISTORTION = {
@@ -66,9 +66,9 @@ class SegmentedCaptureTests(unittest.TestCase):
             camera.read.side_effect = frames
             return camera
         with TemporaryDirectory() as directory, mock.patch(
-            "scene_segmented_capture.OrbbecAlignedCamera", side_effect=camera_factory,
-        ), mock.patch("scene_segmented_capture.common_rgb_view", return_value=np.zeros((320, 480), np.uint8)), mock.patch(
-            "scene_segmented_capture.audit_static_views", return_value={"passed": True},
+            "femto.capture.scene_segmented_capture.OrbbecAlignedCamera", side_effect=camera_factory,
+        ), mock.patch("femto.capture.scene_segmented_capture.common_rgb_view", return_value=np.zeros((320, 480), np.uint8)), mock.patch(
+            "femto.capture.scene_segmented_capture.audit_static_views", return_value={"passed": True},
         ):
             output = Path(directory) / "capture"
             report = capture_three_modes(output, tuned=True)
@@ -84,7 +84,7 @@ class SegmentedCaptureTests(unittest.TestCase):
         views = [np.zeros((320, 480), np.uint8)] * 3
         fixed = {"reliable": True, "appears_fixed": True}
         for rejected in ({"reliable": True, "appears_fixed": False}, {"reliable": False, "appears_fixed": None}):
-            with mock.patch("scene_segmented_capture.assess_rgb_motion_pair", side_effect=[fixed, rejected, fixed, fixed]):
+            with mock.patch("femto.capture.scene_segmented_capture.assess_rgb_motion_pair", side_effect=[fixed, rejected, fixed, fixed]):
                 self.assertFalse(audit_static_views(views, views[0])["passed"])
 
     def test_empty_optional_detail_retains_evidence_and_falls_back_to_three_modes(self):
@@ -95,9 +95,9 @@ class SegmentedCaptureTests(unittest.TestCase):
             ) for index in range(1, 26)]
             return camera
         with TemporaryDirectory() as directory, mock.patch(
-            "scene_segmented_capture.OrbbecAlignedCamera", side_effect=camera_factory,
-        ), mock.patch("scene_segmented_capture.common_rgb_view", return_value=np.zeros((320, 480), np.uint8)), mock.patch(
-            "scene_segmented_capture.audit_static_views", return_value={"passed": True},
+            "femto.capture.scene_segmented_capture.OrbbecAlignedCamera", side_effect=camera_factory,
+        ), mock.patch("femto.capture.scene_segmented_capture.common_rgb_view", return_value=np.zeros((320, 480), np.uint8)), mock.patch(
+            "femto.capture.scene_segmented_capture.audit_static_views", return_value={"passed": True},
         ):
             output = Path(directory) / "capture"
             report = capture_three_modes(output, tuned=True)
@@ -196,7 +196,7 @@ class SegmentedCaptureTests(unittest.TestCase):
             cameras.append((mode, kwargs, camera))
             return camera
         with TemporaryDirectory() as directory, mock.patch(
-            "scene_segmented_capture.OrbbecAlignedCamera", side_effect=camera_factory,
+            "femto.capture.scene_segmented_capture.OrbbecAlignedCamera", side_effect=camera_factory,
         ):
             output = Path(directory) / "capture"
             report = capture_three_modes(output)
@@ -212,8 +212,8 @@ class SegmentedCaptureTests(unittest.TestCase):
 
     def test_failed_profile_does_not_publish_partial_result(self):
         with TemporaryDirectory() as directory, mock.patch(
-            "scene_segmented_capture.OrbbecAlignedCamera",
-        ) as camera_type, mock.patch("scene_segmented_capture.time.sleep"):
+            "femto.capture.scene_segmented_capture.OrbbecAlignedCamera",
+        ) as camera_type, mock.patch("femto.capture.scene_segmented_capture.time.sleep"):
             camera_type.return_value.start.side_effect = RuntimeError("camera disconnected")
             output = Path(directory) / "capture"
             marker = Path(directory) / "latest_full_range_cloud.txt"

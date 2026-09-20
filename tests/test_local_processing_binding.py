@@ -13,8 +13,8 @@ import unittest
 import numpy as np
 from PIL import Image
 
-from local_processing import SCHEMA, empty_report, format_quality, result_quality, temporal_summary
-from local_reference import CALIBRATION_FILES, calibration_identity, reference_provenance
+from femto.pipeline.local_processing import SCHEMA, empty_report, format_quality, result_quality, temporal_summary
+from femto.dataset.local_reference import CALIBRATION_FILES, calibration_identity, reference_provenance
 
 
 def write_json(path, value):

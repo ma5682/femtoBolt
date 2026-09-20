@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
-from region_library import digest, rebuild, edit_records, relocate, read_index
-from export_history import scan_exports, register_project
+from femto.planning.region_library import digest, rebuild, edit_records, relocate, read_index
+from femto.planning.export_history import scan_exports, register_project
 
 class LibraryTests(unittest.TestCase):
     def setUp(self):
@@ -51,7 +51,7 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(all(r['note']=='note' for r in scan_exports(self.root)))
         with self.assertRaises(ValueError):edit_records(self.root,rows+[{'key':'outside'}],hidden=True)
         old=read_index(self.root)
-        with patch('region_library.os.replace',side_effect=OSError('disk')):
+        with patch('femto.planning.region_library.os.replace',side_effect=OSError('disk')):
             with self.assertRaises(OSError):edit_records(self.root,rows,hidden=True)
         self.assertEqual(read_index(self.root),old)
         self.assertEqual(before,{p:digest(p) for p in before})
@@ -72,14 +72,14 @@ class LibraryTests(unittest.TestCase):
         relocate(self.root,row,moved/'path.json')
         self.assertEqual(scan_exports(self.root)[0]['folder'],moved)
     def test_discovery_without_project_index(self):
-        from region_library import discover_projects
+        from femto.planning.region_library import discover_projects
         self.project()
         for p in (self.root/'region_project_history').glob('*.json'):p.unlink()
         self.assertEqual(scan_exports(self.root),[])
         self.assertEqual(len(discover_projects(self.root,self.root)['found']),1)
         self.assertEqual(len(scan_exports(self.root)),1)
     def test_corrupt_index_repair_preserves_bytes(self):
-        from region_library import repair_index
+        from femto.planning.region_library import repair_index
         self.project();index=self.root/'region_library.json';index.write_bytes(b'{broken')
         with self.assertRaises(ValueError):scan_exports(self.root)
         backup=repair_index(self.root)
@@ -101,7 +101,7 @@ class LibraryTests(unittest.TestCase):
         import tkinter as tk
         from tkinter import ttk
         import time
-        from export_history import show_history
+        from femto.planning.export_history import show_history
         self.project()
         exported=self.root/'annotations'/'exported';exported.mkdir(parents=True)
         (exported/'area.glb').write_bytes(b'fixture')

@@ -5,9 +5,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from complete_demo import _classify_data_kind
-from scene_gsplat_acceptance import input_provenance
-from scene_scale_validation import _lineage
+from femto.pipeline.complete_demo import _classify_data_kind
+from femto.gsplat.scene_gsplat_acceptance import input_provenance
+from femto.reports.scene_scale_validation import _lineage
 
 
 def _write_json(path: Path, value: dict) -> None:

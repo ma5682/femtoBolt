@@ -6,9 +6,9 @@ from unittest import mock
 from types import SimpleNamespace
 import numpy as np
 import open3d as o3d
-from scene_live_tracker import LiveTracker,PairEstimator,PreparedRGBD,PairEstimationError
-from local_capture import LocalCapture
-from local_stability_feedback import CandidateStability
+from femto.tracking.scene_live_tracker import LiveTracker,PairEstimator,PreparedRGBD,PairEstimationError
+from femto.capture.local_capture import LocalCapture
+from femto.tracking.local_stability_feedback import CandidateStability
 from tests.test_segmented_capture import make_frame
 
 
@@ -28,7 +28,7 @@ class RecoveryTests(unittest.TestCase):
         self.est.estimate.return_value=(np.eye(4),{})
         self.est.feature_seed_transform.return_value=(np.eye(4),dict(inliers=20))
         self.tr=LiveTracker(self.est,250,2210,clock=lambda:self.now,keyframe_anchor=True,relocalization=True)
-        self.quality=mock.patch('scene_live_tracker.frame_quality',return_value=dict(usable=True));self.quality.start();self.addCleanup(self.quality.stop)
+        self.quality=mock.patch('femto.tracking.scene_live_tracker.frame_quality',return_value=dict(usable=True));self.quality.start();self.addCleanup(self.quality.stop)
         self.frame_id=0
     def step(self,delta=.1,**kw):
         self.now+=delta;f=make_frame([500]*10,self.frame_id+1)
@@ -145,7 +145,7 @@ class CaptureRecoveryIntegrationTests(unittest.TestCase):
         from pathlib import Path
         from tests.test_segmented_capture import make_camera
         gc.collect()
-        with tempfile.TemporaryDirectory() as temp, mock.patch('local_capture.PairEstimator') as factory, mock.patch('scene_live_tracker.frame_quality',return_value=dict(usable=True)), mock.patch('local_capture.ViewSelector') as selector:
+        with tempfile.TemporaryDirectory() as temp, mock.patch('femto.capture.local_capture.PairEstimator') as factory, mock.patch('femto.tracking.scene_live_tracker.frame_quality',return_value=dict(usable=True)), mock.patch('femto.capture.local_capture.ViewSelector') as selector:
             est=factory.return_value;est.feature_seed=False;est.prepare.side_effect=lambda f:prepared()
             est.estimate.side_effect=[PairEstimationError('pair_quality')]*5+[(np.eye(4),{})]*3
             est.feature_seed_transform.return_value=(np.eye(4),dict(inliers=20))
@@ -191,7 +191,7 @@ class RealFeatureGeometryTests(unittest.TestCase):
         est=PairEstimator.__new__(PairEstimator);est.minimum=.25;est.maximum=2.21
         return est,a,b,truth
     def test_orb_pnp_real_backend_on_known_planar_motion(self):
-        from moving_quality import rotation_deg
+        from femto.tracking.moving_quality import rotation_deg
         est,a,b,truth=self.fixture();result,report=est.feature_seed_transform(a,b)
         self.assertIsNotNone(result,report);delta=np.linalg.inv(truth)@result
         self.assertLess(np.linalg.norm(delta[:3,3]),.01);self.assertLess(rotation_deg(delta),2.)
@@ -207,8 +207,8 @@ class SyntheticReplayTests(unittest.TestCase):
     def test_four_frame_replay_is_read_only_and_records_variants(self):
         from pathlib import Path
         import tempfile,shutil
-        from synthetic_scene_demo import generate_dataset
-        from local_tracking_replay import replay
+        from femto.pipeline.synthetic_scene_demo import generate_dataset
+        from femto.tracking.local_tracking_replay import replay
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);generated=generate_dataset(root/'generated',frames=4,width=512,height=288)
             source=root/'synthetic_source';source.mkdir();(source/'derived').mkdir()

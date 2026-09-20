@@ -7,11 +7,11 @@ from time import perf_counter
 from types import SimpleNamespace
 import cv2
 import numpy as np
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/ scripts import repository-root modules
-from depth_quality import assess_and_fill_depth
-from io_utils import imread_unicode as _read, write_json as json_dump
-from temporal_keyframe import fuse_quality_frames, assess_temporal_scene
-from scene_segmented_capture import depth_cloud
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # tools/ scripts import the femto package from the repository root
+from femto.depth.depth_quality import assess_and_fill_depth
+from femto.io_utils import imread_unicode as _read, write_json as json_dump
+from femto.temporal.temporal_keyframe import fuse_quality_frames, assess_temporal_scene
+from femto.capture.scene_segmented_capture import depth_cloud
 
 
 def compare_batches(depths, images, intr, distortion, low, high, modes, *, repeats):

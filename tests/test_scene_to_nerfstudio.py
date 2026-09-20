@@ -8,7 +8,7 @@ import unittest
 import cv2
 import numpy as np
 
-from scene_to_nerfstudio import camera_to_opengl, convert, pose_diversity
+from femto.pipeline.scene_to_nerfstudio import camera_to_opengl, convert, pose_diversity
 
 
 class NerfstudioConversionTests(unittest.TestCase):

@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0"
-".venv\Scripts\python.exe" scene_3dgs.py status
+".venv\Scripts\python.exe" -m femto.gsplat.scene_3dgs status
 pause

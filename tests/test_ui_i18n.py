@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-import ui_i18n
+import femto.ui_i18n as ui_i18n
 
 
 class UiI18nTests(unittest.TestCase):
@@ -27,7 +27,7 @@ class UiI18nTests(unittest.TestCase):
     def test_language_preference_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "ui_preferences.json"
-            with mock.patch("ui_i18n.preference_path", return_value=path):
+            with mock.patch("femto.ui_i18n.preference_path", return_value=path):
                 ui_i18n.save_language("en")
                 self.assertEqual(ui_i18n.load_language(), "en")
                 ui_i18n.save_language("zh")

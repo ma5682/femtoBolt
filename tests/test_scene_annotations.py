@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import open3d as o3d
 import trimesh
-from scene_annotations import AnnotationStore, distance_m, visible_region, region_mesh
+from femto.annotation.scene_annotations import AnnotationStore, distance_m, visible_region, region_mesh
 
 
 class AnnotationTests(unittest.TestCase):

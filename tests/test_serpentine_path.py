@@ -3,10 +3,10 @@ import unittest
 from pathlib import Path
 import numpy as np
 import open3d as o3d
-from fixed_rgb_geometry import FixedProjection
-from scene_annotations import AnnotationStore
-from serpentine_path import serpentine_plan
-from region_path import export_path,load_path
+from femto.annotation.fixed_rgb_geometry import FixedProjection
+from femto.annotation.scene_annotations import AnnotationStore
+from femto.planning.serpentine_path import serpentine_plan
+from femto.planning.region_path import export_path,load_path
 
 
 class SerpentineTests(unittest.TestCase):

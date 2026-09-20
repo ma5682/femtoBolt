@@ -5,8 +5,8 @@ import numpy as np
 import open3d as o3d
 import trimesh
 from PIL import Image
-from region_texture import textured_region,source_vertex_normals
-from export_preview import load_preview
+from femto.annotation.region_texture import textured_region,source_vertex_normals
+from femto.viewer.export_preview import load_preview
 
 
 class TextureTests(unittest.TestCase):

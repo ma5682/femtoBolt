@@ -9,10 +9,10 @@ import unittest
 from unittest import mock
 import zipfile
 
-from planning_drafts import Journal, snapshot, read
-from planning_io import TaskControl
-from region_project import save_project, open_project, digest
-from region_path import export_path
+from femto.planning.planning_drafts import Journal, snapshot, read
+from femto.planning.planning_io import TaskControl
+from femto.planning.region_project import save_project, open_project, digest
+from femto.planning.region_path import export_path
 from tests import test_planning_state as fixtures
 
 
@@ -31,7 +31,7 @@ class RecoveryTests(unittest.TestCase):
     def test_replace_failure_preserves_formal_bytes_and_dirty_state(self):
         path=self.save();before=path.read_bytes()
         self.model.store.update_annotation('region',0,name='Unsaved',note='')
-        with mock.patch('planning_io.publish',side_effect=OSError('simulated disk full')):
+        with mock.patch('femto.planning.planning_io.publish',side_effect=OSError('simulated disk full')):
             with self.assertRaisesRegex(OSError,'disk full'):self.save(path)
         self.assertEqual(path.read_bytes(),before);self.assertTrue(self.model.store.dirty)
         self.assertEqual(open_project(path,self.folder/'work').saved_plan['segments'],self.plan['segments'])
@@ -66,7 +66,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertIs(self.viewer.current_region_path(),self.plan)
 
     def test_history_failure_is_warning_after_successful_save(self):
-        with mock.patch('export_history.register_project',side_effect=OSError('index denied')):path=self.save()
+        with mock.patch('femto.planning.export_history.register_project',side_effect=OSError('index denied')):path=self.save()
         self.assertTrue(path.exists());self.assertIn('已保存',self.model.last_save_warning)
         self.assertIn('index denied',self.model.last_save_warning)
 
@@ -106,7 +106,7 @@ class RecoveryTests(unittest.TestCase):
         data=snapshot(v);journal.submit(data);journal.wait()
         self.model.store.undo()
         v._requests={};v.reset_brush();v.polygon=[]
-        with mock.patch('fixed_rgb_viewer.messagebox.askyesnocancel',return_value=True):v.offer_recovery()
+        with mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askyesnocancel',return_value=True):v.offer_recovery()
         self.pump()
         self.assertEqual(self.model.store.regions[0]['exclusion_polygons'],data['regions'][0]['exclusion_polygons'])
         self.assertEqual(v._requests,data['parameters']);self.assertIsNone(v.current_region_path())
@@ -119,14 +119,14 @@ class RecoveryTests(unittest.TestCase):
         data['regions'][0]['name']='recover-me';journal.submit(data);journal.wait()
         before=copy.deepcopy(self.model.store.regions);gate=threading.Event();entered=threading.Event()
         def delayed(candidate,**kwargs):entered.set();gate.wait(2)
-        with mock.patch.object(type(self.model),'prepare_display',delayed),mock.patch('fixed_rgb_viewer.messagebox.askyesnocancel',return_value=True):
+        with mock.patch.object(type(self.model),'prepare_display',delayed),mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askyesnocancel',return_value=True):
             v.offer_recovery();self.assertTrue(entered.wait(1));v.cancel_planning();gate.set();self.pump()
         self.assertEqual(self.model.store.regions,before);self.assertTrue(journal.path.exists())
         self.assertIs(v.current_region_path(),self.plan)
 
     def test_draft_write_failure_keeps_last_recoverable_snapshot(self):
         journal=self.journal();data=snapshot(self.viewer);journal.submit(data);journal.wait();before=journal.path.read_bytes()
-        with mock.patch('planning_drafts.json.dump',side_effect=OSError('disk full')):
+        with mock.patch('femto.planning.planning_drafts.json.dump',side_effect=OSError('disk full')):
             journal.submit(dict(data,name='unsaved'));journal.wait()
         self.assertEqual(journal.path.read_bytes(),before);self.assertIn('disk full',journal.error)
         self.assertEqual(read(journal.path,self.model)['name'],data['name'])
@@ -134,7 +134,7 @@ class RecoveryTests(unittest.TestCase):
     def test_abrupt_process_exit_preserves_previous_draft(self):
         journal=self.journal();data=snapshot(self.viewer);journal.submit(data);journal.wait();before=journal.path.read_bytes()
         payload=self.folder/'payload.json';payload.write_text(json.dumps(dict(data,name='interrupted')),encoding='utf-8')
-        program="import sys,json,os; from planning_drafts import Journal; from pathlib import Path; j=Journal(sys.argv[1],sys.argv[3]); os.fsync=lambda fd:os._exit(17); j.submit(json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))); j.wait()"
+        program="import sys,json,os; from femto.planning.planning_drafts import Journal; from pathlib import Path; j=Journal(sys.argv[1],sys.argv[3]); os.fsync=lambda fd:os._exit(17); j.submit(json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))); j.wait()"
         result=subprocess.run([sys.executable,'-c',program,str(self.folder/'source.zip'),str(payload),str(self.folder/'drafts')],cwd=Path(__file__).resolve().parents[1],timeout=10)
         self.assertEqual(result.returncode,17);self.assertEqual(journal.path.read_bytes(),before)
         self.assertEqual(read(journal.path,self.model)['regions'],data['regions'])
@@ -143,16 +143,16 @@ class RecoveryTests(unittest.TestCase):
         journal=self.journal();gate=threading.Event();entered=threading.Event()
         original=os.fsync
         def wait(fd):entered.set();gate.wait(2);original(fd)
-        with mock.patch('planning_drafts.os.fsync',side_effect=wait):
+        with mock.patch('femto.planning.planning_drafts.os.fsync',side_effect=wait):
             journal.submit(snapshot(self.viewer));self.assertTrue(entered.wait(1));journal.discard();gate.set();journal.wait()
         self.assertFalse(journal.path.exists())
 
     def test_recovery_decline_or_mismatched_source_keeps_current_plan(self):
         journal=self.journal();data=snapshot(self.viewer);journal.submit(data);journal.wait()
-        with mock.patch('fixed_rgb_viewer.messagebox.askyesnocancel',return_value=False):self.viewer.offer_recovery()
+        with mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askyesnocancel',return_value=False):self.viewer.offer_recovery()
         self.assertFalse(journal.path.exists());self.assertIs(self.viewer.current_region_path(),self.plan)
         data['source']['geometry_sha256']='wrong';journal.submit(data);journal.wait()
-        with mock.patch('fixed_rgb_viewer.messagebox.askyesnocancel') as ask:self.viewer.offer_recovery();ask.assert_not_called()
+        with mock.patch('femto.planning.fixed_rgb_viewer.messagebox.askyesnocancel') as ask:self.viewer.offer_recovery();ask.assert_not_called()
         self.assertTrue(journal.path.exists());self.assertIs(self.viewer.current_region_path(),self.plan)
 
     def test_autosave_and_duplicate_task_guard(self):
@@ -165,16 +165,16 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(called,[]);self.assertIn('已取消',v.task_feedback.get())
 
     def test_capture_host_does_not_shutdown_when_workspace_declines(self):
-        from femto_control_app import FemtoControlApp
+        from femto.app.femto_control_app import FemtoControlApp
         app=FemtoControlApp.__new__(FemtoControlApp)
         app.capturing=False;app.processing=False;app.root=self.root
         app.stop_event=threading.Event();app.command_queue=mock.Mock()
-        with mock.patch('planning_workspace.close_workspaces',return_value=False):app.close()
+        with mock.patch('femto.planning.planning_workspace.close_workspaces',return_value=False):app.close()
         self.assertFalse(app.stop_event.is_set());app.command_queue.put.assert_not_called()
         self.assertTrue(self.root.winfo_exists())
 
     def test_host_close_respects_workspace_unsaved_cancel(self):
-        from planning_workspace import close_workspaces
+        from femto.planning.planning_workspace import close_workspaces
         import tkinter as tk
         window=tk.Toplevel(self.root);viewer=mock.Mock();window.viewer=viewer
         self.root._planning_windows={'test':window}
@@ -184,11 +184,11 @@ class RecoveryTests(unittest.TestCase):
         self.assertTrue(close_workspaces(self.root))
 
     def test_preparing_workspace_close_cancels_and_ignores_late_result(self):
-        from planning_workspace import open_workspace
+        from femto.planning.planning_workspace import open_workspace
         gate=threading.Event();started=threading.Event();controls=[]
         def prepare(*args,**kwargs):
             controls.append(kwargs['cancel']);started.set();gate.wait(2);kwargs['cancel'].check()
-        with mock.patch('region_project.project_from_annotations',side_effect=prepare),mock.patch('fixed_rgb_viewer.FixedRGBViewer') as viewer:
+        with mock.patch('femto.planning.region_project.project_from_annotations',side_effect=prepare),mock.patch('femto.planning.fixed_rgb_viewer.FixedRGBViewer') as viewer:
             window=open_workspace(self.root,self.folder/'annotations.json',region_index=0)
             self.assertTrue(started.wait(1));window.destroy();gate.set();self.root.update()
             self.assertTrue(controls[0].is_set());viewer.assert_not_called()

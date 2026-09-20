@@ -6,5 +6,5 @@ if "%~1"=="" (
   pause
   exit /b 2
 )
-"%~dp0.venv\Scripts\python.exe" "%~dp0scene_quality_report.py" %*
+"%~dp0.venv\Scripts\python.exe" -m femto.reports.scene_quality_report %*
 if errorlevel 1 pause

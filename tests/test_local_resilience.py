@@ -14,28 +14,28 @@ from unittest import mock
 import cv2
 import numpy as np
 
-from local_capture import LocalCapture
-from local_interrupted import assess, prepare
-from local_raw_writer import RawFrameWriter
-from local_reference import reference_provenance
-from local_tracking_diagnostics import classify, quality_text, summarize
-from scene_live_tracker import PairEstimator
-from io_utils import imread_unicode as _read_image
-from scene_reconstruction import _prepare_rgbd
+from femto.capture.local_capture import LocalCapture
+from femto.pipeline.local_interrupted import assess, prepare
+from femto.capture.local_raw_writer import RawFrameWriter
+from femto.dataset.local_reference import reference_provenance
+from femto.tracking.local_tracking_diagnostics import classify, quality_text, summarize
+from femto.tracking.scene_live_tracker import PairEstimator
+from femto.io_utils import imread_unicode as _read_image
+from femto.geometry.scene_reconstruction import _prepare_rgbd
 from test_segmented_capture import make_camera, make_frame
 
 
 class RawReceiptTests(unittest.TestCase):
     def test_slow_raw_receipt_cannot_admit_a_stale_pose_or_claim_it_as_cutoff(self):
-        from femto_control_app import save_scan_frame
+        from femto.app.femto_control_app import save_scan_frame
         import gc
         gc.collect()
         def slow(scan, frame, **kwargs):
             time.sleep(2.05)
             save_scan_frame(scan, frame, **kwargs)
-        with tempfile.TemporaryDirectory() as td, mock.patch('local_capture.PairEstimator'), \
-                mock.patch('scene_live_tracker.frame_quality', return_value=dict(usable=True)), \
-                mock.patch('femto_control_app.save_scan_frame', side_effect=slow):
+        with tempfile.TemporaryDirectory() as td, mock.patch('femto.capture.local_capture.PairEstimator'), \
+                mock.patch('femto.tracking.scene_live_tracker.frame_quality', return_value=dict(usable=True)), \
+                mock.patch('femto.app.femto_control_app.save_scan_frame', side_effect=slow):
             capture=LocalCapture(make_camera('wide_detail', 10), Path(td)/'data', Path(td)/'out', queue.Queue())
             capture.submit(make_frame([500]*10, 1))
             capture.thread.join(6)
@@ -47,7 +47,7 @@ class RawReceiptTests(unittest.TestCase):
             self.assertFalse(capture.records[0]['continuity']['current_frame_verified'])
 
     def test_pose_and_save_overlap_but_admission_waits_for_matching_raw_receipt(self):
-        from femto_control_app import save_scan_frame
+        from femto.app.femto_control_app import save_scan_frame
         import gc
         gc.collect()
         release, estimating = threading.Event(), threading.Event()
@@ -55,9 +55,9 @@ class RawReceiptTests(unittest.TestCase):
             if not release.wait(3):
                 raise RuntimeError('Test did not release writer')
             save_scan_frame(scan, frame, **kwargs)
-        with tempfile.TemporaryDirectory() as td, mock.patch('local_capture.PairEstimator') as pair, \
-                mock.patch('scene_live_tracker.frame_quality', return_value=dict(usable=True)), \
-                mock.patch('femto_control_app.save_scan_frame', side_effect=save):
+        with tempfile.TemporaryDirectory() as td, mock.patch('femto.capture.local_capture.PairEstimator') as pair, \
+                mock.patch('femto.tracking.scene_live_tracker.frame_quality', return_value=dict(usable=True)), \
+                mock.patch('femto.app.femto_control_app.save_scan_frame', side_effect=save):
             pair.return_value.prepare.side_effect = lambda frame: estimating.set()
             capture = LocalCapture(make_camera('wide_detail', 10), Path(td)/'data', Path(td)/'out', queue.Queue())
             try:
@@ -102,7 +102,7 @@ class RawReceiptTests(unittest.TestCase):
             writer.close()
 
     def test_local_copy_omits_unused_native_depth_but_owns_aligned_rgbd(self):
-        from femto_control_app import copy_frame
+        from femto.app.femto_control_app import copy_frame
         frame = make_frame([500]*10, 1)
         frame.native_depth_mm = np.ones((4, 4))
         snapshot = copy_frame(frame, include_native_depth=False)
@@ -114,7 +114,7 @@ class RawReceiptTests(unittest.TestCase):
 
 class PreparationAndDiagnosticsTests(unittest.TestCase):
     def test_cached_depth_mapping_matches_original_calibrated_preparation(self):
-        from synthetic_scene_demo import generate_dataset
+        from femto.pipeline.synthetic_scene_demo import generate_dataset
         with tempfile.TemporaryDirectory() as td:
             source = generate_dataset(Path(td)/'data', frames=4, width=516, height=292)
             row = json.loads((source/'frames.jsonl').read_text().splitlines()[0])
@@ -155,7 +155,7 @@ class PreparationAndDiagnosticsTests(unittest.TestCase):
 
 class InterruptedPrefixTests(unittest.TestCase):
     def fixture(self, root):
-        from femto_control_app import save_scan_frame, finalize_scan
+        from femto.app.femto_control_app import save_scan_frame, finalize_scan
         with mock.patch.object(LocalCapture, '_run'):
             capture = LocalCapture(make_camera('wide_detail', 10), root/'data', root/'out', queue.Queue())
             capture.thread.join()
@@ -171,7 +171,7 @@ class InterruptedPrefixTests(unittest.TestCase):
         finalize_scan(capture.scan, capture.camera)
         capture.records=records; capture.accepted=records[:3]
         capture.reference_provenance=reference_provenance(capture.session_id, records[0], capture.calibration)
-        from io_utils import write_json_strict as write_json
+        from femto.io_utils import write_json_strict as write_json
         write_json(capture.session/'derived/local_reference.json', capture.reference_provenance)
         (capture.session/'derived/live_tracking.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in records), encoding='utf-8')
         tracker=SimpleNamespace(reference_id=0, lost=True, max_gap_s=2, loss_context=dict(reason='tracking_gap', last_valid_frame_id=2))

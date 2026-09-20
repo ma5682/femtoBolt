@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from pose_geometry import (
+from femto.geometry.pose_geometry import (
     Intrinsics,
     Landmark2D,
     back_project_pixel,

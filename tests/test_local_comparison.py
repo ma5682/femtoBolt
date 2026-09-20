@@ -13,10 +13,10 @@ from unittest import mock
 import numpy as np
 import open3d as o3d
 
-from local_comparison import (StageStopped, changed_files, copy_unchanged_model, fingerprints,
+from femto.local.local_comparison import (StageStopped, changed_files, copy_unchanged_model, fingerprints,
     read_json, read_rows, run_comparison, sha256, supervise, validate_comparison_input,
     validate_variant_input, write_json)
-from local_comparison_viewer import sampled_depth_metrics, _mesh_scene, render_fixed_surface, write_comparison_html
+from femto.local.local_comparison_viewer import sampled_depth_metrics, _mesh_scene, render_fixed_surface, write_comparison_html
 
 
 def make_fixture(root, width=128, height=96):
@@ -26,9 +26,9 @@ def make_fixture(root, width=128, height=96):
     They are simulated records, explicitly marked synthetic, not online camera
     tracking or a physical acceptance recording.
     """
-    from synthetic_scene_demo import generate_dataset
-    from local_reference import calibration_identity, reference_provenance
-    from fusion import read_geometry_safe, export_mesh_formats
+    from femto.pipeline.synthetic_scene_demo import generate_dataset
+    from femto.dataset.local_reference import calibration_identity, reference_provenance
+    from femto.geometry.fusion import read_geometry_safe, export_mesh_formats
     generated = generate_dataset(root/'generated', frames=4, width=width, height=height)
     original_frames = read_rows(generated/'frames.jsonl')
     original_poses = [read_json(generated/f['pose']) for f in original_frames]
@@ -169,10 +169,10 @@ class SourceValidationTests(unittest.TestCase):
             validate_comparison_input(self.dataset, allow_synthetic=True)
 
     def test_mask_provenance_and_changed_mask_rejected(self):
-        from local_temporal_support import prepare
+        from femto.local.local_temporal_support import prepare
         baseline = validate_comparison_input(self.dataset, allow_synthetic=True)
         # Controlled image-audit result exercises file contracts; this is not an actual motion pass.
-        with mock.patch('local_temporal_support.audit_temporal_motion', return_value=(np.zeros((96,128),bool), dict(passed=True))):
+        with mock.patch('femto.local.local_temporal_support.audit_temporal_motion', return_value=(np.zeros((96,128),bool), dict(passed=True))):
             derived, report = prepare(self.dataset, self.root/'temporal')
         self.assertEqual(report['applied_frames'], 1)
         binding = validate_variant_input(baseline, derived, allow_masks=True)

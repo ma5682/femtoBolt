@@ -12,7 +12,7 @@ import unittest
 import numpy as np
 import open3d as o3d
 
-import scene_demo_viewer as viewer
+import femto.viewer.scene_demo_viewer as viewer
 
 
 IDENTITY_POSE = np.eye(4).tolist()

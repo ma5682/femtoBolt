@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 import numpy as np
-from temporal_keyframe import fuse_quality_frames, build_temporal_keyframe, prepared_depth
+from femto.temporal.temporal_keyframe import fuse_quality_frames, build_temporal_keyframe, prepared_depth
 from tests import test_temporal_depth_fusion as fixtures
 
 
@@ -37,14 +37,14 @@ class KeyframeFusionTests(unittest.TestCase):
                 self.assertEqual(d[10,10],1000)
 
     def test_replay_and_downstream_preserve_weights(self):
-        from scene_single_gs import prepare
-        from scene_to_nerfstudio import convert
-        from scene_reconstruction import reconstruct_scene
+        from femto.gsplat.scene_single_gs import prepare
+        from femto.pipeline.scene_to_nerfstudio import convert
+        from femto.geometry.scene_reconstruction import reconstruct_scene
         with TemporaryDirectory() as td:
             root=Path(td)
             source=fixtures.TemporalDepthTests().fixture(root/'source')
             dataset,report=build_temporal_keyframe(source)
-            from temporal_depth_layer import load_temporal_layer
+            from femto.depth.temporal_depth_layer import load_temporal_layer
             layer=load_temporal_layer(dataset.parent)
             layer.validate()
             self.assertTrue(report['source_unchanged'])
@@ -66,19 +66,19 @@ class KeyframeFusionTests(unittest.TestCase):
                 reconstruct_scene(dataset,root/'deferred_tsdf')
 
     def test_seed_arrays_uses_continuous_confidence_and_omits_unknown(self):
-        from scene_single_gs import seed_arrays
+        from femto.gsplat.scene_single_gs import seed_arrays
         d=np.full((4,4),1000,np.uint16); c=np.full((4,4),.67,np.float32); c[0,0]=0
         xyz,_,_,_,w=seed_arrays(d,np.zeros((4,4,3),np.uint8),np.eye(3),16,c)
         self.assertEqual(len(xyz),15)
         np.testing.assert_array_equal(w,np.full(15,.67,np.float32))
 
     def test_depth_motion_and_shared_layer(self):
-        from temporal_keyframe import assess_temporal_scene
-        from temporal_depth_layer import TemporalDepthLayer
+        from femto.temporal.temporal_keyframe import assess_temporal_scene
+        from femto.depth.temporal_depth_layer import TemporalDepthLayer
         raw=[np.full((32,32),1000,np.uint16) for _ in range(5)]
         for i,d in enumerate(raw): d[10:15,10:15]=1000 if i%2 else 1500
         rgb=[np.zeros((32,32,3),np.uint8) for _ in raw]
-        with mock.patch('temporal_keyframe.audit_temporal_motion',return_value=(np.zeros((32,32),bool),dict(passed=True))):
+        with mock.patch('femto.temporal.temporal_keyframe.audit_temporal_motion',return_value=(np.zeros((32,32),bool),dict(passed=True))):
             mask,report=assess_temporal_scene(raw,rgb,250,2210)
         self.assertTrue(report['scene_motion_detected'])
         self.assertTrue(mask[12,12]); self.assertFalse(mask[0,0])
@@ -89,7 +89,7 @@ class KeyframeFusionTests(unittest.TestCase):
 
     def test_one_click_defaults_ten_and_cancel(self):
         import tkinter as tk
-        import femto_control_app as control
+        import femto.app.femto_control_app as control
         with mock.patch.object(control.FemtoControlApp,'_start_camera'), mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
             root=tk.Tk(); root.withdraw()
             try:

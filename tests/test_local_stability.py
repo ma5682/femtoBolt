@@ -6,9 +6,9 @@ from unittest import mock
 
 import numpy as np
 
-from local_capture import LocalCapture
-from local_stability_feedback import CandidateStability, format_stability
-from local_temporal_support import stationary_window
+from femto.capture.local_capture import LocalCapture
+from femto.tracking.local_stability_feedback import CandidateStability, format_stability
+from femto.local.local_temporal_support import stationary_window
 
 
 def record(index, *, x=.015, received=None):
@@ -120,7 +120,7 @@ class CandidateTests(unittest.TestCase):
         capture.stability=CandidateStability('session')
         capture.stability.request(10.)
         r=record(1)
-        with mock.patch('local_capture.time.monotonic',return_value=10.5):
+        with mock.patch('femto.capture.local_capture.time.monotonic',return_value=10.5):
             selected=capture._select(r,10.4)
         self.assertTrue(selected)
         value=capture.stability.observe(r,10.5,accepted=selected)
@@ -128,7 +128,7 @@ class CandidateTests(unittest.TestCase):
         self.assertIsNone(capture.requested)
         capture.accepted.append(r)
         capture.requested=10.8
-        with mock.patch('local_capture.time.monotonic',return_value=11.3):
+        with mock.patch('femto.capture.local_capture.time.monotonic',return_value=11.3):
             self.assertFalse(capture._select(record(3),11.2))
         self.assertEqual(capture.stability.snapshot()['state'],'duplicate')
         self.assertEqual(capture.accepted[0]['T_WC'],record(0,x=0.)['T_WC'])

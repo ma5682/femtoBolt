@@ -4,11 +4,11 @@ from collections import Counter
 from unittest import mock
 import numpy as np
 from tests import test_coverage_inspection as fixtures
-from coverage_inspection import inspected_serpentine_plan
-from route_optimization import optimized_serpentine_plan,Budget,coverage_not_worse
-from route_quality import quality,show_quality
-from planning_state import validate
-from region_path import export_path,load_path
+from femto.planning.coverage_inspection import inspected_serpentine_plan
+from femto.planning.route_optimization import optimized_serpentine_plan,Budget,coverage_not_worse
+from femto.planning.route_quality import quality,show_quality
+from femto.planning.planning_state import validate
+from femto.planning.region_path import export_path,load_path
 
 class QualityTests(unittest.TestCase):
     def setup_case(self,root):
@@ -55,16 +55,16 @@ class QualityTests(unittest.TestCase):
     def test_budget_falls_back_and_cancel_propagates(self):
         with tempfile.TemporaryDirectory() as tmp:
             m,s,r,p=self.setup_case(Path(tmp));old=inspected_serpentine_plan(p,m,r,4,20)
-            with mock.patch('route_optimization.Budget',side_effect=lambda check:Budget(check,0)):
+            with mock.patch('femto.planning.route_optimization.Budget',side_effect=lambda check:Budget(check,0)):
                 plan=optimized_serpentine_plan(p,m,r,4,20)
             self.assertEqual(plan['segments'],old['segments']);self.assertEqual(plan['route_quality']['status'],'baseline_retained')
             self.assertEqual(plan['route_quality']['attempts'][0]['status'],'budget_exceeded')
-            with mock.patch('route_optimization.reorder_chain',side_effect=RuntimeError('cancelled')):
+            with mock.patch('femto.planning.route_optimization.reorder_chain',side_effect=RuntimeError('cancelled')):
                 with self.assertRaisesRegex(RuntimeError,'cancelled'):optimized_serpentine_plan(p,m,r,4,20)
     def test_verification_failure_keeps_old_polyline(self):
         with tempfile.TemporaryDirectory() as tmp:
             m,s,r,p=self.setup_case(Path(tmp));old=inspected_serpentine_plan(p,m,r,4,20)
-            with mock.patch('route_optimization.inspect_coverage',side_effect=ValueError('validation failure')):
+            with mock.patch('femto.planning.route_optimization.inspect_coverage',side_effect=ValueError('validation failure')):
                 plan=optimized_serpentine_plan(p,m,r,4,20)
             self.assertEqual(plan['segments'],old['segments']);self.assertEqual(plan['route_quality']['status'],'baseline_retained')
     def test_sharp_angle_and_exact_reverse_repeat(self):
@@ -77,7 +77,7 @@ class QualityTests(unittest.TestCase):
     def test_turn_list_locates_correct_point_in_demo(self):
         import tkinter as tk
         from types import SimpleNamespace
-        from path_presentation import show_presentation
+        from femto.planning.path_presentation import show_presentation
         with tempfile.TemporaryDirectory() as tmp:
             m,s,r,p=self.setup_case(Path(tmp));plan=optimized_serpentine_plan(p,m,r,4,20)
             root=tk.Tk();root.withdraw()

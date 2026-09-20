@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from scene_3dgs import build_training_command
+from femto.gsplat.scene_3dgs import build_training_command
 
 
 class ThreeDGSCommandTests(unittest.TestCase):

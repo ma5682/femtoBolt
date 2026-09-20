@@ -10,7 +10,7 @@ import numpy as np
 import open3d as o3d
 
 import test_scene_annotation_origin as origin
-from scene_annotations import AnnotationStore, region_boundary
+from femto.annotation.scene_annotations import AnnotationStore, region_boundary
 
 
 class AnnotationManagementTests(unittest.TestCase):

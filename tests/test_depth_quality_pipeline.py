@@ -8,12 +8,12 @@ import numpy as np
 import open3d as o3d
 from PIL import Image
 
-from femto_control_app import save_rgbd_photo
-from fusion import read_geometry_safe
-from orbbec_rgbd import AlignedFrame
-from pose_geometry import Intrinsics
-from scene_reconstruction import reconstruct_scene
-from synthetic_scene_demo import generate_dataset
+from femto.app.femto_control_app import save_rgbd_photo
+from femto.geometry.fusion import read_geometry_safe
+from femto.hardware.orbbec_rgbd import AlignedFrame
+from femto.geometry.pose_geometry import Intrinsics
+from femto.geometry.scene_reconstruction import reconstruct_scene
+from femto.pipeline.synthetic_scene_demo import generate_dataset
 
 
 class DepthQualityPipelineTests(TestCase):
@@ -53,7 +53,7 @@ class DepthQualityPipelineTests(TestCase):
             real_volume = o3d.pipelines.integration.ScalableTSDFVolume(
                 voxel_length=.02,sdf_trunc=.06,color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
             volume = mock.Mock(wraps=real_volume)
-            with mock.patch('scene_reconstruction.o3d.pipelines.integration.ScalableTSDFVolume',return_value=volume):
+            with mock.patch('femto.geometry.scene_reconstruction.o3d.pipelines.integration.ScalableTSDFVolume',return_value=volume):
                 report = reconstruct_scene(dataset,root/'reconstruction',voxel_m=.02,sdf_trunc_m=.06)
             self.assertEqual(volume.integrate.call_count,16)
             depths = [np.asarray(c.args[0].depth) for c in volume.integrate.call_args_list]

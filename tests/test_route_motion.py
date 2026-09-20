@@ -2,10 +2,10 @@ import unittest,tempfile,json,csv,struct
 from pathlib import Path
 import numpy as np
 from tests import test_serpentine_path as fixtures
-from serpentine_path import serpentine_plan
-from region_path import export_path,load_path
-from route_motion import MotionPlayer,statistics
-from path_presentation import render_diagram
+from femto.planning.serpentine_path import serpentine_plan
+from femto.planning.region_path import export_path,load_path
+from femto.planning.route_motion import MotionPlayer,statistics
+from femto.planning.path_presentation import render_diagram
 
 class RouteMotionTests(unittest.TestCase):
     def test_eight_orders_roundtrip_exports(self):
@@ -40,7 +40,7 @@ class RouteMotionTests(unittest.TestCase):
                         self.assertTrue(plan['start_selection']['adjusted'])
     def test_version_binding_protects_route_semantics(self):
         import copy
-        from planning_state import validate
+        from femto.planning.planning_state import validate
         with tempfile.TemporaryDirectory() as tmp:
             mesh,store,region,projection=fixtures.SerpentineTests().setup_surface(Path(tmp))
             plan=serpentine_plan(projection,mesh,region,8,20,direction='vertical',start_corner='bottom_right')
@@ -82,7 +82,7 @@ class MotionWindowTests(unittest.TestCase):
         import tkinter as tk
         from tkinter import ttk
         from types import SimpleNamespace
-        from path_presentation import show_presentation
+        from femto.planning.path_presentation import show_presentation
         root=tk.Tk();root.withdraw()
         sample=lambda x,y:dict(pixel=[x,y],xyz_m=[x/1000,y/1000,.5])
         plan=dict(row_step_px=10,segments=[[sample(10,10),sample(30,10)],[sample(60,50),sample(80,50)]])
