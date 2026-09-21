@@ -190,6 +190,9 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
     segments: list[ScanSegment] = []
     gaps: list[Gap] = []
     sample_step_m = float(trajectory.planner.get("parameters", {}).get("sample_step_mm", 1.0)) / 1000
+    connected_rows = trajectory.planner.get('algorithm_version') == 'mesh-slice-serpentine-v2'
+    if connected_rows and trajectory.planner.get('parameters', {}).get('connect_rows') is not True:
+        raise ValueError('Connected row trajectory requires connect_rows=True')
     for index, item in enumerate(trajectory.ordered_items):
         if bool(index % 2) != isinstance(item, Gap):
             raise ValueError("ordered_items must strictly alternate segment and gap")
@@ -203,7 +206,9 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
                 if not isinstance(point, dict) or point.get("geometry_support") != "measured_mesh":
                     raise ValueError("Every trajectory point needs measured_mesh support")
                 xyz = _finite_xyz(point.get("xyz_m"))
-                if point.get("route_index") != expected_route or point.get("row_index") != item.row_index:
+                point_row = point.get('row_index')
+                row_valid = (type(point_row) is int and point_row >= item.row_index) if connected_rows else point_row == item.row_index
+                if point.get("route_index") != expected_route or not row_valid:
                     raise ValueError("Invalid global route index or row binding")
                 triangle_index = point.get("triangle_index")
                 if type(triangle_index) is not int or triangle_index < 0:
@@ -221,6 +226,9 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
                 if faces is not None:
                     if triangle_index >= len(faces) or not _point_on_triangle(xyz, vertices, faces[triangle_index]):
                         raise ValueError("Trajectory point is not supported by its local triangle")
+                    if connected_rows and point.get('role') == 'connector' and previous is not None:
+                        if not _point_on_triangle(previous, vertices, faces[triangle_index]):
+                            raise ValueError('Connector edge is not supported by a single triangle')
                 previous = np.asarray(xyz)
                 expected_route += 1
             segments.append(item)

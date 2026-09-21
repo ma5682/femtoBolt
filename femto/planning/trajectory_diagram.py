@@ -128,6 +128,8 @@ def render_depth_diagram(trajectory: SurfaceTrajectory) -> Image.Image:
               font=font, fill="#e4edf4")
     outside = {row["chain_index"] for row in trajectory.spacing_report.get("measurements", [])
                if row.get("status") == "outside_bounds"}
+    scan_rows=trajectory.spacing_report.get('scan_segment_rows')
+    outside_rows={scan_rows[i] for i in outside if i<len(scan_rows)} if scan_rows is not None else set()
     offset = margin - low * scale + [0, header]
     for segment in segments:
         points3 = np.asarray([point["xyz_m"] for point in segment.points])
@@ -135,8 +137,10 @@ def render_depth_diagram(trajectory: SurfaceTrajectory) -> Image.Image:
         for index in range(len(points2) - 1):
             color = _depth_color(float((points3[index, 2] + points3[index + 1, 2]) / 2),
                                  stats["depth_min_m"], stats["depth_max_m"])
-            width = 4 if segment.segment_index in outside else 2
-            if segment.segment_index in outside:
+            highlight=(segment.points[index]['row_index'] in outside_rows if scan_rows is not None
+                       else segment.segment_index in outside)
+            width = 4 if highlight else 2
+            if highlight:
                 draw.line([tuple(points2[index]), tuple(points2[index + 1])], fill="#ffe34d", width=width)
             else:
                 draw.line([tuple(points2[index]), tuple(points2[index + 1])], fill=color, width=width)
@@ -207,13 +211,14 @@ def report_text(trajectory: SurfaceTrajectory) -> str:
         "三维表面蛇形扫描轨迹报告（研发）",
         f"行 / 扫描段 / gap / 点：{stats['row_count']} / {stats['segment_count']} / {stats['gap_count']} / {stats['point_count']}",
         f"段内扫描长度：{stats['scan_length_m']*1000:.3f} mm（不含任何 gap 弦长）",
+        f"贴面折返连接：{stats.get('connected_row_turns',0)} 处 / {stats.get('connector_length_m',0)*1000:.3f} mm",
         f"W0 深度范围：{stats['depth_min_m']*1000:.3f}–{stats['depth_max_m']*1000:.3f} mm",
         "gap 分类：" + json.dumps(stats["gap_counts"], ensure_ascii=False, sort_keys=True),
         f"扫描方向来源：{frame['direction_source']}；法线来源：{frame['normal_source']}；特征值比：{frame['ratios']}",
         "实际网格间距分布（mm）：" + (json.dumps(spacing, ensure_ascii=False, sort_keys=True) if spacing else "无可测样本"),
         "参考 RGB 路线图：" + json.dumps(route_status, ensure_ascii=False, sort_keys=True),
         "平面等距不等于曲面等距；黄色行表示采样间距报告超出容差。",
-        "所有点仅证明受当前 TSDF Mesh 支持；缺失、禁区、分离表面和换行处没有规划运动。",
+        "所有点仅证明受当前 TSDF Mesh 支持；gap 处没有规划运动。贴面折返仅连接已验证连续网格边界。",
         "没有姿态、速度、避障、自由空间过渡或机械臂接口。",
         "execution_ready=false；physical_accuracy_verified=false；不得用于临床精度、接触安全或设备执行声明。",
     ]) + "\n"

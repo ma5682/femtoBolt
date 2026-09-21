@@ -56,7 +56,7 @@ def generate(row, control):
     from femto.planning.trajectory_export import export_trajectory, load_trajectory
     manifest = region_manifest(row)
     old = previous_trajectories(manifest)
-    trajectory = plan_mesh_slice(manifest, check=control.check)
+    trajectory = plan_mesh_slice(manifest, connect_rows=True, check=control.check)
     folder = export_trajectory(trajectory, manifest.parent, check=control.check, commit=control.publish)
     load_trajectory(folder, reproduce=False)
     removed, warnings = remove_previous(manifest, old, folder)

@@ -469,6 +469,7 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
                     planarity_ratio_max: float = 0.5,
                     normal_view_angle_max_deg: float = 60.0,
                     adaptive_rows: bool = False,
+                    connect_rows: bool = False,
                     check: Callable[[], None] = lambda: None) -> SurfaceTrajectory:
     """Generate only measured-mesh scan samples; no gap interpolation or motion."""
     params = _parameters(locals())
@@ -620,6 +621,15 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
          "dropped_fragment_count": len(dropped_fragments)},
         spacing, row_report, manifest.get("data_layers"))
     validate_trajectory(trajectory, mesh=mesh)
+    if type(connect_rows) is not bool:
+        raise ValueError('connect_rows must be boolean')
+    if connect_rows:
+        from femto.planning.surface_row_turns import connect_row_turns
+        eligible={index for index,(left,right) in enumerate(zip(ordered_records,ordered_records[1:]))
+                  if left['component']==right['component'] and
+                  abs(left['slice_index']-right['slice_index'])==1 and
+                  left['row_index']!=right['row_index']}
+        return connect_row_turns(trajectory,mesh,region,eligible,check)
     return trajectory
 
 
@@ -642,7 +652,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         trajectory = plan_mesh_slice(args.source, row_spacing_mm=args.row_mm,
                                      sample_step_mm=args.step_mm, row_direction=direction,
-                                     start_corner=args.start_corner)
+                                     start_corner=args.start_corner, connect_rows=True)
         folder = export_trajectory(trajectory, output)
     except (OSError, ValueError, TypeError, KeyError, IndexError) as error:
         folder = export_blocked(output, args.source, error)
