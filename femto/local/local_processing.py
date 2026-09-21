@@ -11,6 +11,7 @@ from pathlib import Path
 import time
 
 from femto.io_utils import load_json_object, write_json_strict
+from femto.ui_i18n import pick
 
 SCHEMA = 'femto-local-processing-v1'
 STATUS = {
@@ -244,11 +245,9 @@ def _validate_temporal_binding(temporal, actual):
 
 
 def format_quality(report: Any, language: str='zh') -> Any:
-    zh = language == 'zh'
-    choose = lambda a, b: a if zh else b
-    missing = choose('未记录', 'Not recorded')
-    state = lambda key: STATUS.get(key, (key, key))[0 if zh else 1]
-    reason = lambda key: REASONS.get(str(key), (str(key), str(key)))[0 if zh else 1]
+    missing = pick(language, '未记录', 'Not recorded')
+    state = lambda key: pick(language, *STATUS.get(key, (key, key)))
+    reason = lambda key: pick(language, *REASONS.get(str(key), (str(key), str(key))))
     def number(value, factor=1.0, suffix=''):
         if not isinstance(value, (int, float)) or not math.isfinite(value):
             return missing
@@ -256,62 +255,62 @@ def format_quality(report: Any, language: str='zh') -> Any:
     refinement = report.get('refinement', {})
     temporal = report.get('temporal', {})
     lines = [
-        choose('模型处理：', 'Model processing: ') + state(report.get('reconstruction',{}).get('status',report.get('state','not_recorded'))),
-        choose('精配准：', 'Refinement: ') + state(refinement.get('status', 'not_recorded')),
-        choose('实际位姿来源：', 'Actual pose source: ') + (report.get('actual_pose_source') or missing),
+        pick(language, '模型处理：', 'Model processing: ') + state(report.get('reconstruction',{}).get('status',report.get('state','not_recorded'))),
+        pick(language, '精配准：', 'Refinement: ') + state(refinement.get('status', 'not_recorded')),
+        pick(language, '实际位姿来源：', 'Actual pose source: ') + (report.get('actual_pose_source') or missing),
     ]
     if report.get('capture_scope') == 'interrupted_prefix':
-        lines.insert(0, choose('中断前数据建模：仅使用最后可信时刻之前的已接纳视角；没有恢复跟踪。',
+        lines.insert(0, pick(language, '中断前数据建模：仅使用最后可信时刻之前的已接纳视角；没有恢复跟踪。',
                                'Interrupted-prefix reconstruction: admitted views before the last trustworthy time; tracking was not resumed.'))
     details = refinement.get('details', {})
     if details.get('reason'):
         lines.append(reason(details['reason']))
     for row in details.get('frames', []):
-        prefix = choose('帧 ', 'Frame ') + str(row.get('frame', '?'))
+        prefix = pick(language, '帧 ', 'Frame ') + str(row.get('frame', '?'))
         if row.get('reasons'):
             lines.append(prefix + ': ' + '; '.join(reason(r) for r in row['reasons']))
         if row.get('correction_mm') is not None:
-            lines.append(prefix+choose(' 修正：',' correction: ')+number(row.get('correction_mm'),1,' mm')+
+            lines.append(prefix+pick(language, ' 修正：',' correction: ')+number(row.get('correction_mm'),1,' mm')+
                          ' / '+number(row.get('correction_deg'),1,'°')+
-                         (choose('；仅修正上限未通过','; only correction limit rejected') if row.get('only_correction_limit_rejected') else ''))
+                         (pick(language, '；仅修正上限未通过','; only correction limit rejected') if row.get('only_correction_limit_rejected') else ''))
         if row.get('diagnostic_reasons'):
-            lines.append(prefix+choose(' 诊断：',' diagnostic: ')+'; '.join(reason(r) for r in row['diagnostic_reasons']))
+            lines.append(prefix+pick(language, ' 诊断：',' diagnostic: ')+'; '.join(reason(r) for r in row['diagnostic_reasons']))
         for direction in ('forward', 'reverse'):
             before = row.get('before', {}).get(direction, {})
             after = row.get('after', {}).get(direction, {})
             if before or after:
-                lines.append(prefix + choose(' 正向' if direction == 'forward' else ' 反向',
+                lines.append(prefix + pick(language, ' 正向' if direction == 'forward' else ' 反向',
                                                ' forward' if direction == 'forward' else ' reverse')
-                    + choose(' 内部中位/P90(mm)：', ' internal median/P90(mm): ')
+                    + pick(language, ' 内部中位/P90(mm)：', ' internal median/P90(mm): ')
                     + number(before.get('median_m'), 1000) + '/' + number(before.get('p90_m'), 1000)
                     + ' → ' + number(after.get('median_m'), 1000) + '/' + number(after.get('p90_m'), 1000))
     if refinement.get('error'):
         lines.append(refinement['error'])
-    lines.append(choose('五帧二值筛选：', 'Five-frame binary filtering: ') + state(temporal.get('status', 'not_recorded')))
+    lines.append(pick(language, '五帧二值筛选：', 'Five-frame binary filtering: ') + state(temporal.get('status', 'not_recorded')))
     count = lambda key: str(temporal[key]) if temporal.get(key) is not None else missing
-    lines.append(choose('接纳视角 / 找到窗口 / 实际应用：', 'Accepted views / windows found / masks applied: ')
+    lines.append(pick(language, '接纳视角 / 找到窗口 / 实际应用：', 'Accepted views / windows found / masks applied: ')
                  + ' / '.join(count(k) for k in ('accepted_views', 'windows_found', 'applied_views')))
-    lines.append(choose('实际剔除像素：', 'Actually removed pixels: ') + count('removed_pixels')
+    lines.append(pick(language, '实际剔除像素：', 'Actually removed pixels: ') + count('removed_pixels')
                  + ' (' + number(temporal.get('removed_ratio'), 100, '%') + ')')
     for row in temporal.get('frames', []):
         if not row.get('applied') and row.get('reason'):
-            lines.append(choose('帧 ', 'Frame ') + str(row.get('frame', '?')) + ': ' + reason(row['reason']))
+            lines.append(pick(language, '帧 ', 'Frame ') + str(row.get('frame', '?')) + ': ' + reason(row['reason']))
     if temporal.get('error'):
         lines.append(temporal['error'])
     interpretation=temporal.get('details',{}).get('window_miss_interpretation') or temporal.get('window_miss_interpretation')
     if interpretation=='stationary_windows_exist_but_do_not_contain_accepted_frames':
-        lines.append(choose('会话存在合格静止窗口，但均不含接纳帧；这是接纳时刻与静止期错开，不代表全程手抖。',
+        lines.append(pick(language, '会话存在合格静止窗口，但均不含接纳帧；这是接纳时刻与静止期错开，不代表全程手抖。',
                             'Valid stationary windows exist, but none contains an accepted frame; acceptance timing missed the still periods.'))
     depth_quality=report.get('reconstruction',{}).get('depth_quality') or {}
     if depth_quality.get('local_measured_repairs_never_integrated'):
-        lines.append(choose('局部测量链路只融合原始深度；补洞像素从未进入TSDF。',
+        lines.append(pick(language, '局部测量链路只融合原始深度；补洞像素从未进入TSDF。',
                             'Local measurement geometry integrates raw depth only; repaired pixels never enter TSDF.'))
         for row in depth_quality.get('frames',[]):
-            lines.append(choose('深度帧 ','Depth frame ')+str(row.get('frame','?'))+': '+
+            lines.append(pick(language, '深度帧 ','Depth frame ')+str(row.get('frame','?'))+': '+
                 number(row.get('original_invalid_rate'),100,'%')+', policy='+str(row.get('policy',missing)))
     if report.get('read_error'):
-        lines.append(choose('报告缺失或绑定异常：', 'Report unavailable / binding error: ') + report['read_error'])
-    lines.extend(pair[0 if zh else 1] for pair in WARNINGS)
+        lines.append(pick(language, '报告缺失或绑定异常：', 'Report unavailable / binding error: ') + report['read_error'])
+    lines.extend(pick(language, *pair) for pair in WARNINGS)
     return '\n'.join(lines)
 
 

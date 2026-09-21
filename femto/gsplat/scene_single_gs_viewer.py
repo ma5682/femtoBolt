@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 from femto.io_utils import load_json, write_json, write_json_strict
 from femto.gsplat.scene_single_gs import SCHEMA, MARKER, SingleConfig
+from femto.ui_i18n import pick
 
 
 def enable_native_dpi() -> None:
@@ -116,13 +117,13 @@ class SingleViewer:
         self.language=language; self.view=FixedViewport(); self.start=None; self.box=None
         self.pool=ThreadPoolExecutor(max_workers=1); self.future=None; self.dirty=True; self.closed=False
         self.renderer=None; self.image=None; self.photo=None
-        self.root=tk.Tk(); self.root.title(self.text('单帧 3DGS · 固定视角','Single-frame 3DGS · Fixed view')+' | '+Path(self.meta.get('source_model') or self.meta['source_photo']).name)
+        self.root=tk.Tk(); self.root.title(pick(self.language, '单帧 3DGS · 固定视角','Single-frame 3DGS · Fixed view')+' | '+Path(self.meta.get('source_model') or self.meta['source_photo']).name)
         self.root.geometry('1100x730')
         toolbar=tk.Frame(self.root); toolbar.pack(fill='x')
         for zh,en,action in [('放大','Zoom in',lambda:self.zoom(1.25)),('缩小','Zoom out',lambda:self.zoom(.8)),
                              ('复位','Reset',self.reset),('保存区域','Save region',self.save),('回读区域','Load region',self.load)]:
-            tk.Button(toolbar,text=self.text(zh,en),command=action).pack(side='left',padx=4,pady=5)
-        tk.Label(self.root,text=self.text('滚轮缩放；左键框选放大。视角锁定，仅重建可见表面；尺度未经过实物验证。',
+            tk.Button(toolbar,text=pick(self.language, zh,en),command=action).pack(side='left',padx=4,pady=5)
+        tk.Label(self.root,text=pick(self.language, '滚轮缩放；左键框选放大。视角锁定，仅重建可见表面；尺度未经过实物验证。',
             'Wheel: zoom; left drag: zoom to region. Fixed view; observed surface only; scale unvalidated.')).pack()
         self.canvas=tk.Canvas(self.root,bg='#101720',highlightthickness=0); self.canvas.pack(fill='both',expand=True)
         self.status=tk.StringVar(value=str(self.output)); tk.Label(self.root,textvariable=self.status).pack(fill='x')
@@ -132,7 +133,6 @@ class SingleViewer:
         self.root.protocol('WM_DELETE_WINDOW',self.close)
         self.root.after(100,self.poll)
 
-    def text(self,zh: str,en: str) -> str: return zh if self.language=='zh' else en
     def request(self) -> None: self.dirty=True
     def reset(self) -> None: self.view=FixedViewport(); self.request()
     def zoom(self,factor: float,x: float=.5,y: float=.5) -> None: self.view.zoom_at(factor,x,y); self.request()
@@ -176,9 +176,9 @@ class SingleViewer:
                          viewport=vars(self.view),source_photo=self.meta['source_photo'])
             write_json_strict(
                 self.output/'viewport.json', payload, durable=True, temporary_prefix='viewport_')
-            self.status.set(self.text('当前区域已保存，可随时回读','Current region saved and ready to load'))
+            self.status.set(pick(self.language, '当前区域已保存，可随时回读','Current region saved and ready to load'))
         except (OSError,ValueError) as error:
-            self.messagebox.showerror('3DGS',self.text('区域保存失败，请检查模型目录是否可写。','Could not save region. Check that the model folder is writable.'))
+            self.messagebox.showerror('3DGS',pick(self.language, '区域保存失败，请检查模型目录是否可写。','Could not save region. Check that the model folder is writable.'))
         finally:
             if temporary is not None:
                 try: temporary.unlink(missing_ok=True)
@@ -188,24 +188,24 @@ class SingleViewer:
         try:
             loaded=load_viewport(self.output/'viewport.json',self.meta)
         except FileNotFoundError:
-            self.messagebox.showinfo('3DGS',self.text('当前模型尚未保存区域。请先框选或缩放，再点击“保存区域”；以后可用“回读区域”恢复。新建模型不会自动继承旧模型的区域。',
+            self.messagebox.showinfo('3DGS',pick(self.language, '当前模型尚未保存区域。请先框选或缩放，再点击“保存区域”；以后可用“回读区域”恢复。新建模型不会自动继承旧模型的区域。',
                 'No region has been saved for this model. Zoom or select a region, then click Save region. Load region restores it later. New models do not inherit old regions.'))
             return
         except ViewportModelMismatch:
-            self.messagebox.showwarning('3DGS',self.text('保存的区域属于其他模型，无法在当前模型回读。请打开原模型，或在当前模型重新保存区域。',
+            self.messagebox.showwarning('3DGS',pick(self.language, '保存的区域属于其他模型，无法在当前模型回读。请打开原模型，或在当前模型重新保存区域。',
                 'This region belongs to another model. Open that model or save a new region in the current model.'))
             return
         except (ValueError,KeyError,TypeError,OverflowError):
-            self.messagebox.showerror('3DGS',self.text('区域文件内容损坏或格式不正确。当前视图未改变，请重新选择并保存区域。',
+            self.messagebox.showerror('3DGS',pick(self.language, '区域文件内容损坏或格式不正确。当前视图未改变，请重新选择并保存区域。',
                 'The region file is damaged or invalid. The current view is unchanged. Select and save the region again.'))
             return
         except OSError:
-            self.messagebox.showerror('3DGS',self.text('无法读取区域文件，请检查模型目录的访问权限。',
+            self.messagebox.showerror('3DGS',pick(self.language, '无法读取区域文件，请检查模型目录的访问权限。',
                 'Cannot read the region file. Check access to the model folder.'))
             return
         self.view=loaded
         self.request()
-        self.status.set(self.text('已恢复保存的区域','Saved region restored'))
+        self.status.set(pick(self.language, '已恢复保存的区域','Saved region restored'))
 
     def render(self,K: Any,w: int,h: int) -> Any:
         from femto.gsplat.scene_gsplat_guard import guard_cuda

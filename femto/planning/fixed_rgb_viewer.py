@@ -16,6 +16,7 @@ import numpy as np
 from PIL import Image,ImageTk
 from femto.annotation.fixed_rgb_geometry import FixedRGBModel, GeometryBudget, MAX_POLYGON_CORNERS
 from femto.annotation.scene_annotations import point_readout_mm,distance_m
+from femto.ui_i18n import pick
 
 # Keep non-product workflows implemented but out of the current product demo.
 PRODUCT_HIDDEN_FEATURES=frozenset({
@@ -27,9 +28,9 @@ PRODUCT_SINGLE_REGION=True
 class FixedRGBViewer:
     def _build_main_area(self,root):
         main=tk.Frame(root,bg='#101b26');main.pack(side='left',fill='both',expand=True)
-        tk.Label(main,text=self.t('固定初始相机视角 · 图像选区 / 三维映射','Locked initial camera · RGB selection / 3D mapping'),
+        tk.Label(main,text=pick(self.language, '固定初始相机视角 · 图像选区 / 三维映射','Locked initial camera · RGB selection / 3D mapping'),
             fg='#e5f1f8',bg='#101b26',font=('Microsoft YaHei UI',16,'bold'),pady=12).pack(fill='x')
-        self.status=tk.StringVar(value=self.t('正在读取参考照片与三维表面…','Loading reference RGB and surface…'))
+        self.status=tk.StringVar(value=pick(self.language, '正在读取参考照片与三维表面…','Loading reference RGB and surface…'))
         tk.Label(main,textvariable=self.status,fg='#9ae1cf',bg='#18303c',wraplength=680,justify='left',pady=8).pack(fill='x')
         self.canvas=tk.Canvas(main,bg='#08121c',highlightthickness=0)
         self.canvas.pack(fill='both',expand=True)
@@ -42,7 +43,7 @@ class FixedRGBViewer:
         self.canvas.bind('<MouseWheel>',self.wheel)
         self.canvas.bind('<ButtonPress-3>',self.pan_start)
         self.canvas.bind('<B3-Motion>',self.pan_move)
-        tk.Label(main,text=self.t('按住左键涂抹 · 滚轮缩放 · 右键平移','Left drag: paint · Wheel: zoom · Right drag: pan'),
+        tk.Label(main,text=pick(self.language, '按住左键涂抹 · 滚轮缩放 · 右键平移','Left drag: paint · Wheel: zoom · Right drag: pan'),
             bg='#101b26',fg='#b6c9d9',pady=8).pack(fill='x')
 
     def _build_sidebar_shell(self,root):
@@ -53,7 +54,7 @@ class FixedRGBViewer:
         side=tk.Frame(self.side_canvas,bg='#142330',padx=14,pady=14)
         self.side_canvas.create_window((0,0),window=side,anchor='nw',width=380 if self.result.is_file() else 320)
         side.bind('<Configure>',lambda e:self.side_canvas.configure(scrollregion=self.side_canvas.bbox('all')))
-        self.save_state=tk.StringVar(value=self.t('没有未保存的更改','No unsaved changes'))
+        self.save_state=tk.StringVar(value=pick(self.language, '没有未保存的更改','No unsaved changes'))
         tk.Label(side,textvariable=self.save_state,bg='#142330',fg='#e7c27d',wraplength=285,justify='left').pack(fill='x',pady=4)
         self.task_feedback=tk.StringVar(value='')
         tk.Label(side,textvariable=self.task_feedback,bg='#142330',fg='#9ae1cf',wraplength=285,justify='left').pack(fill='x')
@@ -86,7 +87,7 @@ class FixedRGBViewer:
         self._annotations_dirty=False;self._syncing_fields=False;self.active_mode='region'
         self.zoom=1.;self.pan=np.zeros(2);self.scale=1.;self.offset=np.zeros(2)
         self.mailbox=queue.Queue(maxsize=1);self.widgets=[]
-        root.title(self.t('Femto · 固定 RGB 选区与三维坐标','Femto · Fixed RGB annotation'))
+        root.title(pick(self.language, 'Femto · 固定 RGB 选区与三维坐标','Femto · Fixed RGB annotation'))
         root.geometry('1280x820');root.minsize(1000,720);root.configure(bg='#101b26')
         root.protocol('WM_DELETE_WINDOW',self.close)
         self._build_main_area(root)
@@ -98,46 +99,46 @@ class FixedRGBViewer:
         self.mode=tk.StringVar(value='region')
         row=tk.Frame(side,bg='#142330');row.pack(fill='x')
         if 'point_tools' in PRODUCT_HIDDEN_FEATURES:
-            tk.Label(row,text=self.t('方形涂抹','Square brush'),bg='#142330',fg='#e3eef6').pack(side='left')
+            tk.Label(row,text=pick(self.language, '方形涂抹','Square brush'),bg='#142330',fg='#e3eef6').pack(side='left')
         else:
             for value,zh,en in [('point','选点 / 测距','Point / distance'),('region','方形涂抹','Square brush')]:
-                w=ttk.Radiobutton(row,text=self.t(zh,en),value=value,variable=self.mode,command=self.change_mode)
+                w=ttk.Radiobutton(row,text=pick(self.language, zh,en),value=value,variable=self.mode,command=self.change_mode)
                 w.pack(side='left');self.widgets.append(w)
         self.selection_method=tk.StringVar(value='work');self.active_selection_method='work'
-        tk.Label(side,text=self.t('方形涂抹类型（结果自动判断）','Square paint type (result is automatic)'),bg='#142330',fg='#c4d8e8').pack(anchor='w',pady=(6,0))
+        tk.Label(side,text=pick(self.language, '方形涂抹类型（结果自动判断）','Square paint type (result is automatic)'),bg='#142330',fg='#c4d8e8').pack(anchor='w',pady=(6,0))
         method_row=tk.Frame(side,bg='#142330');method_row.pack(fill='x')
         for value,zh,en in [('work','工作区域','Work area'),('forbidden','禁止区域','Forbidden area')]:
-            w=ttk.Radiobutton(method_row,text=self.t(zh,en),value=value,variable=self.selection_method,
+            w=ttk.Radiobutton(method_row,text=pick(self.language, zh,en),value=value,variable=self.selection_method,
                 command=self.change_selection_method)
             w.pack(anchor='w');self.widgets.append(w)
         self.brush_size=tk.IntVar(value=40)
         self.brush_erase=tk.BooleanVar(value=False)
         brush_row=ttk.Frame(side);brush_row.pack(fill='x',pady=4)
-        ttk.Label(brush_row,text=self.t('方块大小（屏幕像素）','Square size (screen px)')).pack(side='left')
+        ttk.Label(brush_row,text=pick(self.language, '方块大小（屏幕像素）','Square size (screen px)')).pack(side='left')
         self.brush_size_label=ttk.Label(brush_row,text='40');self.brush_size_label.pack(side='right')
         brush_scale=tk.Scale(side,from_=8,to=160,orient='horizontal',variable=self.brush_size,
             showvalue=False,command=self.brush_resize,bg='#142330',fg='#dae8ef',highlightthickness=0)
         brush_scale.pack(fill='x');self.widgets.append(brush_scale)
-        w=ttk.Checkbutton(side,text=self.t('擦除已涂部分','Erase painted selection'),variable=self.brush_erase,
+        w=ttk.Checkbutton(side,text=pick(self.language, '擦除已涂部分','Erase painted selection'),variable=self.brush_erase,
             command=lambda:self.draw_brush_cursor())
         w.pack(anchor='w');self.widgets.append(w)
         self.overlay=tk.BooleanVar(value=False)
         self.display_mode=tk.StringVar(value='rgb')
         display_row=ttk.Frame(side);display_row.pack(fill='x',pady=5)
         for value,zh,en in [('rgb','RGB','RGB'),('cloud','纯点云','Cloud'),('distance','距原点着色','W0 distance')]:
-            ttk.Radiobutton(display_row,text=self.t(zh,en),value=value,variable=self.display_mode,command=self.draw).pack(side='left')
-        ttk.Checkbutton(side,text=self.t('显示三维支持范围','Show geometry support'),variable=self.overlay,command=self.draw).pack(anchor='w',pady=5)
+            ttk.Radiobutton(display_row,text=pick(self.language, zh,en),value=value,variable=self.display_mode,command=self.draw).pack(side='left')
+        ttk.Checkbutton(side,text=pick(self.language, '显示三维支持范围','Show geometry support'),variable=self.overlay,command=self.draw).pack(anchor='w',pady=5)
         self.show_axes=tk.BooleanVar(value=True)
         self.show_optical_axis=tk.BooleanVar(value=False)
-        ttk.Checkbutton(side,text=self.t('显示坐标方向（W0）','Show W0 directions'),variable=self.show_axes,command=self.draw).pack(anchor='w',pady=3)
-        ttk.Checkbutton(side,text=self.t('显示光轴参考线','Show optical-axis guides'),variable=self.show_optical_axis,command=self.draw).pack(anchor='w',pady=3)
+        ttk.Checkbutton(side,text=pick(self.language, '显示坐标方向（W0）','Show W0 directions'),variable=self.show_axes,command=self.draw).pack(anchor='w',pady=3)
+        ttk.Checkbutton(side,text=pick(self.language, '显示光轴参考线','Show optical-axis guides'),variable=self.show_optical_axis,command=self.draw).pack(anchor='w',pady=3)
         self.action(side,'完成区域选择','Finish area selection',self.finish_polygon)
         self.exclusion_target=None
         if 'legacy_exclusion_editor' not in PRODUCT_HIDDEN_FEATURES:
             self.action(side,'添加禁止区域（先选主区域）','Draw forbidden area in selected region',self.begin_exclusion)
             self.action(side,'清除所选区域禁区 / 可撤销','Clear exclusions / undoable',self.clear_exclusions)
-        tk.Label(side,text=self.t('名称 / 备注','Name / note'),bg='#142330',fg='#c4d8e8').pack(anchor='w')
-        self.name=tk.StringVar(value=self.t('标记 01','Marker 01'));self.note=tk.StringVar()
+        tk.Label(side,text=pick(self.language, '名称 / 备注','Name / note'),bg='#142330',fg='#c4d8e8').pack(anchor='w')
+        self.name=tk.StringVar(value=pick(self.language, '标记 01','Marker 01'));self.note=tk.StringVar()
         for var in (self.name,self.note):
             w=ttk.Entry(side,textvariable=var,width=32);w.pack(fill='x',pady=3);self.widgets.append(w)
         for var in (self.name,self.note):var.trace_add('write',lambda *args:self.update_save_state())
@@ -145,7 +146,7 @@ class FixedRGBViewer:
         self.items.pack(fill='x',pady=6);self.items.bind('<<ListboxSelect>>',self.select);self.widgets.append(self.items)
         self.items.bind('<Control-a>',self.select_all)
         self.action(side,'全选标记','Select all annotations',self.select_all)
-        tk.Label(side,text=self.t('Ctrl 多选 · Shift 连选 · Ctrl+A 全选','Ctrl: multi-select · Shift: range · Ctrl+A: all'),bg='#142330',fg='#a4bdcf').pack(anchor='w')
+        tk.Label(side,text=pick(self.language, 'Ctrl 多选 · Shift 连选 · Ctrl+A 全选','Ctrl: multi-select · Shift: range · Ctrl+A: all'),bg='#142330',fg='#a4bdcf').pack(anchor='w')
         if not PRODUCT_SINGLE_REGION:
             for zh,en,fn in [('应用名称备注','Apply edits',self.edit),('删除所选 / 可撤销','Delete selected',self.delete),
                 ('清除当前选中','Clear selection',self.clear_selection)]:
@@ -160,7 +161,7 @@ class FixedRGBViewer:
             self.action(advanced_side,'同位置几何诊断（选中一点）','Local geometry evidence (select one point)',self.local_geometry_diagnostics)
             self.action(advanced_side,'数据质量 / 精度测试报告','Data quality / distance test report',self.measurement_report)
             self.action(advanced_side,'打开精度测试记录','Open distance test records',self.open_measurement_records)
-            tk.Label(advanced_side,text=self.t('测量：派生几何 · 展示：RGB / GLB\n绝对 XYZ 精度未验证；实测距离不等于治疗定位验收。',
+            tk.Label(advanced_side,text=pick(self.language, '测量：派生几何 · 展示：RGB / GLB\n绝对 XYZ 精度未验证；实测距离不等于治疗定位验收。',
                 'Measurement: derived geometry; display: RGB / GLB\nAbsolute XYZ accuracy unverified; distance tests are not clinical validation.'),
                 bg='#142330',fg='#e7c27d',wraplength=285,justify='left').pack(fill='x',pady=6)
         self.action(save_side,'历史区域导出记录','Region export history',self.export_history)
@@ -181,7 +182,7 @@ class FixedRGBViewer:
         self.action(save_side if self.workspace_tabs else self.planning_tools,'导出分享包（模型＋路线）','Export region + path / diagram / ZIP',self.export_region_path)
         self.action(advanced_side if self.workspace_tabs else self.planning_tools,'回读并核验路径 JSON','Load / validate path JSON',self.load_region_path)
         self.action(advanced_side if self.workspace_tabs else self.planning_tools,'清除路径预览','Clear path preview',self.clear_path_preview)
-        tk.Label(side,text=self.t('RGB 照片不代表每个像素有深度。\n绿色：几何支持；青色：首帧缺深度处获得几何支持。\n坐标为估计值，未做实物精度验证；仅用于研发。',
+        tk.Label(side,text=pick(self.language, 'RGB 照片不代表每个像素有深度。\n绿色：几何支持；青色：首帧缺深度处获得几何支持。\n坐标为估计值，未做实物精度验证；仅用于研发。',
             'RGB visibility does not guarantee depth.\nGreen: geometry support; cyan: support where reference depth is missing.\nEstimated coordinates; physical accuracy unverified. R&D only.'),
             bg='#142330',fg='#a4bdcf',wraplength=285,justify='left').pack(fill='x',pady=10)
         def scroll_side(e):
@@ -194,7 +195,6 @@ class FixedRGBViewer:
         self.work(lambda:load_source(result,cancel=self.operation_cancel(),progress=self.operation_progress),self.loaded)
         self.timer=root.after(80,self.poll)
 
-    def t(self,zh: str,en: str) -> str:return zh if self.language=='zh' else en
     def error_text(self,error: Any) -> Any:
         translations={
             'Geometry task cancelled':'几何任务已取消',
@@ -216,9 +216,9 @@ class FixedRGBViewer:
             'Origin reference provenance mismatch':'初始原点来源证据不匹配',
             'Initial color-camera origin cannot be verified; use the advanced viewer for this model.':'无法验证初始彩色相机原点，请使用高级三维查看器检查此模型。',
         }
-        return translations.get(error,error) if self.language=='zh' else error
+        return pick(self.language, translations.get(error, error), error)
     def action(self,parent: Any,zh: str,en: str,fn: Any) -> Any:
-        b=ttk.Button(parent,text=self.t(zh,en),command=fn);b.pack(fill='x',pady=3);self.widgets.append(b)
+        b=ttk.Button(parent,text=pick(self.language, zh,en),command=fn);b.pack(fill='x',pady=3);self.widgets.append(b)
         name=getattr(fn,'__name__','')
         if name in ('plan_region_path','plan_metric_path','plan_surface_spacing','plan_coverage_path','present_region_path','export_region_path','load_region_path','clear_path_preview','save_region_project'):
             self._plan_buttons[name]=b
@@ -279,7 +279,7 @@ class FixedRGBViewer:
         self.poll_draft()
         if self.busy and not getattr(self.task_cancel,'committed',False) and not self.task_timed_out and time.monotonic()-self.task_started>120:
             self.task_timed_out=True;self.task_cancel.set()
-            self.status.set(self.t('操作超过 120 秒预算，正在取消；可关闭此窗口。','Operation exceeded the 120 s budget; cancelling. This window can be closed.'))
+            self.status.set(pick(self.language, '操作超过 120 秒预算，正在取消；可关闭此窗口。','Operation exceeded the 120 s budget; cancelling. This window can be closed.'))
         try:
             generation,done,value,error=self.mailbox.get_nowait()
             if generation!=self.generation:
@@ -298,8 +298,8 @@ class FixedRGBViewer:
                 error='几何任务已取消'
                 self._plan_errors[getattr(self,'_task_region_id',None)]=error
             if self.task_timed_out:
-                self.status.set(self.t('操作已超时；未采用迟到界面结果。','Operation timed out; late UI result was not applied.'))
-            elif error:self.status.set(self.t('操作失败，当前标记与草稿保留：','Operation failed; current annotations and draft retained: ')+self.error_text(error))
+                self.status.set(pick(self.language, '操作已超时；未采用迟到界面结果。','Operation timed out; late UI result was not applied.'))
+            elif error:self.status.set(pick(self.language, '操作失败，当前标记与草稿保留：','Operation failed; current annotations and draft retained: ')+self.error_text(error))
             else:
                 try:done(value)
                 except Exception as exc:
@@ -313,7 +313,7 @@ class FixedRGBViewer:
         self.timer=self.root.after(80,self.poll)
     def loaded(self,model: Any) -> None:
         if (model.store.local_context or {}).get('capture_scope') == 'interrupted_prefix':
-            self.root.title(self.t('Femto · 中断前数据建模 · 固定 RGB 选区',
+            self.root.title(pick(self.language, 'Femto · 中断前数据建模 · 固定 RGB 选区',
                                    'Femto · Interrupted-prefix reconstruction · Fixed RGB'))
         if self.model is not None and self.model is not model:
             from femto.planning.planning_drafts import Journal
@@ -337,12 +337,12 @@ class FixedRGBViewer:
             tint[valid]=tint[valid]*.6+np.array([40,220,90])*.4
             tint[new]=model.rgb[new]*.5+np.array([40,210,240])*.5
             self.support_image=Image.fromarray(tint.astype(np.uint8))
-        self.info.set(self.t('固定初始彩色相机 W0','Initial color camera W0')+
-            f"\n{model.reconstruction.parent.name}\n"+self.t('参考帧：','Reference frame: ')+str(model.view_reference['reference_frame_id'])+
-            '\nRDF · X '+self.t('右 / Y 下 / Z 前','right / Y down / Z forward')+
-            self.t('\n本模型接纳位姿最大半径：','\nMax accepted pose radius: ')+f'{model.max_radius_mm:.1f} mm')
-        self.status.set(self.t('画面已锁定。请选择有三维支持的表面。','View locked. Select a supported surface.')+
-            (self.t(' 此历史模型超出当前 30 mm 补采半径。',' This historical model exceeds the current 30 mm capture radius.') if model.max_radius_mm>30 else ''))
+        self.info.set(pick(self.language, '固定初始彩色相机 W0','Initial color camera W0')+
+            f"\n{model.reconstruction.parent.name}\n"+pick(self.language, '参考帧：','Reference frame: ')+str(model.view_reference['reference_frame_id'])+
+            '\nRDF · X '+pick(self.language, '右 / Y 下 / Z 前','right / Y down / Z forward')+
+            pick(self.language, '\n本模型接纳位姿最大半径：','\nMax accepted pose radius: ')+f'{model.max_radius_mm:.1f} mm')
+        self.status.set(pick(self.language, '画面已锁定。请选择有三维支持的表面。','View locked. Select a supported surface.')+
+            (pick(self.language, ' 此历史模型超出当前 30 mm 补采半径。',' This historical model exceeds the current 30 mm capture radius.') if model.max_radius_mm>30 else ''))
         self.fit()
         self.refresh_items()
         if hasattr(model,'project_id'):
@@ -401,10 +401,10 @@ class FixedRGBViewer:
                 uv=np.asarray([sample['pixel'] for sample in segment])*self.scale+self.offset
                 self.canvas.create_line(*uv.ravel().tolist(),fill='#ffdb4d',width=2,tags='path_preview')
         if self.display_mode.get()!='rgb':
-            label=self.t('网格顶点点云 · 固定视角 · 无 RGB 背景','Mesh vertex cloud · fixed view · no RGB background')
+            label=pick(self.language, '网格顶点点云 · 固定视角 · 无 RGB 背景','Mesh vertex cloud · fixed view · no RGB background')
             if self.display_mode.get()=='distance':
                 low,high=self.cloud_view['limits']
-                label+=self.t(f'\n距 W0：蓝 {low:.1f} → 红 {high:.1f} mm',f'\nW0 distance: blue {low:.1f} → red {high:.1f} mm')
+                label+=pick(self.language, f'\n距 W0：蓝 {low:.1f} → 红 {high:.1f} mm',f'\nW0 distance: blue {low:.1f} → red {high:.1f} mm')
             self.canvas.create_text(12,h-12,anchor='sw',text=label,fill='#ffffff',tags='cloud_legend')
         for i,p in enumerate(self.model.store.points):
             uv=self.model.display_for('point',p)
@@ -444,11 +444,11 @@ class FixedRGBViewer:
                 if left<=x<=right:self.canvas.create_line(x,top,x,bottom,fill='#70e1a2',dash=(6,4),tags='coordinate_guide')
                 if left<=x<=right and top<=y<=bottom:
                     self.canvas.create_oval(x-5,y-5,x+5,y+5,outline='#7fbdff',width=2,tags='coordinate_guide')
-                    self.canvas.create_text(x+9,y+9,anchor='nw',text=self.t('光轴中心（非原点）','Optical axis (not W0)'),fill='#ffffff',tags='coordinate_guide')
+                    self.canvas.create_text(x+9,y+9,anchor='nw',text=pick(self.language, '光轴中心（非原点）','Optical axis (not W0)'),fill='#ffffff',tags='coordinate_guide')
         if self.show_axes.get():
             c=self.canvas;tag='coordinate_guide'
             c.create_rectangle(12,12,268,142,fill='#101b26',outline='#395268',tags=tag)
-            c.create_text(24,24,anchor='nw',text=self.t('W0 坐标方向示意 · 无比例','W0 directions · not to scale'),fill='#dceaf4',tags=tag)
+            c.create_text(24,24,anchor='nw',text=pick(self.language, 'W0 坐标方向示意 · 无比例','W0 directions · not to scale'),fill='#dceaf4',tags=tag)
             x,y=40,65
             c.create_line(x,y,x+65,y,arrow='last',fill='#ff7777',width=2,tags=tag)
             c.create_text(x+70,y,text='+X',anchor='w',fill='#ff7777',tags=tag)
@@ -457,8 +457,8 @@ class FixedRGBViewer:
             c.create_oval(x-5,y-5,x+5,y+5,outline='#7fbdff',tags=tag)
             c.create_line(x-3,y-3,x+3,y+3,fill='#7fbdff',tags=tag)
             c.create_line(x-3,y+3,x+3,y-3,fill='#7fbdff',tags=tag)
-            c.create_text(150,80,text=self.t('+Z 向前\n进入画面','+Z forward\ninto image'),anchor='w',fill='#7fbdff',tags=tag)
-            c.create_text(24,120,anchor='nw',text=self.t('原点在初始相机光心','W0: initial camera optical centre'),fill='#a4bdcf',tags=tag)
+            c.create_text(150,80,text=pick(self.language, '+Z 向前\n进入画面','+Z forward\ninto image'),anchor='w',fill='#7fbdff',tags=tag)
+            c.create_text(24,120,anchor='nw',text=pick(self.language, '原点在初始相机光心','W0: initial camera optical centre'),fill='#a4bdcf',tags=tag)
 
     def image_pixel(self,x: Any,y: Any) -> Any:
         return (np.array([x,y])-self.offset)/self.scale
@@ -600,8 +600,8 @@ class FixedRGBViewer:
             self.model.store.update_annotation(kind,i,name=self.name.get().strip(),note=self.note.get().strip())
             self._annotations_dirty=self.model.store.dirty;self.update_save_state()
             return True
-        answer=messagebox.askyesnocancel(self.t('名称与备注尚未应用','Unapplied name / note'),
-            self.t('先将名称和备注应用到当前标记？\n是：应用；否：放弃字段编辑；取消：保留当前操作。',
+        answer=messagebox.askyesnocancel(pick(self.language, '名称与备注尚未应用','Unapplied name / note'),
+            pick(self.language, '先将名称和备注应用到当前标记？\n是：应用；否：放弃字段编辑；取消：保留当前操作。',
                    'Apply the name and note to the current annotation first?\nYes: apply. No: discard field edits. Cancel: stay here.'),parent=self.root)
         if answer is None:return False
         if answer:self.model.store.update_annotation(kind,i,name=self.name.get().strip(),note=self.note.get().strip())
@@ -613,11 +613,11 @@ class FixedRGBViewer:
         if self.model is not None:self._annotations_dirty=self.model.store.dirty
         self.update_save_state()
         if not (self._annotations_dirty or self.plan_unsaved() or self.pending_edits() or self.has_selection_draft()):return True
-        return messagebox.askokcancel(self.t('尚有未保存内容','Unsaved work'),
-            self.save_state.get()+'\n\n'+self.t(f'{action}会放弃这些未保存内容。继续？',f'{action} will discard this unsaved work. Continue?'),parent=self.root)
+        return messagebox.askokcancel(pick(self.language, '尚有未保存内容','Unsaved work'),
+            self.save_state.get()+'\n\n'+pick(self.language, f'{action}会放弃这些未保存内容。继续？',f'{action} will discard this unsaved work. Continue?'),parent=self.root)
     def change_mode(self) -> None:
-        if self.has_selection_draft() and not messagebox.askokcancel(self.t('涂抹尚未完成','Unfinished painting'),
-            self.t('切换模式将放弃当前涂抹草稿。继续？','Changing mode discards the current polygon draft. Continue?'),parent=self.root):
+        if self.has_selection_draft() and not messagebox.askokcancel(pick(self.language, '涂抹尚未完成','Unfinished painting'),
+            pick(self.language, '切换模式将放弃当前涂抹草稿。继续？','Changing mode discards the current polygon draft. Continue?'),parent=self.root):
             self.mode.set(self.active_mode);return
         if not self.confirm_pending_edits():self.mode.set(self.active_mode);return
         self.exclusion_target=None
@@ -630,7 +630,7 @@ class FixedRGBViewer:
         self.polygon=[p[:] for p in self._selection_polygons[method]]
         self._brush_mask=None;self._brush_last=None;self.clear_readout()
         self.brush_erase.set(False);self.update_save_state();self.draw()
-        self.status.set(self.t(
+        self.status.set(pick(self.language,
             '当前涂抹：工作区域（橙色）。可以随时切换到禁止区域，已有标记会保留。' if method=='work' else
             '当前涂抹：禁止区域（红色）。可以随时切换到工作区域，已有标记会保留。',
             'Painting work area (orange). You may switch roles without losing marks.' if method=='work' else
@@ -640,14 +640,14 @@ class FixedRGBViewer:
     def clear_selection(self) -> None:
         if self.busy or not self.confirm_pending_edits():return
         self.clear_readout();self.update_save_state();self.draw()
-        self.status.set(self.t('已清除当前选中项；已有标记保留。','Current selection cleared; annotations retained.'))
+        self.status.set(pick(self.language, '已清除当前选中项；已有标记保留。','Current selection cleared; annotations retained.'))
     def click(self,e: Any) -> None:
         if self.model is None or self.busy:return
         if self.show_axes.get() and 12<=e.x<=268 and 12<=e.y<=142:return
         if not self.confirm_pending_edits():return
         self.clear_readout();x,y=self.image_pixel(e.x,e.y)
         if not (0<=x<self.base.width and 0<=y<self.base.height):
-            self.status.set(self.t('点击位于参考图像外，未新增标记。','Click is outside the reference image; no annotation added.'))
+            self.status.set(pick(self.language, '点击位于参考图像外，未新增标记。','Click is outside the reference image; no annotation added.'))
             self.update_save_state();self.draw();return
         if self.mode.get()=='region':
             self.brush_start(e);return
@@ -655,13 +655,13 @@ class FixedRGBViewer:
             item=self.model.pick(x,y,self.name.get().strip(),self.note.get().strip())
             if item is None:
                 messages={
-                    'depth_conflict':self.t('此处网格与参考深度不一致，未新增标记。','Mesh and reference depth disagree here; no annotation added.'),
-                    'no_source_pixel':self.t('此处去畸变后没有有效原始图像像素，未新增标记。','This undistorted pixel has no valid source image pixel; no annotation added.'),
-                    'outside_depth_range':self.t('此处表面超出有效深度范围，未新增标记。','Surface is outside the valid depth range; no annotation added.'),
-                    'outside_image':self.t('点击位于参考图像外，未新增标记。','Click is outside the reference image; no annotation added.'),
+                    'depth_conflict':pick(self.language, '此处网格与参考深度不一致，未新增标记。','Mesh and reference depth disagree here; no annotation added.'),
+                    'no_source_pixel':pick(self.language, '此处去畸变后没有有效原始图像像素，未新增标记。','This undistorted pixel has no valid source image pixel; no annotation added.'),
+                    'outside_depth_range':pick(self.language, '此处表面超出有效深度范围，未新增标记。','Surface is outside the valid depth range; no annotation added.'),
+                    'outside_image':pick(self.language, '点击位于参考图像外，未新增标记。','Click is outside the reference image; no annotation added.'),
                 }
-                self.status.set(messages.get(self.model.projection.pixel_reason(x,y),self.t('此处无有效三维表面，未新增标记。','No supported 3D surface here; no annotation added.')))
-            else:self.refresh_items(('point',item['annotation_id']));self.status.set(self.t('已映射到三维表面。','Mapped to 3D surface.'))
+                self.status.set(messages.get(self.model.projection.pixel_reason(x,y),pick(self.language, '此处无有效三维表面，未新增标记。','No supported 3D surface here; no annotation added.')))
+            else:self.refresh_items(('point',item['annotation_id']));self.status.set(pick(self.language, '已映射到三维表面。','Mapped to 3D surface.'))
         except Exception as exc:self.status.set(self.error_text(str(exc)))
         self.update_save_state();self.draw()
     def reset_brush(self) -> None:
@@ -791,7 +791,7 @@ class FixedRGBViewer:
                 self._brush_history=self._brush_history[-100:]
             self.polygon=polygon
             self._selection_polygons[self.selection_method.get()]=[p[:] for p in polygon]
-            self.status.set(self.t('继续涂抹，或切换工作/禁止区域；系统会在完成时自动组合。',
+            self.status.set(pick(self.language, '继续涂抹，或切换工作/禁止区域；系统会在完成时自动组合。',
                 'Continue painting or switch between work/forbidden areas; the final result is combined automatically.'))
         except ValueError as error:
             self.polygon=self._brush_before;self.status.set(str(error))
@@ -802,7 +802,7 @@ class FixedRGBViewer:
         if self.model is None or self.busy:return
         selections=self.selection_polygons()
         if not any(selections.values()):
-            self.status.set(self.t('请先涂抹工作区域或禁止区域。','Paint a work area or forbidden area first.'));return
+            self.status.set(pick(self.language, '请先涂抹工作区域或禁止区域。','Paint a work area or forbidden area first.'));return
         if not self.confirm_pending_edits():return
         if getattr(self,'exclusion_target',None) is not None:
             if len(self.polygon)<3:
@@ -827,14 +827,14 @@ class FixedRGBViewer:
             final_mask=np.ones((self.base.height,self.base.width),np.uint8);method='full_minus_forbidden'
         if forbidden_mask is not None:final_mask[forbidden_mask.astype(bool)]=0
         if not final_mask.any():
-            self.status.set(self.t('禁止区域覆盖了全部可选范围，没有可保存内容。',
+            self.status.set(pick(self.language, '禁止区域覆盖了全部可选范围，没有可保存内容。',
                 'The forbidden area removes the entire selectable range; nothing remains to save.'));return
         try:polygon=mask_polygon(final_mask,MAX_POLYGON_CORNERS)
         except ValueError as error:self.status.set(str(error));return
         name,note=self.name.get().strip(),self.note.get().strip()
-        self.status.set(self.t('正在提取可见三维区域…','Extracting visible 3D region…'))
+        self.status.set(pick(self.language, '正在提取可见三维区域…','Extracting visible 3D region…'))
         def done(item):
-            if item is None:self.status.set(self.t(
+            if item is None:self.status.set(pick(self.language,
                 '自动组合后的范围内没有有效三维内容。','No valid 3D content exists in the combined selection.'))
             else:
                 item['selection_method']=method
@@ -845,7 +845,7 @@ class FixedRGBViewer:
                     'work_only':'已提交单次结果：仅工作区域。粉色部分为将要保存和导出的内容。',
                     'full_minus_forbidden':'已提交单次结果：仅禁止区域。粉色部分为排除红色范围后的其余内容。',
                     'work_minus_forbidden':'已提交单次结果：工作区域减去禁止区域。工作区外的禁止标记已忽略。'}
-                self.status.set(self.t(messages[method],{
+                self.status.set(pick(self.language, messages[method],{
                     'work_only':'Single result submitted: work area only. Pink shows the result to save and export.',
                     'full_minus_forbidden':'Single result submitted: forbidden area only. Pink shows all remaining content.',
                     'work_minus_forbidden':'Single result submitted: work minus forbidden areas. Forbidden marks outside work are ignored.'}[method]))
@@ -875,7 +875,7 @@ class FixedRGBViewer:
         self.items.delete(0,'end');self.index=[]
         for kind,items in [('point',self.model.store.points),('region',self.model.store.regions)]:
             for i,item in enumerate(items):
-                self.items.insert('end',self.t('点' if kind=='point' else '区域',kind)+f' {i+1} · '+item.get('name',''))
+                self.items.insert('end',pick(self.language, '点' if kind=='point' else '区域',kind)+f' {i+1} · '+item.get('name',''))
                 self.index.append((kind,i))
         self.clear_readout()
         self._annotations_dirty=self.model.store.dirty
@@ -891,12 +891,12 @@ class FixedRGBViewer:
         if self.model is None or self.busy:return
         selected=self.selected_annotations()
         if len(selected)!=2 or any(kind!='point' for kind,_ in selected):
-            self.status.set(self.t('请按 Ctrl 在标记列表中选中两个表面点，再记录尺量两点之间的直线距离。',
+            self.status.set(pick(self.language, '请按 Ctrl 在标记列表中选中两个表面点，再记录尺量两点之间的直线距离。',
                 'Ctrl-select two surface points; enter their independently measured straight-line distance.'));return
         points=[self.model.store.points[i] for _,i in selected]
-        window=tk.Toplevel(self.root);window.title(self.t('记录两点实测距离','Reference distance experiment'))
+        window=tk.Toplevel(self.root);window.title(pick(self.language, '记录两点实测距离','Reference distance experiment'))
         window.transient(self.root);window.grab_set()
-        ttk.Label(window,text=self.t('只验证所选两点间直线距离，不验证相机外壳距离或绝对 XYZ。\n误差限仅用于本次实验，不改变融合门限。',
+        ttk.Label(window,text=pick(self.language, '只验证所选两点间直线距离，不验证相机外壳距离或绝对 XYZ。\n误差限仅用于本次实验，不改变融合门限。',
             'Two-point straight-line distance only, not housing distance or absolute XYZ.\nThe entered limit does not change fusion gates.'),wraplength=490).grid(row=0,column=0,columnspan=2,padx=12,pady=10)
         fields={}
         specs=[('test_id','测试编号（同目标重复使用）','Test ID (same target)', ''),
@@ -906,7 +906,7 @@ class FixedRGBViewer:
             ('instrument','量具与读数方法','Instrument and method',''),
             ('conditions','目标 / 距离 / 角度 / 光照','Target / distance / angle / lighting','')]
         for row,(key,zh,en,default) in enumerate(specs,1):
-            ttk.Label(window,text=self.t(zh,en)).grid(row=row,column=0,sticky='w',padx=12,pady=5)
+            ttk.Label(window,text=pick(self.language, zh,en)).grid(row=row,column=0,sticky='w',padx=12,pady=5)
             fields[key]=tk.StringVar(value=default)
             ttk.Entry(window,textvariable=fields[key],width=36).grid(row=row,column=1,padx=12,pady=5)
         feedback=tk.StringVar()
@@ -919,19 +919,19 @@ class FixedRGBViewer:
                 record=distance_record(self.model,points,**values)
                 path=save_record(self.model,record)
             except (ValueError,OSError) as exc:
-                feedback.set(self.t('未保存，请检查输入：','Not saved; check input: ')+str(exc));return
-            self.status.set(self.t('距离测试已记录：','Distance test saved: ')+
-                f"{record['measured_mm']:.2f} mm; "+self.t('偏差 ','error ')+f"{record['signed_error_mm']:+.2f} mm\n{path}")
+                feedback.set(pick(self.language, '未保存，请检查输入：','Not saved; check input: ')+str(exc));return
+            self.status.set(pick(self.language, '距离测试已记录：','Distance test saved: ')+
+                f"{record['measured_mm']:.2f} mm; "+pick(self.language, '偏差 ','error ')+f"{record['signed_error_mm']:+.2f} mm\n{path}")
             window.destroy()
-        ttk.Button(window,text=self.t('保存实验记录','Save experiment'),command=commit).grid(row=8,column=0,padx=12,pady=12)
-        ttk.Button(window,text=self.t('取消','Cancel'),command=window.destroy).grid(row=8,column=1,pady=12)
+        ttk.Button(window,text=pick(self.language, '保存实验记录','Save experiment'),command=commit).grid(row=8,column=0,padx=12,pady=12)
+        ttk.Button(window,text=pick(self.language, '取消','Cancel'),command=window.destroy).grid(row=8,column=1,pady=12)
 
     def open_measurement_records(self) -> None:
         if self.model is None or self.busy:return
         import os
         folder=self.model.reconstruction/'measurement_validation'
         if not folder.exists():
-            self.status.set(self.t('尚无精度测试记录，请先记录两点实测距离或生成报告。','No records yet; record a distance or generate a report.'));return
+            self.status.set(pick(self.language, '尚无精度测试记录，请先记录两点实测距离或生成报告。','No records yet; record a distance or generate a report.'));return
         try:os.startfile(str(folder))
         except OSError as exc:self.status.set(str(exc))
 
@@ -953,13 +953,13 @@ class FixedRGBViewer:
         from femto.annotation.measurement_audit import save_report
         model=self.model;self.operation='measurement_audit'
         def done(folder):
-            window=tk.Toplevel(self.root);window.title(self.t('数据质量与距离测试报告','Data quality and distance test report'))
+            window=tk.Toplevel(self.root);window.title(pick(self.language, '数据质量与距离测试报告','Data quality and distance test report'))
             text=tk.Text(window,width=95,height=28,wrap='word');text.pack(fill='both',expand=True)
             text.insert('1.0',(folder/'报告.md').read_text(encoding='utf-8'));text.configure(state='disabled')
             import os
-            ttk.Button(window,text=self.t('打开报告目录（JSON / CSV）','Open report folder (JSON / CSV)'),
+            ttk.Button(window,text=pick(self.language, '打开报告目录（JSON / CSV）','Open report folder (JSON / CSV)'),
                 command=lambda:os.startfile(str(folder))).pack(pady=8)
-            self.status.set(self.t('报告已保存：','Report saved: ')+str(folder))
+            self.status.set(pick(self.language, '报告已保存：','Report saved: ')+str(folder))
         self.work(lambda:save_report(model),done)
 
     def select_all(self,event: Any=None) -> str:
@@ -980,7 +980,7 @@ class FixedRGBViewer:
             for n in selection:self.items.selection_set(n)
             self.focus=None
             self._syncing_fields=True;self.name.set('');self.note.set('');self._syncing_fields=False
-            self.readout.set(self.t(f'已选 {len(selection)} 项，可批量删除。\n编辑名称备注请单选。',f'{len(selection)} annotations selected. Batch delete available.\nSelect one to edit name/note.'))
+            self.readout.set(pick(self.language, f'已选 {len(selection)} 项，可批量删除。\n编辑名称备注请单选。',f'{len(selection)} annotations selected. Batch delete available.\nSelect one to edit name/note.'))
             self.update_save_state();self.draw();return
         kind,i=self.index[self.items.curselection()[0]]
         if self.focus==(kind,i):return
@@ -995,25 +995,25 @@ class FixedRGBViewer:
         if kind=='point':
             xyz,d=point_readout_mm(item['point_world_m'])
             text='\n'.join(f'{axis}: {value:.1f} mm' for axis,value in zip('XYZ',xyz))
-            text+='\n'+self.t('距初始原点：','Distance to W0: ')+f'{d:.1f} mm'
+            text+='\n'+pick(self.language, '距初始原点：','Distance to W0: ')+f'{d:.1f} mm'
             if len(self.model.store.points)>=2:
                 d2=distance_m(*self.model.store.points[-2:])*1000
-                text+='\n'+self.t('末两点距离：','Last pair: ')+f'{d2:.1f} mm'
+                text+='\n'+pick(self.language, '末两点距离：','Last pair: ')+f'{d2:.1f} mm'
             self.readout.set(text)
         else:
-            text=self.t('区域三角面：','Region triangles: ')+str(len(item['triangle_indices']))
+            text=pick(self.language, '区域三角面：','Region triangles: ')+str(len(item['triangle_indices']))
             from femto.annotation.fixed_rgb_geometry import region_vertex_summary
             summary=region_vertex_summary(self.model.store.mesh,item['triangle_indices'])
-            text+='\n'+self.t('区域顶点点云：','Region mesh vertices: ')+str(summary['vertex_count'])
-            text+='\n'+self.t('顶点距原点范围：','Vertex distance to W0: ')+f"{summary['minimum_distance_mm']:.1f}–{summary['maximum_distance_mm']:.1f} mm"
+            text+='\n'+pick(self.language, '区域顶点点云：','Region mesh vertices: ')+str(summary['vertex_count'])
+            text+='\n'+pick(self.language, '顶点距原点范围：','Vertex distance to W0: ')+f"{summary['minimum_distance_mm']:.1f}–{summary['maximum_distance_mm']:.1f} mm"
             support=item.get('geometry_support')
             if support:
-                text+='\n'+self.t('图像几何支持：','Image geometry support: ')+f"{support['geometry_supported_pixels']} / {support['requested_pixels']} px"
+                text+='\n'+pick(self.language, '图像几何支持：','Image geometry support: ')+f"{support['geometry_supported_pixels']} / {support['requested_pixels']} px"
                 ratio=support.get('support_ratio')
-                text+='\n'+self.t('支持比例：','Supported ratio: ')+(f'{100*ratio:.1f}%' if ratio is not None else self.t('未记录','Not recorded'))
-                text+='\n'+self.t('首帧缺深度处有支持：','Supported where reference depth is missing: ')+str(support['reference_depth_missing_supported_pixels'])+' px'
-                text+='\n'+self.t('图像像素统计，不是曲面面积。','Image pixel counts, not surface area.')
-            else:text+='\n'+self.t('图像几何支持：未记录（旧区域）','Image geometry support: not recorded (legacy region)')
+                text+='\n'+pick(self.language, '支持比例：','Supported ratio: ')+(f'{100*ratio:.1f}%' if ratio is not None else pick(self.language, '未记录','Not recorded'))
+                text+='\n'+pick(self.language, '首帧缺深度处有支持：','Supported where reference depth is missing: ')+str(support['reference_depth_missing_supported_pixels'])+' px'
+                text+='\n'+pick(self.language, '图像像素统计，不是曲面面积。','Image pixel counts, not surface area.')
+            else:text+='\n'+pick(self.language, '图像几何支持：未记录（旧区域）','Image geometry support: not recorded (legacy region)')
             self.readout.set(text+'\nX —  Y —  Z —')
         self.update_save_state();self.draw()
     def edit(self) -> None:
@@ -1021,13 +1021,13 @@ class FixedRGBViewer:
         kind,i=self.focus
         item=self.model.store.update_annotation(kind,i,name=self.name.get().strip(),note=self.note.get().strip())
         self.refresh_items((kind,item['annotation_id']))
-        self.status.set(self.t('名称与备注已应用；请保存标记。','Name and note applied; save the annotations.'))
+        self.status.set(pick(self.language, '名称与备注已应用；请保存标记。','Name and note applied; save the annotations.'))
     def delete(self) -> None:
         if self.model is None or self.busy:return
         selection=self.selected_annotations() or ([self.focus] if self.focus else [])
         if not selection or not self.confirm_pending_edits():return
         self.model.store.delete_annotations(selection);self.refresh_items();self.draw()
-        self.status.set(self.t(f'已删除 {len(selection)} 项，一次撤销可恢复整批；请保存更改。',f'Deleted {len(selection)} annotations. Undo restores the batch; save changes.'))
+        self.status.set(pick(self.language, f'已删除 {len(selection)} 项，一次撤销可恢复整批；请保存更改。',f'Deleted {len(selection)} annotations. Undo restores the batch; save changes.'))
     def undo(self) -> None:
         if self.model is None or self.busy or not self.confirm_pending_edits():return
         if getattr(self,'_brush_history',[]):
@@ -1040,7 +1040,7 @@ class FixedRGBViewer:
             model=self.model;focus=model.store.undo()
             if any(model.display_for('region',item) is None for item in model.store.regions):
                 self.clear_readout();self.operation='restore_display'
-                self.status.set(self.t('正在恢复可见区域高亮…','Restoring visible region highlighting…'))
+                self.status.set(pick(self.language, '正在恢复可见区域高亮…','Restoring visible region highlighting…'))
                 def done(_):self.refresh_items(focus);self.draw()
                 self.work(lambda:model.prepare_display(cancel=self.operation_cancel()),done)
             else:self.refresh_items(focus)
@@ -1125,13 +1125,13 @@ class FixedRGBViewer:
     def plan_region_path(self) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
-            self.status.set(self.t('请单选一个已完成的圈选区域。','Select one completed region.'));return
-        spacing=simpledialog.askinteger(self.t('扫描行间距','Scan row spacing'),
-            self.t('行间距（图像像素，非表面毫米），默认10：','Row spacing in image pixels (not surface mm), default 10:'),
+            self.status.set(pick(self.language, '请单选一个已完成的圈选区域。','Select one completed region.'));return
+        spacing=simpledialog.askinteger(pick(self.language, '扫描行间距','Scan row spacing'),
+            pick(self.language, '行间距（图像像素，非表面毫米），默认10：','Row spacing in image pixels (not surface mm), default 10:'),
             initialvalue=self.parameter_default('raster','row_step_px',10),minvalue=1,maxvalue=500,parent=self.root)
         if spacing is None:return
-        max_step=simpledialog.askfloat(self.t('路径断段阈值','Path split threshold'),
-            self.t('相邻采样点超过多少毫米时断段（不是路径点间距），默认5：',
+        max_step=simpledialog.askfloat(pick(self.language, '路径断段阈值','Path split threshold'),
+            pick(self.language, '相邻采样点超过多少毫米时断段（不是路径点间距），默认5：',
                    'Split when adjacent samples exceed this distance in mm (not sample spacing), default 5:'),
             initialvalue=self.parameter_default('raster','max_step_mm',5.),minvalue=.01,maxvalue=100.,parent=self.root)
         if max_step is None:return
@@ -1158,22 +1158,22 @@ class FixedRGBViewer:
         self.update_save_state();self.draw()
         count=summary['segment_count'];points=summary['sample_count']
         length=summary['total_segment_length_m']*1000
-        self.status.set(self.t(f'路径：{count}段 / {points}点 / 段内折线总长{length:.1f} mm。连续链内含换行连接；断链不跨越，仅预览。',
+        self.status.set(pick(self.language, f'路径：{count}段 / {points}点 / 段内折线总长{length:.1f} mm。连续链内含换行连接；断链不跨越，仅预览。',
             f'Path: {count} segments / {points} samples / {length:.1f} mm chord length. No transitions; preview only.'))
         if plan['schema']=='femto-region-metric-path-v1':
-            self.status.set(self.t(f"网格距离近似间距 {plan['spacing_mm']:g} mm；", 
+            self.status.set(pick(self.language, f"网格距离近似间距 {plan['spacing_mm']:g} mm；",
                 f"Approximate mesh-distance spacing {plan['spacing_mm']:g} mm; ")+self.status.get())
 
     def plan_metric_path(self,after: Any=None) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
-            self.status.set(self.t('请单选一个已完成的圈选区域。','Select one completed region.'));return
-        spacing=simpledialog.askfloat(self.t('曲面路径间距','Surface path spacing'),
-            self.t('路径间距（mm，网格最短距离近似），默认5：','Contour spacing (mm, approximate mesh-edge distance), default 5:'),
+            self.status.set(pick(self.language, '请单选一个已完成的圈选区域。','Select one completed region.'));return
+        spacing=simpledialog.askfloat(pick(self.language, '曲面路径间距','Surface path spacing'),
+            pick(self.language, '路径间距（mm，网格最短距离近似），默认5：','Contour spacing (mm, approximate mesh-edge distance), default 5:'),
             initialvalue=self.parameter_default('metric','spacing_mm',5.),minvalue=.1,maxvalue=100.,parent=self.root)
         if spacing is None:return
-        step=simpledialog.askfloat(self.t('最大采样间距','Maximum sample spacing'),
-            self.t('沿路径最大采样间距（mm），默认1：','Maximum distance between samples along path (mm), default 1:'),
+        step=simpledialog.askfloat(pick(self.language, '最大采样间距','Maximum sample spacing'),
+            pick(self.language, '沿路径最大采样间距（mm），默认1：','Maximum distance between samples along path (mm), default 1:'),
             initialvalue=self.parameter_default('metric','sample_step_mm',1.),minvalue=.1,maxvalue=100.,parent=self.root)
         if step is None:return
         from femto.planning.metric_region_path import metric_path
@@ -1225,7 +1225,7 @@ class FixedRGBViewer:
     def plan_coverage_path(self,after: Any=None) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
-            self.status.set(self.t('请单选一个已完成的圈选区域。','Select one completed region.'));return
+            self.status.set(pick(self.language, '请单选一个已完成的圈选区域。','Select one completed region.'));return
         choice=self.route_preferences()
         if choice is None:return
         direction,start_corner=choice
@@ -1251,8 +1251,8 @@ class FixedRGBViewer:
     def load_region_path(self) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
-            self.status.set(self.t('请单选要回读路径的圈选区域。','Select one region to load its path.'));return
-        path=filedialog.askopenfilename(parent=self.root,title=self.t('回读路径','Load path'),
+            self.status.set(pick(self.language, '请单选要回读路径的圈选区域。','Select one region to load its path.'));return
+        path=filedialog.askopenfilename(parent=self.root,title=pick(self.language, '回读路径','Load path'),
             initialdir=str(self.model.reconstruction/'region_paths'),filetypes=[('Path JSON','*.json')])
         if not path:return
         from femto.planning.region_path import load_path
@@ -1278,7 +1278,7 @@ class FixedRGBViewer:
         self.work(lambda:export_path(plan,model.store,model.reconstruction/'region_paths',region,
             presentation=(model.rgb,model.projection.ids),check=GeometryBudget(self.operation_cancel()).check,
             progress=self.operation_progress,commit=self.operation_commit),
-            lambda folder:self.status.set(self.t('路径已导出：','Path exported: ')+str(folder)))
+            lambda folder:self.status.set(pick(self.language, '路径已导出：','Path exported: ')+str(folder)))
 
     def present_region_path(self) -> None:
         if self.busy:return
@@ -1292,7 +1292,7 @@ class FixedRGBViewer:
 
     def save(self) -> None:
         if self.model is None or self.busy:return
-        if self.has_selection_draft():self.status.set(self.t('请先完成或撤销涂抹。','Finish or undo the polygon first.'));return
+        if self.has_selection_draft():self.status.set(pick(self.language, '请先完成或撤销涂抹。','Finish or undo the polygon first.'));return
         if not self.confirm_pending_edits():return
         model=self.model;store=model.store;folder=model.reconstruction/'annotations'
         focus=None
@@ -1302,14 +1302,14 @@ class FixedRGBViewer:
         def saved(path):
             if self.model is not model:return
             self.refresh_items(focus);self.draw()
-            self.status.set(self.t('已保存：','Saved: ')+str(path))
-        self.operation='save';self.status.set(self.t('正在保存标记与区域…','Saving annotations and regions…'))
+            self.status.set(pick(self.language, '已保存：','Saved: ')+str(path))
+        self.operation='save';self.status.set(pick(self.language, '正在保存标记与区域…','Saving annotations and regions…'))
         self.work(lambda:store.save(folder,check=GeometryBudget(self.operation_cancel()).check),saved)
     def load(self) -> None:
         if self.model is None or self.busy:return
         path=filedialog.askopenfilename(parent=self.root,initialdir=self.model.reconstruction,filetypes=[('Annotations','*.json')])
         if not path:return
-        if not self.confirm_discard(self.t('回读标记','Loading annotations')):return
+        if not self.confirm_discard(pick(self.language, '回读标记','Loading annotations')):return
         model=self.model
         def done(_):
             if self.model is not model:return
@@ -1317,9 +1317,9 @@ class FixedRGBViewer:
             focus=('point',model.store.points[-1]['annotation_id']) if model.store.points else (
                 ('region',model.store.regions[-1]['annotation_id']) if model.store.regions else None)
             self.refresh_items(focus);self.draw()
-            self.status.set(self.t('已回读同模型标记。','Loaded annotations for this model.'))
+            self.status.set(pick(self.language, '已回读同模型标记。','Loaded annotations for this model.'))
         self.operation='load_annotations'
-        self.status.set(self.t('正在核对模型来源并回读；失败时保留当前内容…','Validating model provenance and loading; current work is retained on failure…'))
+        self.status.set(pick(self.language, '正在核对模型来源并回读；失败时保留当前内容…','Validating model provenance and loading; current work is retained on failure…'))
         self.work(lambda:model.load(path,cancel=self.operation_cancel()),done)
     def advanced(self) -> None:
         subprocess.Popen([sys.executable,'-m','femto.viewer.scene_demo_viewer',str(self.result),'--lang',self.language],cwd=REPO_ROOT)
@@ -1328,10 +1328,10 @@ class FixedRGBViewer:
         if not force:
             if self.busy:
                 self.update_save_state()
-                if not messagebox.askokcancel(self.t('任务仍在运行','Task still running'),
-                    self.save_state.get()+'\n\n'+self.t('关闭会取消未完成任务并放弃未保存内容；已开始的独立文件写入将安全退出。继续？',
+                if not messagebox.askokcancel(pick(self.language, '任务仍在运行','Task still running'),
+                    self.save_state.get()+'\n\n'+pick(self.language, '关闭会取消未完成任务并放弃未保存内容；已开始的独立文件写入将安全退出。继续？',
                         'Closing cancels unfinished work and discards unsaved changes. Any current new-file write will exit safely. Continue?'),parent=self.root):return
-            elif not self.confirm_discard(self.t('关闭窗口','Closing the window')):return
+            elif not self.confirm_discard(pick(self.language, '关闭窗口','Closing the window')):return
         if self.root is self.root._root():
             # Managed workspaces share the Tk process. Respect each one's
             # unsaved-work prompt before destroying their application root.

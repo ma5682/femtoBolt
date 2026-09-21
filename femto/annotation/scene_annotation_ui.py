@@ -9,7 +9,7 @@ import numpy as np
 import open3d as o3d
 from open3d.visualization import gui, rendering
 from femto.annotation.scene_annotations import AnnotationStore, distance_m, point_readout_mm, visible_region, region_mesh, region_boundary
-from femto.ui_i18n import tr
+from femto.ui_i18n import pick, tr
 
 
 def wrap_readout(text: Any, columns: int=38) -> Any:
@@ -84,12 +84,9 @@ class AnnotationUI:
         if hasattr(self, 'pick_result_label'):
             self._update_pick_label()
 
-    def _annotation_text(self, zh, en):
-        return zh if self.language == 'zh' else en
-
     def _build_annotations(self):
         self.annotation_name = gui.TextEdit()
-        self.annotation_name.text_value = self._annotation_text('标记 01', 'Marker 01')
+        self.annotation_name.text_value = pick(self.language, '标记 01', 'Marker 01')
         self.annotation_note = gui.TextEdit()
         self.annotation_selection_label = gui.Label('')
         self.panel.add_child(self.annotation_selection_label)
@@ -262,8 +259,8 @@ class AnnotationUI:
         if not hasattr(self, 'annotation_label'):
             return
         points = self.annotations.points
-        text = self._annotation_text('未经过实物尺度验证', 'Not physically scale-validated')
-        text += self._annotation_text(f'\n选点 {len(points)} · 区域 {len(self.annotations.regions)}', f'\nPoints {len(points)} · Regions {len(self.annotations.regions)}')
+        text = pick(self.language, '未经过实物尺度验证', 'Not physically scale-validated')
+        text += pick(self.language, f'\n选点 {len(points)} · 区域 {len(self.annotations.regions)}', f'\nPoints {len(points)} · Regions {len(self.annotations.regions)}')
         selected = self._selected_item()
         if selected:
             kind, _, item = selected
@@ -276,11 +273,11 @@ class AnnotationUI:
                 text += '\n' + self._t('viewer.annotation.legacy_time')
         if len(points) >= 2:
             distance = distance_m(points[-2], points[-1])
-            text += self._annotation_text('\n末两标记之间的直线距离', '\nStraight distance between last two markers')
+            text += pick(self.language, '\n末两标记之间的直线距离', '\nStraight distance between last two markers')
             text += f'\n{distance:.6f} m / {distance*1000:.3f} mm'
-        text += self._annotation_text('\n圈选：依次点击边界，再完成\n按三角面中心选取可见表面', '\nPolygon: click corners, then Finish\nVisible triangle centers define selection')
+        text += pick(self.language, '\n圈选：依次点击边界，再完成\n按三角面中心选取可见表面', '\nPolygon: click corners, then Finish\nVisible triangle centers define selection')
         if self._polygon:
-            text += self._annotation_text(f'\n边界点：{len(self._polygon)}', f'\nCorners: {len(self._polygon)}')
+            text += pick(self.language, f'\n边界点：{len(self._polygon)}', f'\nCorners: {len(self._polygon)}')
         if self._annotation_message:
             text += '\n' + self._annotation_message
         self._annotation_label_raw = text
@@ -328,12 +325,12 @@ class AnnotationUI:
         if self._region_busy:
             return
         if len(self._polygon) < 3 or not self.scene_visible['mesh']:
-            self._annotation_message = self._annotation_text('请显示网格并点击至少三个边界点', 'Show mesh and click at least three corners')
+            self._annotation_message = pick(self.language, '请显示网格并点击至少三个边界点', 'Show mesh and click at least three corners')
             self._update_annotation_label()
             return
         if not self._same_polygon_camera():
             self._polygon = []
-            self._annotation_message = self._annotation_text('视角已变，请重新圈选', 'Camera changed; redraw polygon')
+            self._annotation_message = pick(self.language, '视角已变，请重新圈选', 'Camera changed; redraw polygon')
             self._render_annotations()
             return
         self.clear_surface_pick()
@@ -345,7 +342,7 @@ class AnnotationUI:
         generation = self._pick_generation
         job = self._region_job = object()
         self._region_busy = True
-        self._annotation_message = self._annotation_text('正在提取可见区域…', 'Extracting visible region…')
+        self._annotation_message = pick(self.language, '正在提取可见区域…', 'Extracting visible region…')
         self._update_annotation_label()
         def worker():
             ids, error = [], None
@@ -361,7 +358,7 @@ class AnnotationUI:
                 self._region_job = None
                 if (generation != self._pick_generation or self.mesh is not mesh or self.annotations is not annotations
                         or not self._same_polygon_camera(camera_state) or not self.scene_visible['mesh']):
-                    self._annotation_message = self._annotation_text('操作已改变，区域结果已取消', 'Selection changed; region discarded')
+                    self._annotation_message = pick(self.language, '操作已改变，区域结果已取消', 'Selection changed; region discarded')
                     self._update_annotation_label()
                     return
                 if ids and not error:
@@ -374,7 +371,7 @@ class AnnotationUI:
                         self._select_region(len(self.annotations.regions) - 1)
                     except (ValueError, TypeError, KeyError) as exc:
                         error = str(exc)
-                self._annotation_message = error or self._annotation_text(f'选中 {len(ids)} 个三角面', f'Selected {len(ids)} triangles')
+                self._annotation_message = error or pick(self.language, f'选中 {len(ids)} 个三角面', f'Selected {len(ids)} triangles')
                 self._render_annotations()
             if not self._closing:
                 gui.Application.instance.post_to_main_thread(self.window, finish)
@@ -464,7 +461,7 @@ class AnnotationUI:
     def _save_annotations(self):
         selected = self._selected_item()
         if self._pick_busy or self._region_busy or self._polygon:
-            self._annotation_message = self._annotation_text('请先完成选点／圈选', 'Finish picking / polygon first')
+            self._annotation_message = pick(self.language, '请先完成选点／圈选', 'Finish picking / polygon first')
         elif selected and (self.annotation_name.text_value.strip() != selected[2].get('name', '')
                            or self.annotation_note.text_value.strip() != selected[2].get('note', '')):
             self._annotation_message = self._t('viewer.annotation.apply_first')
@@ -473,13 +470,13 @@ class AnnotationUI:
                 focus = self._selection_focus()
                 path = self.annotations.save(self.reconstruction / 'annotations')
                 self._focus_annotation(focus)
-                self._annotation_message = self._annotation_text('已保存：', 'Saved: ') + path.parent.name
+                self._annotation_message = pick(self.language, '已保存：', 'Saved: ') + path.parent.name
             except Exception as exc:
-                self._annotation_message = self._annotation_text('保存失败：', 'Save failed: ') + str(exc)
+                self._annotation_message = pick(self.language, '保存失败：', 'Save failed: ') + str(exc)
         self._update_annotation_label()
 
     def _load_annotations_dialog(self):
-        dialog = gui.FileDialog(gui.FileDialog.OPEN, self._annotation_text('回读标注', 'Load annotations'), self.window.theme)
+        dialog = gui.FileDialog(gui.FileDialog.OPEN, pick(self.language, '回读标注', 'Load annotations'), self.window.theme)
         dialog.add_filter('.json', 'annotations.json')
         dialog.set_path(str(self.reconstruction))
         dialog.set_on_cancel(self.window.close_dialog)
@@ -499,10 +496,10 @@ class AnnotationUI:
                 self._select_annotation(len(self.annotations.points) - 1)
             elif self.annotations.regions:
                 self._select_region(len(self.annotations.regions) - 1)
-            self._annotation_message = self._annotation_text('已回读，模型和参考系匹配', 'Loaded; model and reference match')
+            self._annotation_message = pick(self.language, '已回读，模型和参考系匹配', 'Loaded; model and reference match')
             success = True
         except Exception as exc:
-            self._annotation_message = self._annotation_text('回读失败：', 'Load failed: ') + str(exc)
+            self._annotation_message = pick(self.language, '回读失败：', 'Load failed: ') + str(exc)
             success = False
         self._render_annotations()
         self._update_pick_label()

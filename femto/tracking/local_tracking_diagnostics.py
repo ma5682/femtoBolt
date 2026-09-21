@@ -7,6 +7,8 @@ from collections import Counter
 import cv2
 import numpy as np
 
+from femto.ui_i18n import pick
+
 
 def distribution(values: Any) -> dict[str, Any]:
     values = np.asarray([v for v in values if isinstance(v, (float, int)) and np.isfinite(v)], float)
@@ -99,14 +101,15 @@ def quality_text(record: Any, language: str='zh') -> Any:
     depth, sharpness = quality.get('valid_depth_fraction'), quality.get('sharpness')
     if depth is None or sharpness is None:
         return ''
-    zh = language == 'zh'
-    state = ('深度不足' if zh else 'insufficient depth') if depth < .20 else (
-            ('深度覆盖偏低' if zh else 'low depth coverage') if depth < .35 else ('深度可用' if zh else 'depth available'))
+    state = (pick(language, '深度不足', 'insufficient depth') if depth < .20 else
+             pick(language, '深度覆盖偏低', 'low depth coverage') if depth < .35 else
+             pick(language, '深度可用', 'depth available'))
     texture = (record or {}).get('image_diagnostics', {})
-    text = (f'有效深度 {depth:.1%} · 清晰度 {sharpness:.1f} · {state}' if zh else
-            f'Valid depth {depth:.1%} · sharpness {sharpness:.1f} · {state}')
+    text = pick(language,
+                f'有效深度 {depth:.1%} · 清晰度 {sharpness:.1f} · {state}',
+                f'Valid depth {depth:.1%} · sharpness {sharpness:.1f} · {state}')
     if texture.get('weak_texture_suspected'):
-        text += ' · 纹理支持偏少' if zh else ' · sparse texture support'
+        text += pick(language, ' · 纹理支持偏少', ' · sparse texture support')
     return text
 
 
@@ -125,8 +128,9 @@ def current_feedback(record: Any, accepted: Any, now: float, active: bool=True) 
 
 
 def feedback_text(record: Any,accepted: Any,now: float,active: bool=True,language: str='zh') -> Any:
-    d=current_feedback(record,accepted,now,active);zh=language=='zh'
-    stamp=d['updated_at'] or ('未记录' if zh else 'unrecorded')
-    reason=d['current_reason'] or ('无' if zh else 'none')
-    return (f"接纳 {accepted} 帧 · 当前接纳/拒绝原因：{reason}\n状态更新 {stamp}" if zh else
-            f"Accepted {accepted} frames · current admission reason: {reason}\nUpdated {stamp}")
+    d=current_feedback(record,accepted,now,active)
+    stamp=d['updated_at'] or pick(language, '未记录', 'unrecorded')
+    reason=d['current_reason'] or pick(language, '无', 'none')
+    return pick(language,
+                f"接纳 {accepted} 帧 · 当前接纳/拒绝原因：{reason}\n状态更新 {stamp}",
+                f"Accepted {accepted} frames · current admission reason: {reason}\nUpdated {stamp}")

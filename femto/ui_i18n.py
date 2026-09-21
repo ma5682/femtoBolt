@@ -547,5 +547,10 @@ def tr(language: str, key: str, **values: Any) -> str:
     return template.format(**values) if values else template
 
 
+def pick(language: str, zh: str, en: str) -> str:
+    """Select an inline bilingual UI string without altering its content."""
+    return zh if language == "zh" else en
+
+
 def localized_mapping(language: str, prefix: str, keys: tuple[str, ...]) -> dict[str, str]:
     return {key: tr(language, f"{prefix}.{key}") for key in keys}

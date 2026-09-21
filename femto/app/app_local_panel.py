@@ -17,6 +17,8 @@ from tkinter import ttk
 import numpy as np
 from PIL import Image, ImageDraw, ImageTk
 
+from femto.ui_i18n import pick
+
 
 TEXT = {
  'relocalizing': ('正在尝试重定位 · 剩余 {seconds:.1f} 秒；保持在已接纳区域附近。当前坐标未知，不接纳补采。','Relocalizing · {seconds:.1f} s remaining. Stay near accepted views. No current pose or admission.'),
@@ -239,7 +241,8 @@ class LocalPanel:
         self.refresh(); self.tick()
 
     def text(self,key: str,**values: Any) -> Any:
-        return TEXT.get(key,(key,key))[0 if self.app.language=='zh' else 1].format(**values)
+        zh, en = TEXT.get(key, (key, key))
+        return pick(self.app.language, zh, en).format(**values)
 
     def button(self,parent: Any,key: str,command: Any) -> Any:
         b=tk.Button(parent,command=command,bg='#1e4559' if key in ('start','finish','view') else '#233444',fg='#edf5fa',activebackground='#285870',activeforeground='white',relief='flat',padx=10,pady=6)

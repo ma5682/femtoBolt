@@ -13,6 +13,7 @@ from tkinter import ttk
 import uuid
 
 from femto.io_utils import load_json_object
+from femto.ui_i18n import pick
 
 
 def comparison_source(result_or_dataset: str | Path) -> Any:
@@ -53,21 +54,19 @@ def comparison_source(result_or_dataset: str | Path) -> Any:
 
 
 def progress_text(report: Any, language: str='zh') -> Any:
-    zh = language == 'zh'
-    choose = lambda a, b: a if zh else b
-    labels = {'running': choose('执行中', 'Running'), 'complete': choose('已完成', 'Complete'),
-              'failed': choose('失败', 'Failed'), 'cancelled': choose('已取消', 'Cancelled'),
-              'adopted': choose('已采用', 'Adopted'), 'not_adopted': choose('未采用', 'Not adopted'),
-              'baseline': choose('原始基线', 'Original baseline')}
-    lines = [choose('对照状态：', 'Comparison state: ') + labels.get(report.get('state'), str(report.get('state', '—')))]
+    labels = {'running': pick(language, '执行中', 'Running'), 'complete': pick(language, '已完成', 'Complete'),
+              'failed': pick(language, '失败', 'Failed'), 'cancelled': pick(language, '已取消', 'Cancelled'),
+              'adopted': pick(language, '已采用', 'Adopted'), 'not_adopted': pick(language, '未采用', 'Not adopted'),
+              'baseline': pick(language, '原始基线', 'Original baseline')}
+    lines = [pick(language, '对照状态：', 'Comparison state: ') + labels.get(report.get('state'), str(report.get('state', '—')))]
     if report.get('session_id'):
-        lines.append(choose('会话：', 'Session: ') + report['session_id'])
+        lines.append(pick(language, '会话：', 'Session: ') + report['session_id'])
     if report.get('source_frame_count') is not None:
-        lines.append(choose('原始帧 / 接纳视角：', 'Source frames / accepted views: ') +
+        lines.append(pick(language, '原始帧 / 接纳视角：', 'Source frames / accepted views: ') +
                      f"{report['source_frame_count']} / {len(report.get('accepted_frame_ids', []))}")
-    operations = {'validate': choose('来源与门禁检查', 'Source and gate checks'),
-                  'refine': choose('精配准', 'Refinement'), 'temporal': choose('五帧二值筛选', 'Five-frame binary filter'),
-                  'reconstruct': choose('几何重建与固定视图', 'Reconstruction and fixed projection')}
+    operations = {'validate': pick(language, '来源与门禁检查', 'Source and gate checks'),
+                  'refine': pick(language, '精配准', 'Refinement'), 'temporal': pick(language, '五帧二值筛选', 'Five-frame binary filter'),
+                  'reconstruct': pick(language, '几何重建与固定视图', 'Reconstruction and fixed projection')}
     for stage in report.get('stages', []):
         label = operations.get(stage.get('operation'), stage.get('operation', '—'))
         line = f"{stage.get('name', '')}: {label} — {labels.get(stage.get('state'), stage.get('state', '—'))}"
@@ -78,15 +77,15 @@ def progress_text(report: Any, language: str='zh') -> Any:
         status = variant.get('optimization', {}).get('status')
         line = variant['name'] + ': ' + labels.get(status, str(status))
         if variant.get('same_as'):
-            line += choose('；几何与 ', '; geometry identical to ') + variant['same_as']
+            line += pick(language, '；几何与 ', '; geometry identical to ') + variant['same_as']
         lines.append(line)
     if report.get('error'):
-        lines.append(choose('原因：', 'Reason: ') + str(report['error']))
+        lines.append(pick(language, '原因：', 'Reason: ') + str(report['error']))
     if report.get('state') != 'running':
-        for key, title in [('source_unchanged', choose('原始文件哈希保持', 'Source hashes unchanged')),
-                           ('latest_unchanged', choose('业务最新索引保持', 'Business latest unchanged'))]:
+        for key, title in [('source_unchanged', pick(language, '原始文件哈希保持', 'Source hashes unchanged')),
+                           ('latest_unchanged', pick(language, '业务最新索引保持', 'Business latest unchanged'))]:
             value = report.get(key)
-            lines.append(title + ': ' + (choose('未记录', 'Not recorded') if value is None else str(value)))
+            lines.append(title + ': ' + (pick(language, '未记录', 'Not recorded') if value is None else str(value)))
     return '\n'.join(lines)
 
 
@@ -94,7 +93,7 @@ class ComparisonWindow:
     def __init__(self, parent, result_or_dataset, outputs, language='zh'):
         self.language, self.source_input, self.outputs = language, Path(result_or_dataset), Path(outputs)
         self.window = tk.Toplevel(parent)
-        self.window.title(self.t('Femto 同源 A/B/C 对照', 'Femto same-source A/B/C comparison'))
+        self.window.title(pick(self.language, 'Femto 同源 A/B/C 对照', 'Femto same-source A/B/C comparison'))
         self.window.geometry('900x590')
         self.window.minsize(600, 400)
         self.closed, self.running, self.generation = False, False, 0
@@ -102,21 +101,21 @@ class ComparisonWindow:
         self.mailbox = queue.Queue(maxsize=1)
         self.result = None
         self.report = None
-        header = ttk.Label(self.window, text=self.t(
+        header = ttk.Label(self.window, text=pick(self.language,
             '同一原始 RGB-D：A 在线位姿；B 通过门禁的精配准；C 精配准与五帧二值筛选。\n'
             'W0、帧来源、观察视角和尺度固定。未采用时明确复用前一版本，原模型与最新结果索引保留。',
             'Same raw RGB-D: A online poses; B accepted refinement; C refinement with five-frame binary filtering.\n'
             'Fixed W0, source frames, projection and scale. Rejected stages reuse prior geometry; existing models and latest indices stay intact.'),
             wraplength=850, justify='left', padding=12)
         header.pack(fill='x')
-        budget_label=ttk.Label(self.window, text=self.t(
+        budget_label=ttk.Label(self.window, text=pick(self.language,
             '每阶段上限 300 秒 / 3072 MiB 任务组提交内存；最多 20 个接纳视角。可取消，不读取相机。\n'
             '内部一致性不是实物误差，点数增长不是补洞覆盖率。',
             'Per-stage budget: 300 s / 3072 MiB job committed memory; at most 20 accepted views. Cancellable; no camera access.\n'
             'Internal consistency is not physical error; point growth is not hole-fill coverage.'),
             wraplength=850, justify='left', padding=(12, 0, 12, 10))
         budget_label.pack(fill='x')
-        self.status = tk.StringVar(value=self.t('准备执行；详细进度来自实际任务状态。', 'Ready; progress comes from actual task states.'))
+        self.status = tk.StringVar(value=pick(self.language, '准备执行；详细进度来自实际任务状态。', 'Ready; progress comes from actual task states.'))
         status_label=ttk.Label(self.window, textvariable=self.status, padding=12, wraplength=850)
         status_label.pack(fill='x')
         body = ttk.Frame(self.window, padding=(12, 0, 12, 8))
@@ -135,7 +134,7 @@ class ComparisonWindow:
             ('cancel', '取消任务', 'Cancel task', self.cancel),
             ('report', '打开对照报告', 'Open comparison', self.open_report),
             ('folder', '打开结果目录', 'Open output folder', self.open_folder)]):
-            button = ttk.Button(actions, text=self.t(zh, en), command=command)
+            button = ttk.Button(actions, text=pick(self.language, zh, en), command=command)
             button.grid(row=index // 2, column=index % 2, sticky='ew', padx=3, pady=3)
             actions.columnconfigure(index % 2, weight=1)
             self.buttons[key] = button
@@ -148,9 +147,6 @@ class ComparisonWindow:
         self.window.bind('<Configure>', resize)
         self.window.bind('<Destroy>', self._destroyed)
         self.timer = self.window.after(100, self.poll)
-
-    def t(self, zh: str, en: str) -> str:
-        return zh if self.language == 'zh' else en
 
     def _text(self, value):
         self.details.configure(state='normal')
@@ -182,7 +178,7 @@ class ComparisonWindow:
         self.result = self.outputs / 'local_comparisons' / ('comparison_' + time.strftime('%Y%m%d_%H%M%S_') + uuid.uuid4().hex[:8])
         result = self.result
         source_input = self.source_input
-        self.status.set(self.t('正在核对原始位姿来源…', 'Checking original pose ancestry…'))
+        self.status.set(pick(self.language, '正在核对原始位姿来源…', 'Checking original pose ancestry…'))
         self._buttons()
         def worker():
             try:
@@ -200,7 +196,7 @@ class ComparisonWindow:
     def cancel(self) -> None:
         if self.running:
             self.cancel_event.set()
-            self.status.set(self.t('正在取消本次对照；等待任务确认终止。', 'Cancelling this comparison; waiting for task termination.'))
+            self.status.set(pick(self.language, '正在取消本次对照；等待任务确认终止。', 'Cancelling this comparison; waiting for task termination.'))
             self._buttons()
 
     def poll(self) -> None:
@@ -219,7 +215,7 @@ class ComparisonWindow:
                 self.running = not terminal
                 self._text(progress_text(report, self.language))
                 if not self.running:
-                    self.status.set(self.t('任务已结束；结果与未采用原因见下方及详细报告。', 'Task ended; see results and rejection reasons below and in the report.'))
+                    self.status.set(pick(self.language, '任务已结束；结果与未采用原因见下方及详细报告。', 'Task ended; see results and rejection reasons below and in the report.'))
                 self._buttons()
         self.timer = self.window.after(100, self.poll)
 
@@ -228,7 +224,7 @@ class ComparisonWindow:
         if path and path.is_file():
             os.startfile(path)
         else:
-            self.status.set(self.t('对照报告尚未生成或文件缺失。', 'Comparison report is not generated or is missing.'))
+            self.status.set(pick(self.language, '对照报告尚未生成或文件缺失。', 'Comparison report is not generated or is missing.'))
 
     def open_folder(self) -> None:
         if self.result and self.result.is_dir():

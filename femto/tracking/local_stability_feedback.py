@@ -8,6 +8,7 @@ import numpy as np
 from femto.dataset.scene_dataset_validator import validate_pose
 from femto.tracking.local_stability import (WINDOW_FRAMES, MAX_SPAN_US, MAX_ADJACENT_GAP_US, MAX_RGBD_SYNC_US,
                              frame_still, window_valid, find_window, adjacent)
+from femto.ui_i18n import pick
 
 TARGET = WINDOW_FRAMES
 OBSERVATION_SECONDS = MAX_SPAN_US / 1e6
@@ -178,7 +179,6 @@ class CandidateStability:
 
 
 def format_stability(value: Any, language: str='zh') -> Any:
-    zh = language == 'zh'
     state = value.get('state', 'idle')
     explanations = {
         'idle': ('请求补采后显示候选帧准备情况。', 'Request a view to see candidate preparation.'),
@@ -194,11 +194,11 @@ def format_stability(value: Any, language: str='zh') -> Any:
         'ended': ('采集结束，完整审核在后台执行。', 'Capture ended; full audit runs in the background.'),
         'duplicate': ('视角重复，未增加关键帧。', 'Duplicate view; no keyframe added.'),
     }
-    description = explanations.get(state, (state, state))[0 if zh else 1]
-    heading = '候选稳定帧（仅位姿）' if zh else 'Candidate stable frames (Pose only)'
+    description = pick(language, *explanations.get(state, (state, state)))
+    heading = pick(language, '候选稳定帧（仅位姿）', 'Candidate stable frames (Pose only)')
     text = f"{heading}: {value.get('count', 0)}/{value.get('target', TARGET)}"
     if value.get('accepted_frame_id') is not None:
-        text += (' · 对应接纳帧 ' if zh else ' · accepted frame ') + str(value['accepted_frame_id'])
+        text += pick(language, ' · 对应接纳帧 ', ' · accepted frame ') + str(value['accepted_frame_id'])
     fps = value.get('observed_pose_fps')
     if fps is not None:
         text += f" · {value['span_s']:.2f}s / {fps:.2f} Pose FPS"
@@ -215,23 +215,35 @@ def format_stability(value: Any, language: str='zh') -> Any:
             'session_mismatch': ('会话不匹配', 'Session mismatch'),
             'reference_mismatch': ('参考帧不匹配', 'Reference mismatch'),
         }
-        description += ' ' + reasons.get(value['reason'], (value['reason'], value['reason']))[0 if zh else 1]
-        description += ('（本帧触发）' if value.get('reason_triggered_this_frame') else '（沿用上次结论）') if zh else (
-            ' (triggered this frame)' if value.get('reason_triggered_this_frame') else ' (carried from prior frame)')
+        description += ' ' + pick(language, *reasons.get(value['reason'], (value['reason'], value['reason'])))
+        description += pick(
+            language,
+            '（本帧触发）' if value.get('reason_triggered_this_frame') else '（沿用上次结论）',
+            ' (triggered this frame)' if value.get('reason_triggered_this_frame') else ' (carried from prior frame)',
+        )
         if value.get('deviation'):
             deviation=value['deviation']
-            description += (f" · 偏离 {deviation.get('translation_mm',0):.2f} mm / {deviation.get('rotation_deg',0):.3f}°"
-                            if zh else f" · deviation {deviation.get('translation_mm',0):.2f} mm / {deviation.get('rotation_deg',0):.3f}°")
+            description += pick(
+                language,
+                f" · 偏离 {deviation.get('translation_mm',0):.2f} mm / {deviation.get('rotation_deg',0):.3f}°",
+                f" · deviation {deviation.get('translation_mm',0):.2f} mm / {deviation.get('rotation_deg',0):.3f}°",
+            )
         jitter=value.get('adjacent_pose_delta_median_mm')
         jitter_deg=value.get('adjacent_pose_delta_median_deg')
         if jitter is not None and jitter_deg is not None:
-            description += (f" · 会话相邻位姿变化中位 {jitter:.2f} mm / {jitter_deg:.3f}°"
-                            if zh else f" · session median adjacent Pose delta {jitter:.2f} mm / {jitter_deg:.3f}°")
+            description += pick(
+                language,
+                f" · 会话相邻位姿变化中位 {jitter:.2f} mm / {jitter_deg:.3f}°",
+                f" · session median adjacent Pose delta {jitter:.2f} mm / {jitter_deg:.3f}°",
+            )
     episode = value.get('last_episode') or {}
     if value.get('count', 0) < value.get('peak_count', 0):
-        description += (f" 本次最高 {value['peak_count']}/5。" if zh else f" Peak {value['peak_count']}/5.")
+        description += pick(language, f" 本次最高 {value['peak_count']}/5。", f" Peak {value['peak_count']}/5.")
     deviation = value.get('deviation') or episode.get('deviation')
     if deviation:
-        description += (f" 偏离 {deviation['translation_mm']:.2f} mm / {deviation['rotation_deg']:.2f}°。" if zh else
-                        f" Deviation {deviation['translation_mm']:.2f} mm / {deviation['rotation_deg']:.2f} deg.")
-    return text + '\n' + description + (' 不是降噪通过。' if zh else ' This is not a denoising approval.')
+        description += pick(
+            language,
+            f" 偏离 {deviation['translation_mm']:.2f} mm / {deviation['rotation_deg']:.2f}°。",
+            f" Deviation {deviation['translation_mm']:.2f} mm / {deviation['rotation_deg']:.2f} deg.",
+        )
+    return text + '\n' + description + pick(language, ' 不是降噪通过。', ' This is not a denoising approval.')

@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import ttk,messagebox
 from femto.pipeline.local_history import scan_history,existing_actions,set_records_deleted
 from femto.local.local_processing import format_quality,empty_report
+from femto.ui_i18n import pick
 
 # These secondary tools are temporarily kept out of the history UI.  Their
 # implementation and recorded evidence stay intact so the entries can be
@@ -27,21 +28,21 @@ class LocalHistoryWindow:
         self.closed=False;self.rows=[];self.mailbox=queue.Queue(maxsize=1);self.loading=False
         self.generation=0;self.cancel=threading.Event();self.selected_key=None
         self.deleted_stack=[]
-        self.window=tk.Toplevel(parent);self.window.title(self.t('局部采集历史记录','Local capture history'))
+        self.window=tk.Toplevel(parent);self.window.title(pick(self.language, '局部采集历史记录','Local capture history'))
         self.window.geometry('960x620');self.window.minsize(760,520)
         self.window.protocol('WM_DELETE_WINDOW',self.close)
         top=ttk.Frame(self.window,padding=12);top.pack(fill='x')
-        self.refresh_button=ttk.Button(top,text=self.t('刷新历史记录','Refresh'),command=self.refresh);self.refresh_button.pack(side='right')
-        self.undo_delete_button=ttk.Button(top,text=self.t('撤销删除','Undo delete'),command=self.undo_delete,state='disabled')
+        self.refresh_button=ttk.Button(top,text=pick(self.language, '刷新历史记录','Refresh'),command=self.refresh);self.refresh_button.pack(side='right')
+        self.undo_delete_button=ttk.Button(top,text=pick(self.language, '撤销删除','Undo delete'),command=self.undo_delete,state='disabled')
         self.undo_delete_button.pack(side='right',padx=6)
-        ttk.Label(top,text=self.t('先选中一条或多条记录，再执行查看或删除；历史浏览不会改变当前采集的原点或最近结果。',
+        ttk.Label(top,text=pick(self.language, '先选中一条或多条记录，再执行查看或删除；历史浏览不会改变当前采集的原点或最近结果。',
                                  'Select one or more records before viewing or deleting; browsing history does not change the current origin or latest result.')).pack(side='left')
         table=ttk.Frame(self.window,padding=(12,0));table.pack(fill='both',expand=True)
         # Six requested rows leave room for both action rows at 760 x 520;
         # the table still expands to fill taller windows and keeps its scrollbar.
         self.tree=ttk.Treeview(table,columns=('time','state','count','name'),show='headings',selectmode='extended',height=6)
         for key,zh,en,width in [('time','时间','Time',150),('state','状态','Status',140),('count','接纳帧','Views',65),('name','记录目录','Record',420)]:
-            self.tree.heading(key,text=self.t(zh,en));self.tree.column(key,width=width,minwidth=50,stretch=key=='name')
+            self.tree.heading(key,text=pick(self.language, zh,en));self.tree.column(key,width=width,minwidth=50,stretch=key=='name')
         scroll=ttk.Scrollbar(table,orient='vertical',command=self.tree.yview);scroll.pack(side='right',fill='y')
         self.tree.configure(yscrollcommand=scroll.set);self.tree.pack(fill='both',expand=True)
         self.tree.bind('<<TreeviewSelect>>',lambda e:self.selected())
@@ -62,12 +63,11 @@ class LocalHistoryWindow:
         columns=2
         for column in range(columns):actions.columnconfigure(column,weight=1)
         for n,(key,zh,en) in enumerate(visible_actions):
-            b=ttk.Button(actions,text=self.t(zh,en),command=lambda k=key:self.open(k),state='disabled')
+            b=ttk.Button(actions,text=pick(self.language, zh,en),command=lambda k=key:self.open(k),state='disabled')
             b.grid(row=n//columns,column=n%columns,sticky='ew',padx=4,pady=3);self.buttons[key]=b
         ttk.Label(self.window,textvariable=self.status,padding=(12,0,12,12),wraplength=880).pack(fill='x')
         self.refresh();self.timer=self.window.after(100,self.poll)
 
-    def t(self,zh: str,en: str) -> str:return zh if self.language=='zh' else en
     def resize(self,event: Any) -> None:
         if event.widget is self.window:
             for w in self.window.winfo_children():
@@ -80,7 +80,7 @@ class LocalHistoryWindow:
         self.cancel=threading.Event();cancel=self.cancel
         self.loading=True;self.refresh_button.configure(state='disabled')
         self.buttons['delete'].configure(state='disabled');self.undo_delete_button.configure(state='disabled')
-        self.status.set(self.t('正在读取历史记录…','Loading history…'))
+        self.status.set(pick(self.language, '正在读取历史记录…','Loading history…'))
         def worker():
             try:rows,error=scan_history(self.datasets,self.outputs,cancel=cancel),None
             except Exception as exc:rows,error=[],str(exc)
@@ -98,16 +98,16 @@ class LocalHistoryWindow:
             self.undo_delete_button.configure(state='normal' if self.deleted_stack else 'disabled')
             if error:
                 self.selected()
-                self.status.set(self.t('读取失败，保留当前列表：','Read failed; current list retained: ')+error)
+                self.status.set(pick(self.language, '读取失败，保留当前列表：','Read failed; current list retained: ')+error)
                 self.timer=self.window.after(100,self.poll);return
             self.rows=rows;self.tree.delete(*self.tree.get_children());self.details.set('')
-            states={'model':self.t('模型已生成','Model ready'),'failed':self.t('失败 / 未生成模型','Failed / no model'),
-                    'lost':self.t('跟踪丢失','Tracking lost'),'recorded':self.t('原始记录 / 无模型','Raw record / no model'),
-                    'incomplete':self.t('文件缺失或损坏','Missing / invalid files'),
-                    'unpublished':self.t('结果未发布','Unpublished result')}
+            states={'model':pick(self.language, '模型已生成','Model ready'),'failed':pick(self.language, '失败 / 未生成模型','Failed / no model'),
+                    'lost':pick(self.language, '跟踪丢失','Tracking lost'),'recorded':pick(self.language, '原始记录 / 无模型','Raw record / no model'),
+                    'incomplete':pick(self.language, '文件缺失或损坏','Missing / invalid files'),
+                    'unpublished':pick(self.language, '结果未发布','Unpublished result')}
             for i,row in enumerate(rows):
                 self.tree.insert('', 'end', iid=str(i),values=(datetime.fromtimestamp(row['time']).strftime('%Y-%m-%d %H:%M:%S'),states[row['state']],row['count'] if row['count'] is not None else '—',row['name']))
-            self.status.set(error or self.t(f'找到 {len(rows)} 条记录。',f'{len(rows)} records found.'))
+            self.status.set(error or pick(self.language, f'找到 {len(rows)} 条记录。',f'{len(rows)} records found.'))
             if rows:
                 selected=next((i for i,row in enumerate(rows) if row['key']==self.selected_key),0)
                 self.tree.selection_set(str(selected));self.tree.see(str(selected))
@@ -138,38 +138,38 @@ class LocalHistoryWindow:
             self.selected_key=row['key']
             text=''
             if len(selected_rows)>1:
-                text+=self.t(f'已选中 {len(selected_rows)} 条记录；查看按钮作用于第一条选中记录。\n',
+                text+=pick(self.language, f'已选中 {len(selected_rows)} 条记录；查看按钮作用于第一条选中记录。\n',
                               f'{len(selected_rows)} records selected; view buttons use the first selected record.\n')
-            text+=self.t('模型：','Model: ')+(row['result'] or '—')+'\n'+self.t('原始会话：','Raw session: ')+(row['source'] or '—')
+            text+=pick(self.language, '模型：','Model: ')+(row['result'] or '—')+'\n'+pick(self.language, '原始会话：','Raw session: ')+(row['source'] or '—')
             if not enabled.get('fixed') and row['mesh']:
                 reasons={
-                    'origin_unverified':self.t('初始原点来源未通过核对。','Initial-origin provenance could not be verified.'),
-                    'invalid_calibration':self.t('参考标定无效。','Reference calibration is invalid.'),
-                    'source_budget':self.t('来源超出历史预检预算。','Source exceeds the history preflight budget.'),
-                    'unpublished_result':self.t('该任务未发布为成功结果（处理中、已取消、失败或缺少发布证明）。',
+                    'origin_unverified':pick(self.language, '初始原点来源未通过核对。','Initial-origin provenance could not be verified.'),
+                    'invalid_calibration':pick(self.language, '参考标定无效。','Reference calibration is invalid.'),
+                    'source_budget':pick(self.language, '来源超出历史预检预算。','Source exceeds the history preflight budget.'),
+                    'unpublished_result':pick(self.language, '该任务未发布为成功结果（处理中、已取消、失败或缺少发布证明）。',
                                                'This task was not published as a successful result (pending, cancelled, failed, or missing publication evidence).'),
                 }
                 publication_reasons={
-                    'pending':self.t('该任务仍在处理或等待发布，不是已发布成功结果。','This task is processing or awaiting publication; it is not a published result.'),
-                    'cancelled':self.t('该任务已取消，没有发布成功结果。','This task was cancelled and did not publish a successful result.'),
-                    'failed':self.t('该任务失败，没有发布成功结果。','This task failed and did not publish a successful result.'),
-                    'missing':self.t('新结果缺少必需的发布证明。','The required publication receipt is missing.'),
-                    'invalid':self.t('发布证明与模型或会话不匹配。','The publication receipt does not match this model or session.'),
+                    'pending':pick(self.language, '该任务仍在处理或等待发布，不是已发布成功结果。','This task is processing or awaiting publication; it is not a published result.'),
+                    'cancelled':pick(self.language, '该任务已取消，没有发布成功结果。','This task was cancelled and did not publish a successful result.'),
+                    'failed':pick(self.language, '该任务失败，没有发布成功结果。','This task failed and did not publish a successful result.'),
+                    'missing':pick(self.language, '新结果缺少必需的发布证明。','The required publication receipt is missing.'),
+                    'invalid':pick(self.language, '发布证明与模型或会话不匹配。','The publication receipt does not match this model or session.'),
                 }
                 if row.get('fixed_reason')=='unpublished_result':
                     reasons['unpublished_result']=publication_reasons.get(row.get('publication_status'),reasons['unpublished_result'])
-                text+='\n'+reasons.get(row.get('fixed_reason'),self.t('参考 RGB 或来源文件缺失/已变化。','Reference RGB/source files are missing or changed.'))
-                text+=' '+self.t('可使用高级三维查看。','Advanced 3D inspection remains available.')
+                text+='\n'+reasons.get(row.get('fixed_reason'),pick(self.language, '参考 RGB 或来源文件缺失/已变化。','Reference RGB/source files are missing or changed.'))
+                text+=' '+pick(self.language, '可使用高级三维查看。','Advanced 3D inspection remains available.')
             if row['error']:text+='\n'+str(row['error'])
             self.details.set(text)
         else:
             self.details.set('')
-            if not self.loading:self.status.set(self.t('请先选中一条或多条历史记录。','Select one or more history records first.'))
+            if not self.loading:self.status.set(pick(self.language, '请先选中一条或多条历史记录。','Select one or more history records first.'))
     def open(self,key: str) -> None:
         if key=='delete':self.delete_record();return
         row=self.current()
         if not row or not existing_actions(row).get(key):
-            self.selected();self.status.set(self.t('所需文件不可用，请刷新历史记录。','Required files are unavailable; refresh history.'));return
+            self.selected();self.status.set(pick(self.language, '所需文件不可用，请刷新历史记录。','Required files are unavailable; refresh history.'));return
         try:
             if key=='compare':
                 from femto.app.app_local_comparison import ComparisonWindow
@@ -179,7 +179,7 @@ class LocalHistoryWindow:
                 subprocess.Popen([sys.executable,'-m',module,str(Path(row['result'])/'reconstruction'),'--lang',self.language],cwd=REPO_ROOT)
             else:os.startfile(row['report'] if key=='report' else row['result'] or row['source'])
         except (OSError,ValueError,RuntimeError,ImportError) as exc:
-            self.status.set(self.t('无法打开：','Could not open: ')+str(exc));self.selected()
+            self.status.set(pick(self.language, '无法打开：','Could not open: ')+str(exc));self.selected()
     def delete_key(self,event: Any=None) -> str:
         self.delete_record()
         return 'break'
@@ -187,17 +187,17 @@ class LocalHistoryWindow:
         if self.loading:return
         rows=self.selected_rows()
         if not rows:
-            self.status.set(self.t('请先在列表中选中一条或多条记录。','Select one or more records in the list first.'))
+            self.status.set(pick(self.language, '请先在列表中选中一条或多条记录。','Select one or more records in the list first.'))
             return
         names='\n'.join(f'• {row["name"]}' for row in rows)
-        if not messagebox.askyesno(self.t('删除历史记录','Delete history record'),
-                self.t(f"从历史列表删除以下 {len(rows)} 条记录？\n{names}\n\n原始 RGB-D、模型和标记文件保留，不释放磁盘空间。可在本窗口整批撤销删除。",
+        if not messagebox.askyesno(pick(self.language, '删除历史记录','Delete history record'),
+                pick(self.language, f"从历史列表删除以下 {len(rows)} 条记录？\n{names}\n\n原始 RGB-D、模型和标记文件保留，不释放磁盘空间。可在本窗口整批撤销删除。",
                        f"Remove these {len(rows)} records from history?\n{names}\n\nRGB-D, models and annotations are retained; disk space is not freed. You can undo the batch in this window."),
                 parent=self.window,default='no'):return
         try:
             set_records_deleted(rows,self.datasets,self.outputs)
             self.deleted_stack.append([dict(row) for row in rows]);self.selected_key=None;self.refresh()
-        except (OSError,ValueError) as exc:self.status.set(self.t('删除失败：','Delete failed: ')+str(exc))
+        except (OSError,ValueError) as exc:self.status.set(pick(self.language, '删除失败：','Delete failed: ')+str(exc))
 
     def undo_delete(self) -> None:
         if self.loading or not self.deleted_stack:return
@@ -206,7 +206,7 @@ class LocalHistoryWindow:
             set_records_deleted(rows,self.datasets,self.outputs,False)
             self.deleted_stack.pop();self.tree.selection_remove(*self.tree.selection())
             self.selected_key=rows[0]['key'] if rows else None;self.refresh()
-        except (OSError,ValueError) as exc:self.status.set(self.t('恢复失败：','Restore failed: ')+str(exc))
+        except (OSError,ValueError) as exc:self.status.set(pick(self.language, '恢复失败：','Restore failed: ')+str(exc))
 
     def close(self) -> None:
         self.closed=True;self.generation+=1;self.cancel.set()

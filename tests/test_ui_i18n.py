@@ -18,6 +18,11 @@ class UiI18nTests(unittest.TestCase):
             ui_i18n.tr("en", "app.3dgs_training_detail", frames=12, span=0.4, profile="Balanced quality"),
         )
 
+    def test_pick_selects_inline_text_without_formatting(self) -> None:
+        self.assertEqual(ui_i18n.pick("zh", "中文 {name}", "English {name}"), "中文 {name}")
+        self.assertEqual(ui_i18n.pick("en", "中文 {name}", "English {name}"), "English {name}")
+        self.assertEqual(ui_i18n.pick("unsupported", "中文", "English"), "English")
+
     def test_viewer_strings_do_not_claim_a_point_cloud_display(self) -> None:
         # The trained-model viewer must not be described the way the Open3D
         # diagnostic point display is; the two are different capabilities.

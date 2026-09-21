@@ -125,7 +125,7 @@ C:\FemtoGsplatRuntime\Scripts\python.exe -m femto.gsplat.scene_gsplat_export out
 
 | 层 | 子包 | 职责 | 主要模块 |
 |---|---|---|---|
-| 0 | `femto` | 叶子工具 | `io_utils`（唯一的 JSON / JSONL / 图片读写实现；默认 `ensure_ascii=False`，兼容旧文件字节时显式传序列化参数；`cv2` 延迟导入，gsplat 运行时可用）、`ui_i18n`（`tr(language, key)`，只覆盖高级页、Open3D 查看器和 gsplat 查看器；其余窗口用内联 `(zh, en)` 元组，`test_ui_i18n` 要求 zh/en 键集一致）、`paths`（`REPO_ROOT` 等数据树位置与 `child_path`） |
+| 0 | `femto` | 叶子工具 | `io_utils`（唯一的 JSON / JSONL / 图片读写实现；默认 `ensure_ascii=False`，兼容旧文件字节时显式传序列化参数；`cv2` 延迟导入，gsplat 运行时可用）、`ui_i18n`（键式文本用 `tr(language, key)`；内联 `(zh, en)` 文本统一用 `pick(language, zh, en)` 选择，不在窗口内重复定义 `t` / `text`；`test_ui_i18n` 要求 zh/en 键集一致）、`paths`（`REPO_ROOT` 等数据树位置与 `child_path`） |
 | 1 | `femto.depth` | 逐帧深度质量 | `depth_quality`（保守补洞，`DepthQualityConfig` 只能收紧）、`depth_error_check`、`temporal_depth_fusion`、`temporal_depth_layer`（时域中间层，含 `prepared_depth` / `load_temporal_confidence`）；置信度层 1.0 原始 / 0.3 修复 / 0 未知，每次派生深度都有同名 float32 confidence |
 | 2 | `femto.dataset` | 数据集 schema 与门禁 | `scene_dataset_validator`、`scene_data_kind`（只有原始 manifest `camera.device=="Orbbec Femto Bolt"` 才是 `real_femto`）、`local_reference`（`CALIBRATION_FILES`、参考证据）、`calibration_files.write_calibration`、`scene_gsplat_split`（严格 train/val/test 分区）、`single_frame_source.resolve_source`（关键帧模型 / 照片的单帧来源解析） |
 | 3 | `femto.geometry` | 反投影与网格原语 | `pose_geometry`（人体分支无畸变针孔）、`depth_cloud`（全项目 K6 反投影的正典实现）、`rgbd_frames`（`distortion_maps` / `prepare_rgbd` / `load_poses`）、`fusion`（Open3D 原生 IO 兜底）、`multiview_texture`、`single_frame_mesh` / `single_frame_quality`、`scene_gaussian`（未训练初值）、`depth_confidence_cloud` |
