@@ -384,6 +384,29 @@ class FixedViewerExperienceTests(unittest.TestCase):
         v.name.set('Changed');v.edit();self.assertTrue(self.model.store.dirty)
         v.undo();self.wait_idle();self.assertFalse(self.model.store.dirty)
 
+    def test_saved_region_enables_surface_trajectory_generation_and_playback(self):
+        v=self.viewer;v.mode.set('region');v.change_mode()
+        v.polygon=copy.deepcopy(POLYGON);v.finish_polygon();self.wait_idle()
+        region_id=self.model.store.regions[0]['annotation_id']
+        v.save();self.wait_idle()
+        self.assertIsNotNone(v._last_region_export_manifest)
+        self.assertTrue(v._last_region_export_manifest.is_file())
+        self.assertEqual(str(v.surface_trajectory_button['state']),'normal')
+        folder=Path(self.temp.name)/'trajectory_fixture';folder.mkdir()
+        (folder/'depth_diagram.png').write_bytes(b'fixture')
+        trajectory=SimpleNamespace(source={'region_id':region_id})
+        with mock.patch('femto.planning.mesh_slice_planner.plan_mesh_slice',return_value=trajectory), \
+             mock.patch('femto.planning.trajectory_export.export_trajectory',return_value=folder):
+            v.generate_surface_trajectory();self.wait_idle()
+        self.assertEqual(v._last_trajectory_folder,folder)
+        self.assertEqual(str(v.surface_trajectory_play_button['state']),'normal')
+        player_plan={'segments': [[{'xyz_m':[0,0,.5],'pixel':[1,1]},
+                                   {'xyz_m':[.001,0,.5],'pixel':[2,1]}]], 'chain_breaks': []}
+        with mock.patch('femto.planning.surface_trajectory.to_player_plan',return_value=player_plan), \
+             mock.patch('femto.planning.path_presentation.show_presentation') as show:
+            v.play_surface_trajectory()
+        show.assert_called_once()
+
     def test_save_failure_keeps_dirty_state_and_reports_failure(self):
         v=self.viewer;self.click_pixel()
         with mock.patch.object(Path,'write_text',side_effect=PermissionError('simulated write failure')):

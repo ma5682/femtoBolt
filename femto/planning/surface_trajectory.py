@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable
 import hashlib
 import json
@@ -120,6 +121,14 @@ class SurfaceTrajectory:
     def from_dict(cls, value: Any) -> "SurfaceTrajectory":
         if not isinstance(value, dict):
             raise ValueError("Invalid surface trajectory document")
+        if (value.get("schema") != SCHEMA or value.get("coordinate_frame") != "world_rdf" or
+                value.get("unit") != "metre" or value.get("axes") != AXES or
+                value.get("orientation_fields", object()) is not None or
+                value.get("normals_are_not_tool_pose") is not True or
+                value.get("execution_ready") is not False or
+                value.get("physical_accuracy_verified") is not False or
+                value.get("pixel_semantics") != "display_and_exclusion_check_only"):
+            raise ValueError("Invalid surface trajectory coordinate/safety contract")
         items: list[ScanSegment | Gap] = []
         for item in value.get("ordered_items", []):
             items.append(ScanSegment.from_dict(item) if item.get("kind") == "scan_segment"
@@ -204,6 +213,9 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
                     uv = np.asarray(pixel, dtype=np.float64)
                     if uv.shape != (2,) or not np.isfinite(uv).all():
                         raise ValueError("Invalid display pixel")
+                role = point.get("role")
+                if role is not None and role not in ("scan", "connector"):
+                    raise ValueError("Invalid trajectory point role")
                 if previous is not None and np.linalg.norm(np.asarray(xyz) - previous) > sample_step_m + 1e-9:
                     raise ValueError("Adjacent scan samples exceed sample_step_mm")
                 if faces is not None:
@@ -242,9 +254,10 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
 def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, Any]:
     model = SurfaceTrajectory.from_dict(trajectory) if isinstance(trajectory, dict) else trajectory
     validate_trajectory(model)
-    segments = [item.points for item in model.ordered_items if isinstance(item, ScanSegment)]
+    segments = [[dict(point, motion_kind=point.get("role", "scan")) for point in item.points]
+                for item in model.ordered_items if isinstance(item, ScanSegment)]
     gaps = [item for item in model.ordered_items if isinstance(item, Gap)]
-    return {
+    result = {
         "schema": "femto-surface-trajectory-player-view-v1",
         "segments": segments,
         "chain_breaks": [{
@@ -266,3 +279,201 @@ def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, 
                                                for segment in segments for point in segment[1:])},
         "execution_ready": False, "physical_accuracy_verified": False,
     }
+    if model.planner.get("parameters", {}).get("row_spacing_mm") is not None:
+        result.update(spacing_mm=model.planner["parameters"]["row_spacing_mm"],
+                      spacing_semantics="parallel_plane_spacing_not_uniform_surface_spacing",
+                      surface_mode={"schema": "femto-surface-trajectory-player-view-v1",
+                                    "algorithm": model.planner.get("algorithm_version")},
+                      spacing_report=model.spacing_report)
+    return result
+
+
+def _projection_region_mesh(region: dict[str, Any], store: Any, region_manifest: Any):
+    """Bind the adapter to an explicit export, or rebuild from the current source mesh."""
+    global_ids = sorted(set(int(value) for value in region["triangle_indices"]))
+    if not global_ids:
+        raise ValueError("Projection plan region has no triangles")
+    manifest_path = None
+    if region_manifest is not None:
+        if isinstance(region_manifest, dict):
+            if not region_manifest.get("manifest_path"):
+                raise ValueError("A manifest dictionary needs an explicit manifest_path")
+            manifest_path = Path(region_manifest["manifest_path"]).resolve()
+        else:
+            manifest_path = Path(region_manifest).resolve()
+        from femto.planning.mesh_slice_planner import _load_input, _sha256
+        checked_path, manifest, mesh = _load_input(manifest_path)
+        if manifest.get("region", {}).get("annotation_id") != region.get("annotation_id"):
+            raise ValueError("Exported region identity does not match the projection plan")
+        from femto.planning.planning_state import region_signature
+        if region_signature(manifest["region"]) != region_signature(region):
+            raise ValueError("Exported region content does not match the projection plan")
+        mesh_sha256 = manifest["file_sha256"][manifest["files"]["mesh_file"]]
+        source = {"region_export_dir": str(checked_path.parent),
+                  "region_manifest": str(checked_path),
+                  "region_manifest_sha256": _sha256(checked_path),
+                  "mesh_file": manifest["files"]["mesh_file"],
+                  "mesh_file_sha256": mesh_sha256,
+                  "geometry_sha256": manifest.get("geometry_sha256"),
+                  "bound_region_mesh": {"source": "exported_ply", "sha256": mesh_sha256}}
+        origin = manifest["origin_reference"]
+        data_layers = manifest.get("data_layers")
+    else:
+        from femto.annotation.scene_annotations import mesh_digest, region_mesh
+        selected = region_mesh(store.mesh, global_ids)
+        import trimesh
+        mesh = trimesh.Trimesh(vertices=np.asarray(selected.vertices),
+                               faces=np.asarray(selected.triangles), process=False)
+        mesh_sha256 = mesh_digest(selected)
+        source = {"mesh_file": None, "mesh_file_sha256": mesh_sha256,
+                  "geometry_sha256": getattr(store, "digest", None),
+                  "bound_region_mesh": {"source": "rebuilt_from_source_mesh", "sha256": mesh_sha256}}
+        origin = store.origin_reference
+        try:
+            from femto.annotation.measurement_audit import layer_contract
+            data_layers = layer_contract(store)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            data_layers = getattr(store, "data_layers", None)
+    if len(mesh.faces) != len(global_ids):
+        raise ValueError("Bound region mesh face order/count mismatch")
+    return mesh, {global_id: local for local, global_id in enumerate(global_ids)}, source, origin, data_layers
+
+
+def _relocate_faces(points: list[np.ndarray], mesh: Any) -> list[int | None]:
+    if not points:
+        return []
+    import open3d as o3d
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    legacy = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(vertices),
+                                      o3d.utility.Vector3iVector(faces.astype(np.int32)))
+    scene = o3d.t.geometry.RaycastingScene()
+    scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(legacy))
+    query = scene.compute_closest_points(o3d.core.Tensor(np.asarray(points, np.float32)))
+    closest = query["points"].numpy().astype(float)
+    seeds = query["primitive_ids"].numpy().astype(np.int64)
+    result: list[int | None] = []
+    face_min = vertices[faces].min(axis=1) - 1e-6
+    face_max = vertices[faces].max(axis=1) + 1e-6
+    for point, nearest, seed in zip(points, closest, seeds):
+        if seed < 0 or float(np.linalg.norm(point - nearest)) > 1e-6:
+            result.append(None)
+            continue
+        candidates = np.flatnonzero(((face_min <= point) & (point <= face_max)).all(axis=1))
+        valid = [int(index) for index in candidates
+                 if _point_on_triangle(point, vertices, faces[index], 1e-6)]
+        result.append(min(valid) if valid else None)
+    return result
+
+
+def from_projection_plan(plan: dict[str, Any], region: dict[str, Any], store: Any,
+                         region_manifest: Any = None) -> SurfaceTrajectory:
+    """Read-only adapter from current fixed-RGB plan dictionaries."""
+    if not isinstance(plan, dict) or not isinstance(region, dict):
+        raise ValueError("Invalid projection plan/region")
+    mesh, mapping, mesh_source, origin, data_layers = _projection_region_mesh(
+        region, store, region_manifest)
+    if not isinstance(origin, dict) or origin.get("kind") != "initial_color_camera":
+        raise ValueError("Projection plan requires an initial_color_camera origin")
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    converted: list[list[dict[str, Any]]] = []
+    unresolved: list[tuple[int, int, np.ndarray]] = []
+    face_sources: dict[tuple[int, int], str] = {}
+    for chain_index, chain in enumerate(plan.get("segments", [])):
+        if not isinstance(chain, list) or len(chain) < 2:
+            raise ValueError("Projection plan contains an unplayable chain")
+        output = []
+        for point_index, point in enumerate(chain):
+            xyz = np.asarray(point.get("xyz_m"), dtype=np.float64)
+            if xyz.shape != (3,) or not np.isfinite(xyz).all():
+                raise ValueError("Projection plan contains invalid XYZ")
+            pixel = np.asarray(point.get("pixel"), dtype=np.float64)
+            if pixel.shape != (2,) or not np.isfinite(pixel).all():
+                raise ValueError("Projection plan contains invalid display pixel")
+            global_index = point.get("triangle_index")
+            local = mapping.get(global_index) if type(global_index) is int else None
+            if local is not None and _point_on_triangle(xyz, vertices, faces[local], 1e-6):
+                face_sources[(chain_index, point_index)] = "mapped_from_source_mesh_index"
+            else:
+                unresolved.append((chain_index, point_index, xyz))
+                local = None
+            output.append({"xyz_m": xyz.tolist(), "pixel": pixel.tolist(),
+                           "triangle_index": local, "geometry_support": "measured_mesh",
+                           "role": point.get("motion_kind", "scan")})
+        converted.append(output)
+    relocated = _relocate_faces([record[2] for record in unresolved], mesh)
+    failures = []
+    for (chain_index, point_index, xyz), local in zip(unresolved, relocated):
+        if local is None:
+            failures.append({"chain_index": chain_index, "point_index": point_index,
+                             "xyz_m": xyz.tolist()})
+        else:
+            converted[chain_index][point_index]["triangle_index"] = local
+            face_sources[(chain_index, point_index)] = "relocated_geometrically"
+    if failures:
+        raise ValueError("Projection plan points cannot be bound to the region PLY: " + json.dumps(failures[:20]))
+    route_index = 0
+    segments = []
+    max_edge = 0.0
+    for chain_index, chain in enumerate(converted):
+        row_index = chain_index
+        for point_index, point in enumerate(chain):
+            point.update(row_index=row_index, route_index=route_index,
+                         face_index_source=face_sources[(chain_index, point_index)])
+            route_index += 1
+        edges = np.linalg.norm(np.diff(np.asarray([point["xyz_m"] for point in chain]), axis=0), axis=1)
+        max_edge = max(max_edge, float(edges.max(initial=0.0)))
+        segments.append(ScanSegment(chain_index, row_index, chain))
+    if not segments:
+        raise ValueError("Projection plan has no scan segment")
+    breaks = {item.get("from_chain"): item for item in plan.get("chain_breaks", [])}
+    items: list[ScanSegment | Gap] = []
+    gap_counts: dict[str, int] = {}
+    for index, segment in enumerate(segments):
+        items.append(segment)
+        if index == len(segments) - 1:
+            continue
+        record = breaks.get(index, {})
+        explanation = str(record.get("reason", "")) + " " + str(record.get("explanation", ""))
+        left_y = float(np.mean([point["pixel"][1] for point in segment.points if point.get("pixel") is not None]))
+        right_y = float(np.mean([point["pixel"][1] for point in segments[index + 1].points if point.get("pixel") is not None]))
+        reason = "row_turn" if "row" in explanation.casefold() or "turn" in explanation.casefold() or abs(left_y - right_y) > 1 else "unsupported_geometry"
+        gap_counts[reason] = gap_counts.get(reason, 0) + 1
+        before, after = segment.points[-1], segments[index + 1].points[0]
+        delta = np.asarray(segment.points[-1]["xyz_m"]) - np.asarray(segment.points[-2]["xyz_m"])
+        direction = (delta / max(float(np.linalg.norm(delta)), 1e-15)).tolist()
+        items.append(Gap(index, reason, {
+            "inferred_cause": "not_applicable", "method": "sweep_plane_outer_loop_containment",
+            "confidence": "heuristic", "decision_use": "none",
+        }, {"route_index": before["route_index"], "xyz_m": before["xyz_m"]},
+           {"route_index": after["route_index"], "xyz_m": after["xyz_m"]}, direction,
+           segment.row_index, segments[index + 1].row_index,
+           float(np.linalg.norm(np.asarray(after["xyz_m"]) - before["xyz_m"]))))
+    lengths = [float(np.linalg.norm(np.diff(np.asarray([point["xyz_m"] for point in segment.points]), axis=0), axis=1).sum())
+               for segment in segments]
+    z = np.asarray([point["xyz_m"][2] for segment in segments for point in segment.points])
+    from femto.planning.planning_state import region_signature
+    source = dict(mesh_source, region_id=region.get("annotation_id"), region_signature=region_signature(region),
+                  projection_plan_result_sha256=plan.get("plan_binding", {}).get("result_sha256"))
+    algorithm = plan.get("plan_binding", {}).get("algorithm_version") or plan.get("schema")
+    planner = {"kind": "projection_fixed_rgb", "algorithm_version": "projection-adapter-v1",
+               "parameters": {"source_algorithm_version": algorithm,
+                              "sample_step_mm": max(1e-9, max_edge * 1000)}}
+    row_report = [{"row_index": segment.row_index, "segment_count": 1,
+                   "point_count": len(segment.points), "scan_length_m": lengths[segment.segment_index],
+                   "depth_min_m": min(point["xyz_m"][2] for point in segment.points),
+                   "depth_max_m": max(point["xyz_m"][2] for point in segment.points),
+                   "depth_span_m": max(point["xyz_m"][2] for point in segment.points) - min(point["xyz_m"][2] for point in segment.points),
+                   "gap_count": int(segment.segment_index < len(segments) - 1)} for segment in segments]
+    trajectory = SurfaceTrajectory(origin, planner, source, items,
+        {"segment_count": len(segments), "gap_count": len(segments) - 1,
+         "gap_counts": dict(sorted(gap_counts.items())), "point_count": route_index,
+         "scan_length_m": float(sum(lengths)), "row_count": len(segments),
+         "depth_min_m": float(z.min()), "depth_max_m": float(z.max()),
+         "depth_span_m": float(z.max() - z.min())},
+        {"counts": dict(sorted(gap_counts.items())), "dropped_fragments": [],
+         "dropped_fragment_count": 0, "relocated_point_count": len(unresolved)},
+        plan.get("spacing_report", {}), row_report, data_layers)
+    validate_trajectory(trajectory, mesh=mesh)
+    return trajectory

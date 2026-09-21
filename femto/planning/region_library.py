@@ -90,6 +90,8 @@ def enrich(rows: Any, root: Any, check: Callable[..., Any]=lambda: None) -> Any:
         row['version_key'] = saved.get('version_key', row['key'])
         try:
             source = row['source']
+            history_binding = None
+            details_files = None
             if row['kind'] == '区域工程 / 方案':
                 record = json.loads(source.read_text(encoding='utf-8'))
                 target = Path(saved.get('location', record['project_file']))
@@ -116,13 +118,35 @@ def enrich(rows: Any, root: Any, check: Callable[..., Any]=lambda: None) -> Any:
                 if saved.get('sha256') and digest(target, check) != saved['sha256']:
                     raise ValueError('清单内容与登记指纹不一致')
                 data = json.loads(target.read_text(encoding='utf-8-sig'))
-                region = (data.get('regions', [])[row['region_index']] if row.get('region_index') is not None
-                          else data.get('region', {}))
                 from femto.planning.export_history import local_asset
-                row.update(folder=target.parent,asset=local_asset(target.parent,region.get('glb_file')) or local_asset(target.parent,region.get('mesh_file')) or local_asset(target.parent,data.get('visualization',{}).get('file')),
-                    diagram=local_asset(target.parent,data.get('route_diagram')),archive=local_asset(target.parent,data.get('share_archive')))
+                is_trajectory = data.get('schema') == 'femto-surface-trajectory-v1'
+                if is_trajectory:
+                    from femto.planning.surface_trajectory import SurfaceTrajectory
+                    SurfaceTrajectory.from_dict(data)
+                    trajectory_source = data.get('source', {})
+                    region = {'annotation_id': trajectory_source.get('region_id'), 'name': row['name']}
+                    row.update(folder=target.parent,
+                        asset=local_asset(target.parent, 'region_with_trajectory.glb'),
+                        diagram=local_asset(target.parent, 'route_diagram.png') or
+                                local_asset(target.parent, 'depth_diagram.png'), archive=None)
+                else:
+                    region = (data.get('regions', [])[row['region_index']] if row.get('region_index') is not None
+                              else data.get('region', {}))
+                    row.update(folder=target.parent,asset=local_asset(target.parent,region.get('glb_file')) or local_asset(target.parent,region.get('mesh_file')) or local_asset(target.parent,data.get('visualization',{}).get('file')),
+                        diagram=local_asset(target.parent,data.get('route_diagram')),archive=local_asset(target.parent,data.get('share_archive')))
                 row['file_status'] = '旧版本待验证'
                 files = data.get('files', {})
+                if is_trajectory:
+                    file_manifest = target.parent / 'trajectory_files.json'
+                    if not file_manifest.is_file():
+                        raise ValueError('轨迹资产清单丢失')
+                    manifest_data = json.loads(file_manifest.read_text(encoding='utf-8-sig'))
+                    if (manifest_data.get('schema') != 'femto-surface-trajectory-files-v1' or
+                            manifest_data.get('result_sha256') != data.get('result_sha256')):
+                        raise ValueError('轨迹资产清单身份不一致')
+                    files = manifest_data.get('files')
+                    if not isinstance(files, dict) or 'trajectory.json' not in files:
+                        raise ValueError('轨迹资产清单内容无效')
                 manifest=region.get('region_manifest_file') if row['kind']=='区域' else None
                 if manifest:
                     manifest_path=(target.parent/manifest).resolve()
@@ -139,14 +163,22 @@ def enrich(rows: Any, root: Any, check: Callable[..., Any]=lambda: None) -> Any:
                         row['file_status'] = '文件丢失'; break
                     if digest(asset, check) != expected: raise ValueError('资产指纹不符：' + name)
                 else:
-                    if files: row['file_status'] = '导出资产指纹一致'
-                declared = region.get('glb_file') or region.get('mesh_file') or data.get('visualization', {}).get('file')
-                if not declared:
+                    if files: row['file_status'] = '轨迹资产指纹一致' if is_trajectory else '导出资产指纹一致'
+                declared = ('region_with_trajectory.glb' if is_trajectory else
+                            region.get('glb_file') or region.get('mesh_file') or data.get('visualization', {}).get('file'))
+                if not declared and not is_trajectory:
                     row['file_status'] = '仅点标记' if row['kind'] == '标记' else '无模型导出'
                 elif not row.get('asset'): row['file_status'] = '文件丢失'
-            binding = (data.get('plan') or data).get('plan_binding') or {}
+                if is_trajectory:
+                    history_binding = dict(schema='femto-trajectory-binding-v1',
+                        result_sha256=data.get('result_sha256'), region_id=trajectory_source.get('region_id'),
+                        geometry_sha256=trajectory_source.get('geometry_sha256'),
+                        algorithm_version=data.get('planner', {}).get('algorithm_version'),
+                        execution_ready=False, physical_accuracy_verified=False)
+                    details_files = files
+            binding = history_binding or (data.get('plan') or data).get('plan_binding') or {}
             rid = region.get('annotation_id') or binding.get('region_id') or data.get('region_id')
-            geometry = data.get('geometry_sha256') or binding.get('geometry_sha256')
+            geometry = (data.get('source', {}).get('geometry_sha256') if history_binding else None) or data.get('geometry_sha256') or binding.get('geometry_sha256')
             if rid and geometry and data.get('origin_reference'):
                 row['region_key'] = identity([rid, geometry, data['origin_reference']])
             row['version_key'] = binding.get('result_sha256') or data.get('revision_id') or row['key']
@@ -154,8 +186,9 @@ def enrich(rows: Any, root: Any, check: Callable[..., Any]=lambda: None) -> Any:
                 origin_reference=data.get('origin_reference'), source_lineage=data.get('source_lineage'),
                 source_mesh=data.get('source_mesh'), project_id=data.get('project_id'),
                 revision_id=data.get('revision_id'), plan_binding=binding,
-                files=data.get('files', {}), location=str(row['target']))
-            row['status'] = row['file_status'] + ('；路径关联待工作台重算' if binding else '；旧版本/无路径关联待验证')
+                files=details_files if details_files is not None else data.get('files', {}), location=str(row['target']))
+            row['status'] = row['file_status'] + ('；轨迹只读、不可直接执行' if history_binding else
+                '；路径关联待工作台重算' if binding else '；旧版本/无路径关联待验证')
         except TimeoutError:raise
         except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, zipfile.BadZipFile) as error:
             row['file_status'] = '损坏'; row['status'] = '损坏：' + str(error)

@@ -148,7 +148,7 @@ def load_trajectory(path: str | Path, *, check: Callable[[], None] = lambda: Non
         raise ValueError("Trajectory region mesh source mismatch")
     mesh = trimesh.load(mesh_path, force="mesh", process=False)
     validate_trajectory(trajectory, mesh=mesh, expected_result_sha256=payload["result_sha256"])
-    if reproduce:
+    if reproduce and trajectory.planner.get("kind") == "mesh_slice":
         check()
         from femto.planning.mesh_slice_planner import plan_mesh_slice
         regenerated = plan_mesh_slice(manifest_path, check=check, **trajectory.planner["parameters"])

@@ -58,7 +58,9 @@ def scan_region_exports(reconstruction: str | Path, check: Callable[..., Any]=la
 
 def scan_exports(reconstruction: str | Path, include_hidden: bool=False, check: Callable[..., Any]=lambda:None) -> Any:
     root=Path(reconstruction);rows=[]
-    sources=list((root/'annotations').glob('*/annotations.json'))+list((root/'region_paths').glob('*/path.json'))
+    sources=(list((root/'annotations').glob('*/annotations.json'))+
+             list((root/'annotations').glob('*/trajectory_*/trajectory.json'))+
+             list((root/'region_paths').glob('*/path.json')))
     for source in sources:
         check()
         try:
@@ -68,13 +70,17 @@ def scan_exports(reconstruction: str | Path, include_hidden: bool=False, check: 
                 items=[('区域',r.get('name') or r.get('annotation_id',''),
                         r.get('glb_file'),r.get('mesh_file')) for r in data['regions']]
                 if not items:items=[('标记','仅点标记',None,None)]
+            elif data.get('schema')=='femto-surface-trajectory-v1':
+                items=[('三维表面轨迹',data.get('source',{}).get('region_id') or source.parent.name,
+                        'region_with_trajectory.glb',None)]
             else:
                 items=[('区域＋路径',data.get('region',{}).get('name') or data.get('region_id',''),data.get('visualization',{}).get('file'),None)]
             for region_index,(kind,name,glb,ply) in enumerate(items):
                 asset=local_asset(source.parent,glb) or local_asset(source.parent,ply)
                 rows.append(dict(time=datetime.fromtimestamp(stamp).strftime('%Y-%m-%d %H:%M:%S'),
                     stamp=stamp,kind=kind,name=name,folder=source.parent,source=source,asset=asset,
-                    diagram=local_asset(source.parent,data.get('route_diagram')),
+                    diagram=(local_asset(source.parent,'route_diagram.png') or local_asset(source.parent,'depth_diagram.png'))
+                    if data.get('schema')=='femto-surface-trajectory-v1' else local_asset(source.parent,data.get('route_diagram')),
                     archive=local_asset(source.parent,data.get('share_archive')),
                     region_index=region_index if kind=='区域' else None,
                     status='可预览' if asset else '无三维文件 / 文件缺失'))
@@ -176,7 +182,7 @@ def show_region_library(parent: Any,reconstruction: Any) -> Any:
     search=tk.StringVar();kind_filter=tk.StringVar(value='全部');show_hidden=tk.BooleanVar()
     ttk.Label(filters,text='名称搜索').pack(side='left')
     ttk.Entry(filters,textvariable=search).pack(side='left')
-    ttk.Combobox(filters,textvariable=kind_filter,values=['全部','区域','区域＋路径','区域工程 / 方案','标记'],state='readonly',width=20).pack(side='left')
+    ttk.Combobox(filters,textvariable=kind_filter,values=['全部','区域','区域＋路径','三维表面轨迹','区域工程 / 方案','标记'],state='readonly',width=20).pack(side='left')
     ttk.Checkbutton(filters,text='显示已移除索引',variable=show_hidden,command=lambda:render()).pack(side='left')
     import time
     thumbnail,tree,detail,actions,project_actions,rows,mailbox,busy,outcome,control=_build_region_library_table(window)
@@ -310,7 +316,7 @@ def show_region_library(parent: Any,reconstruction: Any) -> Any:
 
 
 def show_history(parent: Any,reconstruction: Any) -> Any:
-    """Product view: browse actual exported region assets only."""
+    """Product view: browse exported regions and their surface trajectories."""
     import os
     import queue
     import subprocess
@@ -323,13 +329,14 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
     if existing is not None and existing.winfo_exists():existing.deiconify();existing.lift();return existing
     window=tk.Toplevel(parent);parent._export_history_window=window
     window.title('当前模型 · 历史区域导出记录');window.geometry('1000x620');window.minsize(760,480)
-    ttk.Label(window,text='仅显示已经导出的区域数据。双击可预览区域模型；打开文件夹可查看 GLB、PLY、CSV 和 JSON。').pack(anchor='w',padx=12,pady=10)
+    ttk.Label(window,text='显示已导出的区域及三维表面轨迹。双击可预览 GLB；打开文件夹可查看完整输出。').pack(anchor='w',padx=12,pady=10)
     filters=ttk.Frame(window);filters.pack(fill='x',padx=12)
     search=tk.StringVar();ttk.Label(filters,text='区域名称搜索').pack(side='left')
     ttk.Entry(filters,textvariable=search).pack(side='left',fill='x',expand=True,padx=(6,0))
     frame=ttk.Frame(window);frame.pack(fill='both',expand=True,padx=12,pady=(8,0))
-    tree=ttk.Treeview(frame,columns=('time','name','status'),show='headings',selectmode='browse')
-    for key,title,width,stretch in [('time','导出时间',180,False),('name','区域名称 / ID',260,True),('status','文件状态',360,True)]:
+    tree=ttk.Treeview(frame,columns=('time','kind','name','status'),show='headings',selectmode='browse')
+    for key,title,width,stretch in [('time','导出时间',170,False),('kind','类型',120,False),
+                                    ('name','区域名称 / ID',230,True),('status','文件状态',330,True)]:
         tree.heading(key,text=title);tree.column(key,width=width,minwidth=100,stretch=stretch)
     scroll=ttk.Scrollbar(frame,command=tree.yview);tree.configure(yscrollcommand=scroll.set)
     scroll.pack(side='right',fill='y');tree.pack(fill='both',expand=True)
@@ -352,7 +359,7 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
         preview.configure(state='normal' if asset and asset.is_file() else 'disabled')
         folder_button.configure(state='normal' if row and row['folder'].is_dir() else 'disabled')
         if row:
-            files='区域模型：'+(asset.name if asset else '文件缺失')
+            files=('轨迹模型：' if row.get('kind')=='三维表面轨迹' else '区域模型：')+(asset.name if asset else '文件缺失')
             detail.set(str(row['folder'])+'\n'+files+'\n'+row['status'])
         elif not busy:detail.set('请选择一条历史区域导出记录。')
     def render(*_):
@@ -360,7 +367,7 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
         query=search.get().casefold()
         for i,row in enumerate(rows):
             if query and query not in row['name'].casefold():continue
-            tree.insert('','end',iid=str(i),values=(row['time'],row['name'],row['status']))
+            tree.insert('','end',iid=str(i),values=(row['time'],row['kind'],row['name'],row['status']))
         update()
     def open_preview(_=None):
         row=selected()
@@ -381,7 +388,8 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
         detail.set('正在读取历史区域导出记录…')
         def run():
             try:
-                result=[row for row in scan_region_exports(reconstruction,check=control.check) if row['kind']=='区域']
+                result=[row for row in scan_exports(reconstruction,check=control.check)
+                        if row['kind'] in ('区域','三维表面轨迹')]
                 mailbox.put_nowait((result,None))
             except Exception as error:
                 try:mailbox.put_nowait((None,str(error)))

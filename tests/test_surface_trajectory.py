@@ -68,6 +68,14 @@ class SurfaceTrajectoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_trajectory(trajectory)
 
+    def test_serialized_coordinate_and_safety_contract_is_strict(self):
+        for key,value in (("coordinate_frame", "camera"), ("unit", "millimetre"),
+                          ("execution_ready", True), ("physical_accuracy_verified", True)):
+            payload = trajectory_fixture().to_dict()
+            payload[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                SurfaceTrajectory.from_dict(payload)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,10 @@ import unittest
 import numpy as np
 import trimesh
 from femto.planning.export_history import scan_exports,scan_region_exports,local_asset
+from femto.planning.surface_trajectory import from_projection_plan
+from femto.planning.trajectory_export import export_trajectory,write_files_manifest
 from femto.viewer.export_preview import load_preview
+from tests.test_projection_trajectory_adapter import fixture
 
 
 class ExportHistoryTests(unittest.TestCase):
@@ -65,6 +68,26 @@ class ExportHistoryTests(unittest.TestCase):
             np.testing.assert_allclose(np.asarray(geometry.vertices).mean(axis=0),[0,0,-.5],atol=1e-6)
             np.testing.assert_allclose(np.asarray(geometry.vertex_colors)[0],[1,215/255,30/255])
             self.assertEqual(len(geometry.triangles),len(mesh.faces))
+
+    def test_surface_trajectory_history_verifies_assets_and_diagram(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);inputs=root/'inputs';inputs.mkdir()
+            plan,region,store,manifest=fixture(inputs)
+            trajectory=from_projection_plan(plan,region,store,manifest)
+            parent=root/'annotations'/'export';parent.mkdir(parents=True)
+            folder=export_trajectory(trajectory,parent,include_visuals=False)
+            (folder/'region_with_trajectory.glb').write_bytes(b'glb fixture')
+            (folder/'depth_diagram.png').write_bytes(b'png fixture')
+            write_files_manifest(folder,trajectory)
+            rows=scan_exports(root)
+            track=next(row for row in rows if row['kind']=='三维表面轨迹')
+            self.assertEqual(track['file_status'],'轨迹资产指纹一致')
+            self.assertEqual(track['asset'],folder/'region_with_trajectory.glb')
+            self.assertEqual(track['diagram'],folder/'depth_diagram.png')
+            self.assertFalse(track['details']['plan_binding']['execution_ready'])
+            (folder/'region_with_trajectory.glb').write_bytes(b'tampered')
+            broken=next(row for row in scan_exports(root) if row['kind']=='三维表面轨迹')
+            self.assertEqual(broken['file_status'],'损坏')
 
 
 if __name__=='__main__':unittest.main()

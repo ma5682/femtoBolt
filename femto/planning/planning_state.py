@@ -10,7 +10,23 @@ def signature(value: Any) -> str:
 
 BINDING_VERSION = 'femto-plan-binding-v1'
 ALGORITHMS = {'raster': 'raster-v1', 'metric': 'mesh-contours-v1',
-              'coverage': 'mesh-coverage-v1', 'serpentine': 'serpentine-v1', 'serpentine_v2':'serpentine-v2', 'serpentine_v3':'serpentine-v3', 'serpentine_v4':'serpentine-v4', 'surface_spacing':'mesh-surface-spacing-v1'}
+              'coverage': 'mesh-coverage-v1', 'serpentine': 'serpentine-v1', 'serpentine_v2':'serpentine-v2', 'serpentine_v3':'serpentine-v3', 'serpentine_v4':'serpentine-v4', 'surface_spacing':'mesh-surface-spacing-v1',
+              'mesh_slice':'mesh-slice-serpentine-v1'}
+
+
+def trajectory_binding(trajectory: Any) -> dict[str, Any]:
+    """Small immutable binding view for export/history/UI state."""
+    from femto.planning.surface_trajectory import SurfaceTrajectory, validate_trajectory
+    model = SurfaceTrajectory.from_dict(trajectory) if isinstance(trajectory, dict) else trajectory
+    validate_trajectory(model)
+    payload = model.to_dict()
+    return dict(schema='femto-trajectory-binding-v1',region_id=model.source.get('region_id'),
+                region_geometry_sha256=model.source.get('region_signature'),
+                geometry_sha256=model.source.get('geometry_sha256'),
+                parameters=deepcopy(model.planner.get('parameters')),
+                algorithm_version=model.planner.get('algorithm_version'),
+                result_sha256=payload['result_sha256'],source=deepcopy(model.source),
+                execution_ready=False,physical_accuracy_verified=False)
 
 
 def region_signature(region: Any) -> str:
