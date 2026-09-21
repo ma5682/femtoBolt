@@ -67,8 +67,14 @@ def write_files_manifest(folder: str | Path, trajectory: SurfaceTrajectory) -> P
 def export_trajectory(trajectory: SurfaceTrajectory, parent: str | Path, *,
                       check: Callable[[], None] = lambda: None,
                       commit: Callable[[Callable[[], Any]], Any] | None = None,
-                      augment: Callable[[Path, SurfaceTrajectory, Callable[[], None]], None] | None = None) -> Path:
+                      augment: Callable[[Path, SurfaceTrajectory, Callable[[], None]], None] | None = None,
+                      include_visuals: bool = True) -> Path:
     """Publish a complete result directory; cancellation leaves no partial folder."""
+    if include_visuals:
+        from femto.planning.trajectory_diagram import prepare_export_trajectory, write_visual_outputs
+        trajectory = prepare_export_trajectory(trajectory)
+        if augment is None:
+            augment = write_visual_outputs
     validate_trajectory(trajectory)
     parent = Path(parent).resolve()
     parent.mkdir(parents=True, exist_ok=True)

@@ -139,7 +139,11 @@ class MeshSlicePlannerTests(unittest.TestCase):
             second = plan_mesh_slice(path)
             self.assertEqual(canonical_json_bytes(first.to_dict()), canonical_json_bytes(second.to_dict()))
             output = export_trajectory(first, Path(tmp) / "results")
-            self.assertEqual(load_trajectory(output).to_dict(), first.to_dict())
+            loaded = load_trajectory(output).to_dict()
+            expected = first.to_dict()
+            loaded.pop("route_diagram_status", None)
+            expected.pop("route_diagram_status", None)
+            self.assertEqual(loaded, expected)
             trajectory_path = output / "trajectory.json"
             payload = json.loads(trajectory_path.read_text(encoding="utf-8"))
             payload["planner"]["parameters"]["planarity_ratio_max"] = 0.4
