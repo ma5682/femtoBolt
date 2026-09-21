@@ -10,13 +10,13 @@ Femto Bolt → RGB-D 原始数据 → 标定 / Pose / 坐标 → Point Cloud / T
 
 本仓库不是 Gaussian Splatting Demo。3DGS 只是表现层之一，治疗区域、测量、路径规划都建立在 PointCloud / Mesh / Geometry 层之上。当前阶段明确不实现机械臂控制、ROS、MoveIt、轨迹执行和超声治疗控制，但坐标、单位、Transform、Scene、ROI、Device、Dataset 的设计必须为未来接入留边界。
 
-`技术路线.md` 是唯一技术基线（Source of Truth）；README、本文件和源码与其冲突时以它为准。它的顶部是按日期倒序的最新变更，第 13 节是变更记录。
+`技术路线.md` 是唯一技术基线（Source of Truth）；README、本文件和源码与其冲突时以它为准。它的顶部只保留当前状态和稳定约束，变更记录按月归档在 [`doc/变更记录/`](doc/变更记录/技术路线_变更记录_2026-09.md)。
 
 ## 硬性项目规则
 
 来自 `AGENTS.md`，改动前必读：
 
-1. **修改采集、对齐、Mask、关键点、坐标、筛帧、融合、TSDF、Mesh、格式或依赖时，必须同步更新 `技术路线.md`**（参数、状态、变更记录）。这是最容易被忽略的一步。
+1. **修改采集、对齐、Mask、关键点、坐标、筛帧、融合、TSDF、Mesh、格式或依赖时，必须同步更新 `技术路线.md` 的参数与状态，并把完整变更追加到 `doc/变更记录/` 当月文件**。这是最容易被忽略的一步。
 2. **原始采集数据不可变**。`datasets/scene_*/{rgb,depth,pose,calibration,frames.jsonl,manifest.json}` 是证据层；估计位姿、融合、关键帧、点云、Mesh、标注、路径只能写入 `derived/` 或 `outputs/`。
 3. **相机移动时禁止写单位外参**。`T_WC=I` 只对物理固定机位成立。位姿不合格时阻断并写质量报告，不得输出伪 Pose，不得用单位矩阵、旧位姿或放宽门限拼接。
 4. **完整场景 RGB-D 是主数据**；人体 Pose/Mask/语义是可删除重算的派生层，不得裁剪或覆盖原始画面。
@@ -34,115 +34,42 @@ Femto Bolt → RGB-D 原始数据 → 标定 / Pose / 坐标 → Point Cloud / T
 
 ## 并行开发与工作方式
 
-- 本目录自 2026-09-20 起纳入 Git，远端为私有库 `origin = https://gitee.com/madegao/femtoBolt.git`（分支 `master`）。账号、邮箱、私人令牌与恢复步骤集中在 `git/README.md` 和 `git/gitee_credentials.json`；整个 `git/` 目录被 `.gitignore` 排除，明文令牌只允许存在那里和 Windows 凭据管理器，不得写进 URL、被跟踪的文件或文档。`.gitignore` 还排除三个 venv、`datasets/`、`outputs/`、`photos/`、`Log/`、`*.pt/*.pth/*.spz` 与 `.claude/settings.local.json`；`.gitattributes` 统一以 LF 入库、`.cmd/.ps1` 以 CRLF 检出。
+- Git 远端是私有 Gitee `madegao/femtoBolt`。账号和令牌只允许在被忽略的 `git/` 或 Windows 凭据管理器中，不得进入 URL、跟踪文件或文档；提交前排除 venv、`datasets/`、`outputs/`、`photos/`、`Log/`、模型文件和本地设置。
 - 另一个 agent（OpenAI Codex CLI）可能与本会话**同时编辑**本仓库（规划/路径/固定 RGB 模块尤其频繁）。开始改动前先看 `git status`、根目录和 `tests/` 最近几分钟的修改时间及 `Get-Process codex`；测试失败若落在正在被并行修改的文件上，先报告，不要抢改。
-- 有 Git 之后，修改前的备份与差异以提交历史为准，不再新建 `outputs/*_backup_<stamp>/`。已有的 `outputs/*_backup_*` / `outputs/*_validation/` 目录是 Git 之前的遗留（含 SHA-256 manifest 与 `changes.diff`），里面的源码副本不是 live code，grep 命中它们要忽略。
-- 每轮交付记录写入 `doc/历史开发记录/`，使用说明写入 `doc/使用说明/`，并把要点合并进根目录 `技术路线.md` 顶部。
+- 备份与差异以 Git 为准，不再新建 `outputs/*_backup_*`；遗留备份中的源码不是 live code，搜索时忽略。
+- 每轮交付记录写入 `doc/历史开发记录/`，使用说明写入 `doc/使用说明/`；当前状态和稳定约束同步到根目录 `技术路线.md`，完整日期记录追加到 `doc/变更记录/` 对应月份文件。
 - 报告口径：软件/合成/历史回放验证与实物验收分开写；开发合规通过 ≠ release_ready。
 
 ## 环境
 
-三套互相隔离的虚拟环境，**不要合并**：
+- 三套环境严格隔离：`.venv`（采集/几何/UI/完整测试）、`C:\FemtoGsplatRuntime`（产品 gsplat/torch/SPZ）、`.venv-3dgs`（已死且禁止产品分发的旧对照）。不得合并或跨环境补依赖。
+- 产品 gsplat 必须走 ASCII 联接、CUDA 12.8 和 VS2022 Build Tools；不得联网下载 LPIPS，版本、许可证、来源和 SHA-256 必须同步锁定。
+- `.venv` 的 `pyorbbecsdk2 --no-deps` 会让 `pip check` 名义缺少 `opencv-python`，这是预期，不能擅自“修复”。
+- 完整环境、权重、SPZ 构建和安装约定见 [`开发环境与架构约定.md`](doc/技术资料/开发环境与架构约定.md)。
 
-| 环境 | Python | 用途 | 安装 |
-|---|---|---|---|
-| `.venv` | 3.12 | 采集、几何、查看器、标注、规划、单元测试。所有非 gsplat 的 `.cmd` 默认用它 | `setup_environment.cmd`（版本硬编码在脚本里，不读 requirements.txt） |
-| `.venv-gsplat` | 3.10 x64 | **产品 3DGS 训练/查看运行时**：PyTorch 2.7.1+cu128、`gsplat==1.5.3`、`spz==1.1.0`。没有 open3d/cv2/trimesh，跑不了完整测试 | `setup_direct_gsplat_environment.cmd` |
-| `.venv-3dgs` | 3.12（已死） | 内部 Splatfacto 对照。目录存在但无 `ns-train`，安装脚本要求 3.10 且拒绝就地修复；因传递依赖 GPL-3.0 PyMeshLab **禁止随产品分发** | `setup_3dgs_environment.cmd` |
+## 常用验证命令
 
-`.venv`：只装 `opencv-contrib-python`，`pyorbbecsdk2` 用 `--no-deps`，因此 `pip check` 会名义性报缺 `opencv-python`，属预期，不要"修复"。`psutil` 由 open3d 传递带入并被 `scene_temporal_fusion.py` 可选使用，但未登记到合规材料。
-
-`.venv-gsplat`：
-- 安装脚本建立目录联接 `C:\FemtoGsplatRuntime` → `.venv-gsplat`。所有 gsplat `.cmd` 和 `scene_gsplat_trainer.runtime_python()` 优先走这个 ASCII 路径，因为 CUDA JIT 在中文路径下失败；联接缺失时静默回退到中文路径并报出令人困惑的编译错误。
-- 需要 CUDA Toolkit 12.8 `nvcc` + VS2022 C++ Build Tools；`TORCH_CUDA_ARCH_LIST=12.0`（RTX 5060 / sm_120）。
-- `patch_gsplat_windows.py` 对已安装 gsplat 1.5.3 的 `cuda/_backend.py` 做精确字符串补丁；重装 gsplat 后必须重跑，版本不是 1.5.3 会拒绝。
-- LPIPS 需要 torchvision 官方 AlexNet 权重 `alexnet-owt-7be5be79.pth`。训练器**不会**联网下载：手动下载到 `%USERPROFILE%\Downloads\` 后运行 `install_lpips_weights.cmd`，校验 SHA-256 后放进 torch hub 缓存。缺失或哈希不符时训练在优化前阻断；`--skip-lpips` 仅冒烟且不能验收通过。`TORCH_HOME` 与安装时不同会导致"缺失"。
-- SPZ 由 `setup_spz_environment.cmd` 从 `C:\FemtoSpzDeps` 的固定源码缓存构建（tag v3.0.0，zlib 1.3.1、zstd 1.5.6、nanobind 3.0.1），PEP 517 后端未离线锁定，不能称发布级可复现。
-
-版本被 `commercial_compliance_check.py` 的 `EXPECTED_PACKAGES` / `EXPECTED_GSPLAT_PACKAGES` 钉死。升级依赖时要同步改：该字典、`setup_*.cmd` 中的硬编码、`requirements*.txt`、`THIRD_PARTY_NOTICES.md`、`licenses/`。
-
-## 常用命令
-
-全部从仓库根目录运行。
+每次提交前从仓库根目录执行全部六项；不得跳过、改写或放宽：
 
 ```powershell
-# 单元测试（约 700 个用例，unittest；.venv 里固定 8 个因缺 torch 跳过；会弹出真实 Tk 窗口，需交互桌面会话）
-.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests
-
-# 单个文件 / 单个用例（只用这两种形式；点分模块名 `-m unittest tests.test_x` 会因兄弟 import 风格不一致而 ModuleNotFoundError）
-.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p "test_local_capture.py" -v
-.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -k test_known_pose_rgbd_reconstructs_and_converts
-
-# 8 个 torch/gsplat 门控测试只能在产品运行时跑
-C:\FemtoGsplatRuntime\Scripts\python.exe -m unittest discover -s tests -p "test_gsplat_guard.py" -v
-
-# 商用合规门禁 → 会无条件覆盖 compliance/current_report.json，不要随手跑
-.venv\Scripts\python.exe commercial_compliance_check.py     # 或 .\check_commercial_readiness.cmd
-
-# 不接相机的端到端回归：合成真值 RGB-D → 校验 → TSDF → Nerfstudio → Gaussian 初值（改几何链路后最有价值）
-.venv\Scripts\python.exe -m femto.pipeline.complete_demo --mode synthetic --no-viewer
-# 已采集真实原始数据的重新处理（失败会阻断，不回退到 synthetic）
-.venv\Scripts\python.exe -m femto.pipeline.complete_demo --mode latest --no-viewer
-
-# 相机连通性冒烟测试（拍一张 RGB-D 后退出）
-.venv\Scripts\python.exe -m femto.app.femto_control_app --smoke-test
-
-# 数据集门禁 / Nerfstudio 转换 / 实拍验收报告 / 尺度验证
-.venv\Scripts\python.exe -m femto.dataset.scene_dataset_validator         # 默认 datasets/latest_scene.txt
-.venv\Scripts\python.exe -m femto.pipeline.scene_to_nerfstudio
-.\生成实拍验收报告.cmd <结果目录> --spec <field_acceptance_spec.json>
-.venv\Scripts\python.exe -m femto.reports.scene_scale_validation --pick --ground-truth-mm 300 --label ruler_300mm
-
-# 正式产品 3DGS（.venv-gsplat，.cmd 会加载 VsDevCmd + CUDA 环境）
-.\start_direct_gsplat_status.cmd                            # runtime + LPIPS 权重 + 最近输入是否达标
-.\start_direct_gsplat_train.cmd --profile low_vram          # low_vram | balanced | quality
-.venv\Scripts\python.exe -m femto.gsplat.gsplat_backend train --require-real --profile low_vram   # UI 等价入口，会自动补做严格分区转换
-C:\FemtoGsplatRuntime\Scripts\python.exe -m femto.gsplat.scene_gsplat_export outputs\direct_gsplat_xxx   # 已有 PLY 的官方 SPZ 转换
-.\start_direct_gsplat_viewer.cmd outputs\direct_gsplat_xxx --orbit 3 --width 320 --data-kind synthetic
-.venv\Scripts\python.exe -m femto.gsplat.scene_gsplat_acceptance
-
-# 分层检查（新增 import 前跑；输出向上依赖边，期望 0）
 .venv\Scripts\python.exe tools\check_layering.py
-
-# 离线局部工具（不开相机）
-.venv\Scripts\python.exe -m femto.pipeline.local_comparison <local_posed_dataset> <new_dir>      # 同源 A/B/C 几何对照
-.venv\Scripts\python.exe -m femto.pipeline.local_interrupted <session_dir> --output <dir>      # 失跟会话的合格前缀重建
-.venv\Scripts\python.exe -m femto.tracking.local_tracking_replay <session_dir> --output <dir>  # 只读跟踪回放
-.venv\Scripts\python.exe -m femto.pipeline.depth_quality_replay <photo_or_scene_dir>           # 深度补洞回放
-.\start_fixed_rgb_viewer.cmd [结果目录|*.region.zip]                            # 固定 RGB 标注 / 规划工作台
-.\start_region_planner.cmd                                                       # 选 .region.zip 打开规划工作台
+.venv\Scripts\python.exe -X utf8 -c "import importlib,pathlib;ms=[p.with_suffix('').as_posix().replace('/','.') for p in pathlib.Path('femto').rglob('*.py')];[importlib.import_module(m) for m in ms];print(len(ms),'modules OK')"
+C:\FemtoGsplatRuntime\Scripts\python.exe -X utf8 -c "import femto.gsplat.scene_gsplat_trainer,femto.gsplat.scene_gsplat_viewer,femto.gsplat.gsplat_backend,femto.gsplat.scene_single_gs,femto.gsplat.scene_single_gs_viewer,femto.gsplat.scene_gsplat_acceptance;print('gsplat runtime OK')"
+.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests
+C:\FemtoGsplatRuntime\Scripts\python.exe -m unittest discover -s tests -p "test_gsplat_guard.py"
+.venv\Scripts\python.exe -X utf8 -c "from pathlib import Path;from commercial_compliance_check import imported_modules,BLOCKED_IMPORT_PREFIXES;bad=[(f,[m for m in imported_modules(f) if m.startswith(BLOCKED_IMPORT_PREFIXES)]) for f in list(Path('femto').rglob('*.py'))+list(Path('tools').glob('*.py'))];print([b for b in bad if b[1]] or 'clean')"
 ```
 
-需要相机的 GUI 入口：`start_femto_app.cmd`（主界面，`pythonw`）、`start_scene_capture.cmd`、`start_real_scene_demo.cmd`、`start_temporal_fusion.cmd`、`start_top_scan.cmd`。`一键清理历史.cmd` / `清理历史数据.ps1` 把 `datasets/scene_*`、`outputs/complete_demo_*` 及三个 marker 移入回收站（需输入 `DELETE`），不会清 `datasets/latest_scene.txt` 和 `latest_keyframe_reconstruction.txt`，会留下悬空指针。
-
-训练器排错：`set FEMTO_GSPLAT_DEBUG=1` 后 `scene_gsplat_trainer` 打印完整 traceback，否则只输出 `{"status":"blocked","error":...}`。
-
+- `.venv` 全量测试固定 8 个环境跳过；单文件使用 `unittest discover -s tests -p "test_x.py"`，不要用点分模块名。Tk 测试必须在交互桌面运行，期间不要操作鼠标键盘。
+- **不要随手运行 `commercial_compliance_check.py` 主程序**：它会覆盖 `compliance/current_report.json`。这里只允许第六条的受限 import 干扫描。
 ## 架构
 
-2026-09-20 起源码位于 `femto/` 包（约 130 个模块、16 个子包），根目录只保留 `commercial_compliance_check.py`、`.cmd` 入口、`tests/` 与 `tools/`。**文件基名沿用迁移前的名字**（例如 `scene_capture.py` 现在是 `femto/capture/scene_capture.py`），文档和历史记录里的模块名仍然可以直接对应到文件。所有入口一律 `python -m femto.<pkg>.<module>`，从仓库根目录运行；子进程也全部改为 `-m` 加 `cwd=REPO_ROOT`，没有任何按脚本路径启动的地方。`femto/paths.py` 提供 `REPO_ROOT / DATASETS_ROOT / OUTPUTS_ROOT / PHOTOS_ROOT / MODELS_ROOT / LOG_ROOT`，模块内不要再写 `Path(__file__).resolve().parent` 去找数据树。
+源码位于 `femto/` 包；入口从仓库根以 `python -m femto.<pkg>.<module>` 运行，数据树路径来自 `femto.paths`。
 
-子包按依赖层次自下而上排列，**只允许上层 import 下层**（含函数内延迟 import）。`tools/check_layering.py` 按下表顺序检查，当前为 0 条向上依赖；新增 import 前先跑它，若必须让下层调用上层功能，把那段纯函数往下搬而不是加延迟 import：
-
-| 层 | 子包 | 职责 | 主要模块 |
-|---|---|---|---|
-| 0 | `femto` | 叶子工具 | `io_utils`（唯一的 JSON / JSONL / 图片读写实现；默认 `ensure_ascii=False`，兼容旧文件字节时显式传序列化参数；`cv2` 延迟导入，gsplat 运行时可用）、`ui_i18n`（键式文本用 `tr(language, key)`；内联 `(zh, en)` 文本统一用 `pick(language, zh, en)` 选择，不在窗口内重复定义 `t` / `text`；`test_ui_i18n` 要求 zh/en 键集一致）、`paths`（`REPO_ROOT` 等数据树位置与 `child_path`） |
-| 1 | `femto.depth` | 逐帧深度质量 | `depth_quality`（保守补洞，`DepthQualityConfig` 只能收紧）、`depth_error_check`、`temporal_depth_fusion`、`temporal_depth_layer`（时域中间层，含 `prepared_depth` / `load_temporal_confidence`）；置信度层 1.0 原始 / 0.3 修复 / 0 未知，每次派生深度都有同名 float32 confidence |
-| 2 | `femto.dataset` | 数据集 schema 与门禁 | `scene_dataset_validator`、`scene_data_kind`（只有原始 manifest `camera.device=="Orbbec Femto Bolt"` 才是 `real_femto`）、`local_reference`（`CALIBRATION_FILES`、参考证据）、`calibration_files.write_calibration`、`scene_gsplat_split`（严格 train/val/test 分区）、`single_frame_source.resolve_source`（关键帧模型 / 照片的单帧来源解析） |
-| 3 | `femto.geometry` | 反投影与网格原语 | `pose_geometry`（人体分支无畸变针孔）、`depth_cloud`（全项目 K6 反投影的正典实现）、`rgbd_frames`（`distortion_maps` / `prepare_rgbd` / `load_poses`）、`fusion`（Open3D 原生 IO 兜底）、`multiview_texture`、`single_frame_mesh` / `single_frame_quality`、`scene_gaussian`（未训练初值）、`depth_confidence_cloud` |
-| 4 | `femto.hardware` | 唯一 SDK 封装 | `orbbec_rgbd.OrbbecAlignedCamera`。`DEPTH_MODE_SPECS` 四档（`wide_detail` 1024×1024@15、`wide`、`near`、`far`）；主界面固定 `APP_DEPTH_MODE="wide_detail"`（0.25–2.21 m）+ RGB 1920×1080；构造默认却是 `near`（500–3860 mm），`scene_capture` / `top_scan` 用的是默认。`AlignedFrame` 数组可能别名 SDK 缓冲，保留必须 copy |
-| 5 | `femto.reports` | 研发报告 | `scene_quality_report`（实拍验收 spec）、`scene_scale_validation`（尺度测距，`accepted=null` 除非给容差）、`research_validation`（重复测量记录） |
-| 6 | `femto.annotation` | 标注与固定 RGB 几何 | `scene_annotations`（绑定网格 SHA-256 与 W0 来源；`validate_exclusions`）、`scene_annotation_ui`、`scene_surface_picker`、`fixed_rgb_geometry`（K6 去畸变初始照片 → 射线打到 W0 网格）、`measurement_audit`、`region_texture`、`square_brush` |
-| 7 | `femto.tracking` | 里程计与运动检查 | `moving_quality`（`POLICY` 离线与在线共用门限、`pose_diversity`）、`scene_pose_estimator`（顺序 Hybrid RGB-D 里程计 + 双向一致性 + 关键帧筛选 + 背景运动预检）、`scene_live_tracker`（在线跟踪、W0）、`local_tracking_*`、`local_frame_selection`（视角接纳 + `local_workspace` 采集包络 30 mm / 10°）、`local_stability*` |
-| 8 | `femto.temporal` | 固定机位时域 burst | `scene_temporal_fusion`、`temporal_keyframe`（逐帧深度质量 → 连续 confidence → 加权中值 → 关键帧派生数据集；关键帧按钮走这条链）、`scene_static_fusion` / `scene_keyframe`（只剩测试与 temporal 链调用） |
-| 9 | `femto.local` | 局部补采离线阶段 | `local_pose_refinement`（精配准候选）、`local_temporal_support`（五帧支持 Mask）、`local_geometry`（观测支持三角面过滤）、`local_processing`（处理报告 schema 与 HTML）、`local_geometry_diagnostics` |
-| 10 | `femto.planning` | 区域规划工作台 | `region_*`、`metric_region_path`、`serpentine_path`、`route_*`、`path_presentation`、`planning_*`、`coverage_*`、`surface_spacing*`，以及宿主窗口 `fixed_rgb_viewer`（也是 `.region.zip` 规划工作台）和 `export_history` |
-| 11 | `femto.viewer` | 独立进程的查看器 | `scene_demo_viewer`（Open3D 几何查看器 + 表面选点/测距/圈选）、`live_point_cloud`（实时点云子进程）、`view_latest`、`segmented_cloud_viewer`、`depth_debug_viewer`、`export_preview` |
-| 12 | `femto.pipeline` | 端到端编排 | `scene_reconstruction`（K6 去畸变 → 世界变换 → TSDF，补洞帧 10:3 重复积分）、`complete_demo.run_demo`（校验 → 位姿 → 重建 → 转换 → HTML/质量报告 → 查看器）、`synthetic_scene_demo`、`scene_to_nerfstudio`（RDF→RUB 转换、严格分区）、`local_offline`（Windows Job Object 子进程、发布凭证）、`local_comparison` / `local_comparison_viewer`（A/B/C 对照）、`local_parameter_study`、`local_interrupted`、`local_history`（结果目录）、`reconstruction_sources`（关键帧/移动两类成功来源的 marker）、`depth_quality_replay` |
-| 13 | `femto.gsplat` | 产品 3DGS | `scene_gsplat_trainer`（`PROFILES`、`assess_training_input`、`runtime_python`）、`scene_gsplat_data` / `_export` / `_metrics` / `_guard` / `_viewer` / `_acceptance`、`gsplat_backend`（UI 跨环境控制）、`scene_single_gs*`（单帧固定视角 GS）、`scene_3dgs`（内部 Splatfacto 对照，不可运行）。这些模块及 viewer 只能在函数内 `import torch` |
-| 14 | `femto.capture` | 数据集写入与采集工作线程 | `scene_capture`（`create_session`、`depth_preview`、CLI `near` 档 JPEG 采集）、`scan_session`（`ActiveScan`、`save_scan_frame` / `finalize_scan` / `save_rgbd_photo`、运动提示状态机、`wait_for_aligned_frame`）、`local_raw_writer`、`local_live_preview`、`local_capture.LocalCapture`（局部补采工作线程）、`scene_segmented_capture`（历史四档采集）、`top_scan`（人体 MediaPipe 分支） |
-| 15 | `femto.app` | Tk 主界面 | `femto_control_app`（977 行；保留界面编排与兼容转发）、`camera_worker.CameraWorker`（单一 `FemtoCamera` 线程独占 SDK，命令队列 + 事件队列）、`app_model_panel.ModelPanel`（3DGS 训练、查看与验收操作）；`ttk.Notebook` 两页：tab 0 默认为**局部移动补采** `app_local_panel.LocalPanel`，tab 1 为固定采集与高级功能；`SCAN_MODE_KEYS=("keyframe","moving")`，**没有 static 模式**；`scan_session` 的名字仍可从主模块 import，供旧写法的测试使用。另有 `app_local_history`、`app_local_comparison`、`app_temporal` / `app_temporal_panel` |
-
-`tools/` 存放实验与安装脚本（`download_model`、`download_verified_file`、`patch_gsplat_windows`、五个对照实验脚本）、分层检查 `check_layering.py`，以及已执行完毕的迁移脚本 `_migrate_packages.py` / `_restructure_layers.py`；它们在文件头把仓库根目录加入 `sys.path`，以 `python tools\<name>.py` 运行。
+- 分层由低到高固定为：`femto` → `depth` → `dataset` → `geometry` → `hardware` → `reports` → `annotation` → `tracking` → `temporal` → `local` → `planning` → `viewer` → `pipeline` → `gsplat` → `capture` → `app`。
+- **只允许上层 import 下层，函数内延迟 import 也算**。新增 import 前必须运行 `tools/check_layering.py` 并保持 `upward edges: 0`；下层需要上层功能时应下移纯函数，不能用延迟 import 绕过。
+- `femto.gsplat.*`、viewer 和 single-GS 只能在函数内 `import torch`；`femto.io_utils` 不能顶层 import `cv2`。
+- 16 层逐包职责、模块清单和 `tools/` 约定见 [`doc/技术资料/开发环境与架构约定.md`](doc/技术资料/开发环境与架构约定.md)。
 
 ### 三条采集/建模链
 
@@ -194,38 +121,24 @@ CLI `scene_capture.py`（`near` 档、JPEG）与 GUI 采集（`wide_detail`、�
 
 ## Windows / 中文路径注意事项
 
-仓库路径含中文，新代码沿用同样写法：
-
-- **不要用 `cv2.imread` / `cv2.imwrite`**。统一用 `io_utils.imread_unicode` / `imwrite_unicode`（`np.fromfile` + `cv2.imdecode` / `imencode` + `write_bytes`），或 PIL。不要再在模块里复制私有实现，也不要为公共 IO / 几何函数创建 `_read_image`、`json_dump` 等兼容别名；调用点和测试 patch 目标都直接使用公开名。
-- **Open3D 原生读写**走 `fusion.write_point_cloud_safe` / `read_geometry_safe`，先落到 `%LOCALAPPDATA%\FemtoPatientPose\native_io` 的 ASCII 临时路径再搬运。`fusion.py` 在 import 时就读 `os.environ["LOCALAPPDATA"]`，无该变量的环境 import 即崩。
-- 带 `confidence` 属性的自定义 PLY（`depth_confidence_cloud`）被 Open3D 重读时会丢掉该属性，下游融合必须读 depth + `.npy`，不能读回 PLY。
-- **Open3D Filament 资源**在中文路径下加载失败；`scene_demo_viewer._open3d_ascii_resources()` 镜像 wheel 资源到 `%LOCALAPPDATA%\FemtoSceneDemo\open3d_resources_*`，`live_point_cloud` 子进程也依赖它。
-- **CUDA JIT / SPZ C++ reader** 怕中文路径：gsplat 走 `C:\FemtoGsplatRuntime` 联接，SPZ 导出先复制到 ASCII 临时目录（回退 `C:/FemtoSpzTmp`）。MediaPipe 模型复制到 `%LOCALAPPDATA%\FemtoPatientPose\models`。
-- `start_femto_app.cmd` 用 `pythonw.exe`，`femto_control_app.main()` 仅在流为 None 时把 stdout/stderr 追加到 `Log/femto_control_*.log`；GUI 崩溃先看 `Log/`（还有 `OrbbecSDK.log.txt`、`live_point_cloud.log`、`export_preview.log`）。
-- JSON 新写入默认 `ensure_ascii=False`，既有产物必须通过 `io_utils` 的显式参数保留原转义、缩进和 JSONL 分隔符字节；统一用 `encoding="utf-8-sig"` 读（部分 marker 带 BOM）。`.cmd` 里的中文提示需要 `chcp 65001`；gsplat `.cmd` 另设 `PYTHONUTF8=1`、`VSLANG=1033`。
-- `commercial_compliance_check.py` 的 `EXCLUDED_SCAN_DIRS` 含三个 venv 及 `outputs`、`datasets`、`references`、`__pycache__`；`femto/`、`tools/` 和 `tests/` 都会被扫描。AST 扫描用 `ast.parse(read_bytes())`，BOM 不能藏受限导入。`release_ready` 是常量 False；缺 SPZ zlib DLL 是无条件 error，无 SPZ 运行时的机器过不了开发基线。
+- 中文路径图片 IO 统一走 `io_utils.imread_unicode` / `imwrite_unicode` 或 PIL；Open3D 原生读写走 ASCII 临时目录安全包装。不得复制私有 IO 实现或恢复旧兼容别名。
+- CUDA JIT、SPZ、MediaPipe 和 Open3D Filament 的 ASCII 镜像/联接规则不得删除；JSON 统一 `utf-8-sig` 读，既有写入字节格式必须显式保持。
+- `commercial_compliance_check.py` 会扫描 `femto/`、`tools/`、`tests/`；BOM 不能隐藏受限 import，`release_ready` 固定为 False。
+- 完整路径、日志、编码和运行时细节见 [`doc/技术资料/开发环境与架构约定.md`](doc/技术资料/开发环境与架构约定.md)。
 
 ## 目录产物与 marker 文件
 
-这些文本 marker 是各入口之间的唯一耦合点，改输出结构时要一起改：
-
-- `datasets/scene_<ts>/`（高级页/CLI 采集）、`datasets/scene_<ts>_local_<8hex>/`（局部补采）、`datasets/temporal_capture_<ts>/`（时域 burst，`raw/frame_NNN_*.png`，无 `pose/`，校验器会报缺文件）。`datasets/latest_scene.txt` 由 `finalize_scan` 写到 **`session.parent`**（曾经误写全局索引），每次结束含失败会话都会更新。
-- `datasets/scene_*/derived/`：`posed_rgbd_odometry_*`、`fixed_keyframe_*`、`local_posed/`、`processing_<8hex>/`、`live_tracking.jsonl`、`local_reference.json`、`local_capture_report.json`、`local_failure.json`、`live_preview_report.json`、`capture_quality.json`、`temporal_fusion_<ts>/`（独立时域）、`temporal_fusion/<ts>/{keyframe,models}/`（一键关键帧），以及 `latest_keyframe_dataset.txt` / `latest_fixed_dataset.txt` / `latest_posed_dataset.txt`。
-- `outputs/complete_demo_*/`：`demo_summary.json`（`data_kind`、`fixed_camera`、`frame_count`、`nerfstudio`、`publication_*`、`local_measured`、`nerfstudio_skipped_reason`）、`publication.json`、`demo_report.html`、`result_quality.html/json`、`field_acceptance_spec.json`、`processing_report.json/html`、`reconstruction/`（`scene_tsdf_mesh_m.ply/.glb/.obj`、`texture_multiview.png` + `mesh_triangle_uv.npy`、`scene_fused_points_m.ply`、`initial_observed_points_m.ply`、`local_geometry.json`、`reconstruction_report.json`、`gaussian/`、`derived/depth_quality/`）、`nerfstudio/` 或 `nerfstudio_strict_<ns>/`。`reconstruction/` 下还会累积永不覆盖的 `annotations/<stamp>_<uuid8>/`、`measurement_validation/`、`region_paths/path_*/`、`region_projects/*.region.zip`、`region_project_history/`。
-- `outputs/latest_complete_demo.txt`（→ `…/reconstruction`）、`outputs/latest_moving_reconstruction.txt` 与 `latest_keyframe_reconstruction.txt`（→ complete_demo 根，仅 `real_femto` 且发布凭证有效）、`outputs/latest_direct_gsplat.txt`、`outputs/latest_single_gs.txt`、`outputs/local_history_deleted.json`（历史窗口软删除索引，只隐藏不删文件）。
-- `outputs/direct_gsplat_*/`（`training_report.json`、`acceptance_report.json`、`checkpoints/latest.pt`、`model/{trained_gaussians.ply,.spz,model_manifest.json}`、`viewer_stdout.log`、`orbit_render/`）、`outputs/single_gs_*/`、`outputs/local_comparisons/comparison_*/`、`outputs/region_workspaces/<uuid>/`（打开 `.region.zip` 的工作副本）、`outputs/planning_drafts/`。
-- `photos/femto_photo_*/`（`femto-rgbd-photo-v1`，含 `derived/depth_quality/`）、`photos/latest_photo.txt`；`outputs/patient_top_*/`、`outputs/latest_session.txt`（人体分支）。
-- `compliance/current_report.json`（只有合规脚本写，无代码读）、`Log/`、`%LOCALAPPDATA%\FemtoSceneDemo\ui_preferences.json`（语言偏好）。
-- 训练器 `--input` 既可指向 `nerfstudio/` 也可指向 complete demo 根目录（通过 `demo_summary.nerfstudio` 解析）；不传则取 `latest_complete_demo.txt`。
-
-`reconstruction_sources.mode_of` 分类规则：`keyframe` = `real_femto` + `fixed_camera True` + `frame_count 1` + 单帧来源可解析；`moving` = `fixed_camera False` + `frame_count>1` + （`nerfstudio/transforms.json` 存在 或 局部 <12 视角跳过标记）；带 `publication_required` 的结果必须 `published`。启动时 `restore()` 扫描 `outputs/*/demo_summary.json` 重建，不信任目录名。
+- 原始 `datasets/scene_*` 证据不可变；估计位姿、融合、Mesh、标注和规划只能进入 `derived/` 或 `outputs/`，不得覆盖 RGB、Depth、Pose、标定、`frames.jsonl` 或 manifest。
+- `datasets/latest_scene.txt`、派生数据集 marker、`outputs/latest_*` 和 `publication.json` 是入口间受控耦合点；改目录或 marker 时必须同步所有生产者、消费者、恢复逻辑和测试。带 `publication_required` 的结果只有有效 `published` 凭证才能恢复。
+- 每个产物必须保留来源、坐标系、单位、绑定哈希和数据血缘；失败结果与软删除索引不得伪装成成功模型。
+- 完整目录树、文件名、marker 分类与恢复规则见 [`doc/技术资料/数据产物与marker约定.md`](doc/技术资料/数据产物与marker约定.md)。
 
 ## 标注、测量与区域规划
 
-- `annotations.json` `version=1`：绑定源网格绝对路径、几何 SHA-256、`world_rdf`/`metre`、`local_context`、`origin_reference`、`data_layers`（`femto-data-layers-v1`，按字典相等作为绑定键，改它会让所有旧标注/路径/记录不可回读）。每次保存新建目录；回读时 `distance_to_origin_m` 与两点距离总是从 XYZ 重算，磁盘不回写。区域以 `triangle_indices` 为准，边界每次重算，孔洞保留，`exclusion_polygons` ≤32 个、每个 3–512 角点。
-- 固定 RGB 窗口（`fixed_rgb_viewer`）：K6 去畸变初始照片 → 射线打到 W0 网格首次命中；参考深度在量程内时要求 |z_hit − depth| ≤0.01 m 否则 `depth_conflict`；无参考深度但有网格命中记为 `new_support`（青色，不是覆盖率证明）。单 worker、120 s 预算、代际计数丢弃迟到结果。它也是 `.region.zip` 规划工作台的宿主（传文件而非目录时启用规划页签）。
-- 区域规划：`region_project.save_project/open_project` 原子写 ZIP（`femto-region-project-v1`，≤1 GiB，逐文件 SHA），工作副本在 `outputs/region_workspaces/`；路线算法 `region_path.raster_path`（像素行）、`metric_region_path`（网格边最短距离等值线，≈5 mm）、`serpentine_path`（水平蛇形 v1/v2）、`region_coverage`；结果带 `plan_binding`（`femto-plan-binding-v1`：区域指纹、几何 SHA、参数、算法版本、结果摘要），`planning_state.state()` 决定按钮可用；名称/备注不进区域指纹，禁区或三角面变化使旧路径失效；采样预算 200000 点。`route_motion` 只是按弦长恒速的播放演示。
-- `measurement_audit`：手工尺量记录（`femto-manual-distance-test-v1`）与只读证据审计，`physical_accuracy_verified` 恒为 False。
+- 标注、测距、固定 RGB、区域工程和路径必须绑定 W0 / RDF / 米、源几何 SHA-256、原点与 `data_layers`；绑定变化或来源不一致必须拒绝回读，不能重解释裸 XYZ。
+- 这些功能只读原始证据并写派生结果，不得改 RGB、Depth、源网格或 W0。区域三角面、禁区或绑定变化必须使旧路径失效。
+- 坐标、测距、覆盖和路线仅供研发可视化；所有相关 JSON 固定 `execution_ready=false`、`physical_accuracy_verified=false`，不得声称临床精度、接触安全或直接驱动设备。
+- 完整 schema、固定 RGB 射线规则、预算、区域 ZIP 和算法绑定见 [`doc/技术资料/标注测量与规划约定.md`](doc/技术资料/标注测量与规划约定.md)。
 
 ## 测试约定
 

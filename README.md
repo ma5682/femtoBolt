@@ -11,7 +11,7 @@
 - **Semantic / Pose**：人体 3D 关键点、Mask、物体类别和区域标注；
 - **Web Viewer**：React + Three.js，在写实、网格、点云、RGB-D 和标注模式间切换。
 
-完整的坐标约定、数据格式、当前状态和后续修改记录统一维护在 [`技术路线.md`](./技术路线.md)。
+坐标约定、数据格式、当前状态和稳定规则维护在 [`技术路线.md`](./技术路线.md)；完整日期变更记录按月保存在 [`doc/变更记录/`](./doc/变更记录/技术路线_变更记录_2026-09.md)。
 
 当前代码可以继续用于商用产品研发，但尚未达到“可直接对外发布”的合规状态。发布前必须完成 Orbbec Extension EULA/三方 LGPL 义务、安装包 LICENSE/NOTICE、权利人确认、隐私与（若有医疗用途）产品注册评估。详细门禁见 [`COMMERCIAL_READINESS.md`](./COMMERCIAL_READINESS.md)。项目文档分类入口见 [`doc/README.md`](./doc/README.md)。
 
