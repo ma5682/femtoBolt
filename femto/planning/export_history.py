@@ -334,7 +334,8 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
     search=tk.StringVar();ttk.Label(filters,text='区域名称搜索').pack(side='left')
     ttk.Entry(filters,textvariable=search).pack(side='left',fill='x',expand=True,padx=(6,0))
     frame=ttk.Frame(window);frame.pack(fill='both',expand=True,padx=12,pady=(8,0))
-    tree=ttk.Treeview(frame,columns=('time','kind','name','status'),show='headings',selectmode='browse')
+    tree=ttk.Treeview(frame,columns=('time','kind','name','status'),show='tree headings',selectmode='browse')
+    tree.heading('#0',text='区域 / 轨迹');tree.column('#0',width=140)
     for key,title,width,stretch in [('time','导出时间',170,False),('kind','类型',120,False),
                                     ('name','区域名称 / ID',230,True),('status','文件状态',330,True)]:
         tree.heading(key,text=title);tree.column(key,width=width,minwidth=100,stretch=stretch)
@@ -346,8 +347,13 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
     preview=ttk.Button(actions,text='预览区域模型',state='disabled');preview.pack(side='left',padx=(0,6))
     folder_button=ttk.Button(actions,text='打开导出文件夹',state='disabled');folder_button.pack(side='left')
     refresh_button=ttk.Button(actions,text='刷新记录');refresh_button.pack(side='right')
+    trajectory_actions=ttk.Frame(window);trajectory_actions.pack(fill='x',padx=12,pady=(0,12))
+    generate_button=ttk.Button(trajectory_actions,text='生成三维扫描轨迹',state='disabled');generate_button.pack(side='left')
+    diagram_button=ttk.Button(trajectory_actions,text='查看路线图',state='disabled');diagram_button.pack(side='left',padx=6)
+    play_button=ttk.Button(trajectory_actions,text='播放三维轨迹',state='disabled');play_button.pack(side='left')
+    cancel_button=ttk.Button(trajectory_actions,text='取消任务',state='disabled');cancel_button.pack(side='right')
     from femto.planning.planning_io import TaskControl
-    rows=[];mailbox=queue.Queue(maxsize=1);busy=False;control=TaskControl('读取历史区域导出')
+    rows=[];mailbox=queue.Queue(maxsize=1);busy=False;control=TaskControl('读取历史区域导出');completion=None
     def close():
         control.set();window.destroy()
     window.protocol('WM_DELETE_WINDOW',close)
@@ -356,8 +362,18 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
         return rows[int(selection[0])] if selection and selection[0].isdigit() and int(selection[0])<len(rows) else None
     def update(_=None):
         row=selected();asset=row.get('asset') if row else None
-        preview.configure(state='normal' if asset and asset.is_file() else 'disabled')
-        folder_button.configure(state='normal' if row and row['folder'].is_dir() else 'disabled')
+        valid=bool(row and row.get('file_status') not in ('损坏','文件丢失') and not busy)
+        preview.configure(state='normal' if valid and asset and asset.is_file() else 'disabled')
+        folder_button.configure(state='normal' if row and row['folder'].is_dir() and not busy else 'disabled',
+                                text='打开轨迹文件夹' if row and row['kind']=='三维表面轨迹' else '打开导出文件夹')
+        has_trajectory=bool(row and row.get('export_manifest') and any(
+            r.get('parent_manifest')==row['export_manifest'] for r in rows))
+        generate_button.configure(state='normal' if valid and row.get('export_manifest') else 'disabled',
+                                  text='重新生成三维扫描轨迹' if has_trajectory else '生成三维扫描轨迹')
+        preview.configure(text='预览轨迹' if row and row['kind']=='三维表面轨迹' else '预览区域模型')
+        diagram_button.configure(state='normal' if valid and row.get('diagram') else 'disabled')
+        play_button.configure(state='normal' if valid and row['kind']=='三维表面轨迹' else 'disabled')
+        cancel_button.configure(state='normal' if busy and not control.committed else 'disabled')
         if row:
             files=('轨迹模型：' if row.get('kind')=='三维表面轨迹' else '区域模型：')+(asset.name if asset else '文件缺失')
             detail.set(str(row['folder'])+'\n'+files+'\n'+row['status'])
@@ -365,13 +381,25 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
     def render(*_):
         tree.delete(*tree.get_children())
         query=search.get().casefold()
+        parents={r.get('export_manifest'):str(i) for i,r in enumerate(rows) if r.get('export_manifest')}
+        visible={i for i,r in enumerate(rows) if not query or query in r['name'].casefold()}
+        for i in list(visible):
+            parent=parents.get(rows[i].get('parent_manifest'))
+            if parent is not None:visible.add(int(parent))
+        for i,r in enumerate(rows):
+            parent=parents.get(r.get('parent_manifest'))
+            if parent is not None and int(parent) in visible:visible.add(i)
         for i,row in enumerate(rows):
-            if query and query not in row['name'].casefold():continue
-            tree.insert('','end',iid=str(i),values=(row['time'],row['kind'],row['name'],row['status']))
+            if i not in visible or row['kind']!='区域':continue
+            tree.insert('','end',iid=str(i),text='区域',open=True,values=(row['time'],row['kind'],row['name'],row['status']))
+        for i,row in enumerate(rows):
+            if i not in visible or row['kind']=='区域':continue
+            parent=parents.get(row.get('parent_manifest'),'')
+            tree.insert(parent,'end',iid=str(i),text='轨迹' if parent else '来源区域不可用',values=(row['time'],row['kind'],row['name'],row['status']))
         update()
     def open_preview(_=None):
         row=selected()
-        if not row:return
+        if busy or not row or row.get('file_status') in ('损坏','文件丢失'):return
         asset=row.get('asset')
         if not asset or not asset.is_file():
             messagebox.showerror('文件缺失','区域模型文件已移动或删除，请刷新记录。',parent=window);return
@@ -381,33 +409,66 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
         if row:
             try:os.startfile(str(row['folder']))
             except OSError as error:messagebox.showerror('打开失败',str(error),parent=window)
-    def refresh():
-        nonlocal busy,control
+    def start(stage, action, done):
+        nonlocal busy,control,completion
         if busy:return
-        control=TaskControl('读取历史区域导出');busy=True;refresh_button.configure(state='disabled')
-        detail.set('正在读取历史区域导出记录…')
+        control=TaskControl(stage);busy=True;completion=done;refresh_button.configure(state='disabled');update()
+        detail.set(stage+'…')
         def run():
             try:
-                result=[row for row in scan_exports(reconstruction,check=control.check)
-                        if row['kind'] in ('区域','三维表面轨迹')]
+                result=action(control);control.check()
                 mailbox.put_nowait((result,None))
             except Exception as error:
                 try:mailbox.put_nowait((None,str(error)))
                 except queue.Full:pass
         threading.Thread(target=run,daemon=True,name='RegionExportHistory').start();window.after(80,poll)
+    def refresh(focus_folder=None,notice=None):
+        from femto.planning.trajectory_history import history_rows
+        def done(result):
+            nonlocal rows
+            rows=result;render()
+            roots=tree.get_children()
+            focus=next((str(i) for i,r in enumerate(rows) if r['folder']==focus_folder and tree.exists(str(i))),None)
+            if focus or roots:
+                item=focus or roots[0];tree.selection_set(item);tree.see(item);update()
+            if notice:detail.set(notice)
+        start('读取历史区域导出',lambda c:history_rows(reconstruction,c.check),done)
+    def generate_selected():
+        from femto.planning.trajectory_history import generate
+        row=selected()
+        def done(result):
+            notice=f"新轨迹已生成；已删除 {len(result['removed'])} 个旧轨迹目录（不进入回收站）。"
+            if result['warnings']:notice+=' 部分旧文件保留：'+'；'.join(result['warnings'])
+            refresh(result['folder'],notice)
+        if row and row.get('export_manifest'):start('生成三维扫描轨迹',lambda c:generate(row,c),done)
+    def play_selected():
+        from femto.planning.trajectory_history import prepare_playback
+        from femto.planning.path_presentation import show_presentation
+        row=selected()
+        if row and row['kind']=='三维表面轨迹':
+            start('核验并加载历史轨迹',lambda c:prepare_playback(row,reconstruction,c),
+                  lambda result:show_presentation(window,*result))
+    def open_diagram():
+        row=selected()
+        if row and row.get('diagram'):
+            try:os.startfile(str(row['diagram']))
+            except OSError as error:messagebox.showerror('打开失败',str(error),parent=window)
     def poll():
         nonlocal busy,rows
         if not window.winfo_exists():return
         try:result,error=mailbox.get_nowait()
         except queue.Empty:
             detail.set(f'{control.stage} · {time.monotonic()-control.started:.1f} 秒');window.after(80,poll);return
-        busy=False;refresh_button.configure(state='normal')
-        if error:detail.set('读取失败：'+error)
+        busy=False;refresh_button.configure(state='normal');update()
+        if error:detail.set('操作失败：'+error)
         else:
-            rows=result;render();detail.set(f'共找到 {len(rows)} 条历史区域导出记录。')
-            if rows:tree.selection_set('0');tree.see('0');update()
+            try:completion(result)
+            except Exception as error:detail.set('结果无法打开：'+str(error))
     search.trace_add('write',render)
     preview.configure(command=open_preview);folder_button.configure(command=open_folder);refresh_button.configure(command=refresh)
+    generate_button.configure(command=generate_selected);diagram_button.configure(command=open_diagram)
+    play_button.configure(command=play_selected)
+    cancel_button.configure(command=lambda:control.set())
     tree.bind('<<TreeviewSelect>>',update);tree.bind('<Double-1>',open_preview)
     refresh();return window
 

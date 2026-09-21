@@ -72,5 +72,42 @@ class PlanningWorkflowTests(unittest.TestCase):
             deadline=time.monotonic()+.3
             while time.monotonic()<deadline:self.root.update();time.sleep(.02)
 
+    def test_history_region_parent_actions_and_saved_trajectory_playback(self):
+        from femto.planning.export_history import show_history
+        manifest=self.folder/'region_1.json';manifest.write_text('{}')
+        asset=self.folder/'region.glb';asset.touch()
+        region=dict(kind='区域',name='Saved area',time='',status='OK',file_status='OK',
+                    folder=self.folder,source=self.folder/'annotations.json',asset=asset,
+                    export_manifest=manifest,region_index=0)
+        track=dict(kind='三维表面轨迹',name='Saved route',time='',status='OK',file_status='OK',
+                   folder=self.folder,source=self.folder/'trajectory.json',asset=asset,
+                   diagram=asset,parent_manifest=manifest)
+        def children(widget):
+            return [child for w in widget.winfo_children() for child in [w,*children(w)]]
+        def pump():
+            deadline=time.monotonic()+.3
+            while time.monotonic()<deadline:self.root.update();time.sleep(.01)
+        with mock.patch('femto.planning.trajectory_history.history_rows',return_value=[track,region]), \
+             mock.patch('femto.planning.trajectory_history.generate',return_value=dict(folder=self.folder,removed=[],warnings=[])) as generate, \
+             mock.patch('femto.planning.trajectory_history.prepare_playback',return_value=('model','saved-region','plan')) as prepare, \
+             mock.patch('femto.planning.path_presentation.show_presentation') as present:
+            window=show_history(self.root,self.folder);pump()
+            widgets=children(window);tree=next(w for w in widgets if w.winfo_class()=='Treeview')
+            buttons={str(w.cget('text')):w for w in widgets if w.winfo_class()=='TButton'}
+            generate_button=next(w for label,w in buttons.items() if label.endswith('生成三维扫描轨迹'))
+            self.assertEqual(tree.parent('0'),'1')
+            tree.selection_set('1');tree.event_generate('<<TreeviewSelect>>');pump()
+            self.assertEqual(str(generate_button['state']),'normal')
+            self.assertEqual(str(generate_button['text']),'重新生成三维扫描轨迹')
+            self.assertEqual(str(buttons['播放三维轨迹']['state']),'disabled')
+            generate_button.invoke();pump()
+            self.assertEqual(generate.call_args.args[0]['source'],region['source'])
+            tree.selection_set('0');tree.event_generate('<<TreeviewSelect>>');pump()
+            self.assertEqual(str(generate_button['state']),'disabled')
+            self.assertEqual(str(buttons['播放三维轨迹']['state']),'normal')
+            buttons['播放三维轨迹'].invoke();pump()
+            self.assertEqual(prepare.call_args.args[0]['source'],track['source'])
+            present.assert_called_once_with(window,'model','saved-region','plan')
+
 
 if __name__=='__main__':unittest.main()

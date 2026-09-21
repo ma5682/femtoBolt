@@ -77,7 +77,6 @@ class FixedRGBViewer:
         self.project_path=self.result.resolve() if self.result.is_file() else None
         self._plans={};self._requests={};self._plan_errors={};self._saved_plans={};self._saved_requests={};self._plan_buttons={}
         self._project_region_id=None
-        self._last_region_export_manifest=None;self._last_surface_trajectory=None;self._last_trajectory_folder=None
         from femto.planning.planning_drafts import Journal
         self.draft_journal=Journal(self.result);self._draft_ready=False;self._draft_due=None;self._draft_signature=None
         self.model=None;self.busy=False;self.closed=False;self.polygon=[];self.focus=None
@@ -154,10 +153,6 @@ class FixedRGBViewer:
                 self.action(side,zh,en,fn)
         self.action(side,'撤销','Undo',self.undo)
         self.action(save_side,'保存并导出当前结果 GLB / PLY','Save and export current result GLB / PLY',self.save)
-        self.surface_trajectory_button=self.action(save_side,'生成三维扫描轨迹','Generate 3D surface trajectory',self.generate_surface_trajectory)
-        self.surface_trajectory_folder_button=self.action(save_side,'打开三维轨迹文件夹','Open 3D trajectory folder',self.open_surface_trajectory_folder)
-        self.surface_trajectory_diagram_button=self.action(save_side,'打开三维轨迹路线图','Open 3D trajectory diagram',self.open_surface_trajectory_diagram)
-        self.surface_trajectory_play_button=self.action(save_side,'播放三维轨迹','Play 3D surface trajectory',self.play_surface_trajectory)
         if 'annotation_load' not in PRODUCT_HIDDEN_FEATURES:
             self.action(advanced_side,'回读标记','Load annotations',self.load)
         self.action(side,'复位画面','Fit image',self.fit)
@@ -334,7 +329,6 @@ class FixedRGBViewer:
         self.polygon=[];self.reset_brush();self.clear_readout()
         self.model=model
         self._plans={};self._requests={};self._plan_errors={};self._saved_plans={};self._saved_requests={}
-        self._last_region_export_manifest=None;self._last_surface_trajectory=None;self._last_trajectory_folder=None
         self.base=Image.fromarray(model.rgb)
         from femto.annotation.fixed_rgb_geometry import vertex_cloud_view
         self.cloud_view=vertex_cloud_view(model.store.mesh,model.projection)
@@ -595,15 +589,6 @@ class FixedRGBViewer:
             enabled=(state['can_save'] if name.startswith('save_region_project') else
                      state['can_use'] if name in ('present_region_path','export_region_path') else state['can_generate'])
             button.configure(state='normal' if enabled else 'disabled')
-        if hasattr(self,'surface_trajectory_button'):
-            saved_region = (self._last_region_export_manifest is not None and self.model is not None
-                            and not self.model.store.dirty and not self.pending_edits()
-                            and not self.has_selection_draft() and not self.busy)
-            self.surface_trajectory_button.configure(state='normal' if saved_region else 'disabled')
-            ready = self._last_trajectory_folder is not None and Path(self._last_trajectory_folder).is_dir() and not self.busy
-            for button in (self.surface_trajectory_folder_button,self.surface_trajectory_diagram_button,
-                           self.surface_trajectory_play_button):
-                button.configure(state='normal' if ready else 'disabled')
         if hasattr(self,'cancel_task_button'):self.cancel_task_button.configure(state='normal' if self.busy and not getattr(self.task_cancel,'committed',False) else 'disabled')
         if getattr(self,'_draft_ready',False) and not self.busy:self._draft_due=time.monotonic()+.75
         demo=getattr(self.root,'_route_demo_window',None)
@@ -1074,58 +1059,6 @@ class FixedRGBViewer:
         from femto.planning.export_history import show_history
         show_history(self.root,self.model.reconstruction)
 
-    def generate_surface_trajectory(self) -> None:
-        if self.busy or self._last_region_export_manifest is None:return
-        manifest=Path(self._last_region_export_manifest)
-        if not manifest.is_file():
-            self.status.set('区域导出清单已移动或删除，请重新保存并导出区域。');self.update_save_state();return
-        self.operation='trajectory_export';self.status.set('正在生成三维表面扫描轨迹；gap 不补点、不规划跨越运动…')
-        def generate():
-            from femto.planning.mesh_slice_planner import plan_mesh_slice
-            from femto.planning.trajectory_export import export_trajectory
-            check=GeometryBudget(self.operation_cancel()).check
-            trajectory=plan_mesh_slice(manifest,check=check)
-            folder=export_trajectory(trajectory,manifest.parent,check=check,commit=self.operation_commit)
-            return folder,trajectory
-        def done(result):
-            folder,trajectory=result
-            self._last_trajectory_folder=Path(folder);self._last_surface_trajectory=trajectory
-            self.status.set('三维表面轨迹已生成：'+str(folder)+'；gap 处没有规划运动，结果不可直接执行。')
-            self.update_save_state()
-        self.work(generate,done)
-
-    def open_surface_trajectory_folder(self) -> None:
-        if not self._last_trajectory_folder:return
-        import os
-        try:os.startfile(str(self._last_trajectory_folder))
-        except OSError as error:messagebox.showerror('打开失败',str(error),parent=self.root)
-
-    def open_surface_trajectory_diagram(self) -> None:
-        if not self._last_trajectory_folder:return
-        import os
-        folder=Path(self._last_trajectory_folder)
-        path=folder/'route_diagram.png'
-        if not path.is_file():path=folder/'depth_diagram.png'
-        try:os.startfile(str(path))
-        except OSError as error:messagebox.showerror('打开失败',str(error),parent=self.root)
-
-    def play_surface_trajectory(self) -> None:
-        if self.busy or self._last_surface_trajectory is None or self.model is None:return
-        from femto.planning.surface_trajectory import to_player_plan
-        from femto.planning.path_presentation import show_presentation
-        from femto.planning.planning_state import region_signature
-        import copy
-        trajectory=self._last_surface_trajectory;model=self.model
-        region_id=trajectory.source.get('region_id')
-        region=next((item for item in self.model.store.regions if item.get('annotation_id')==region_id),None)
-        if region is None:
-            self.status.set('当前区域与已生成轨迹不一致，请重新保存并生成。');return
-        def is_current():
-            current=next((item for item in model.store.regions if item.get('annotation_id')==region_id),None)
-            return (self.model is model and self._last_surface_trajectory is trajectory and current is not None and
-                    region_signature(current)==trajectory.source.get('region_signature'))
-        show_presentation(self.root,model,copy.deepcopy(region),to_player_plan(trajectory),is_current=is_current)
-
     def save_region_project(self,save_as: bool=False) -> None:
         if self.model is None or self.busy:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
@@ -1363,23 +1296,12 @@ class FixedRGBViewer:
         if self.has_selection_draft():self.status.set(pick(self.language, '请先完成或撤销涂抹。','Finish or undo the polygon first.'));return
         if not self.confirm_pending_edits():return
         model=self.model;store=model.store;folder=model.reconstruction/'annotations'
-        self._last_region_export_manifest=None;self._last_surface_trajectory=None;self._last_trajectory_folder=None
         focus=None
         if self.focus:
             kind,i=self.focus;item=(store.points if kind=='point' else store.regions)[i]
             focus=(kind,item['annotation_id'])
         def saved(path):
             if self.model is not model:return
-            import json
-            try:
-                exported=json.loads(Path(path).read_text(encoding='utf-8-sig'))
-                region_id=focus[1] if focus and focus[0]=='region' else None
-                record=next((item for item in exported.get('regions',[]) if item.get('annotation_id')==region_id),None)
-                if record is None and len(exported.get('regions',[]))==1:record=exported['regions'][0]
-                if record and record.get('region_manifest_file'):
-                    self._last_region_export_manifest=Path(path).parent/record['region_manifest_file']
-            except (OSError, ValueError, KeyError, TypeError):
-                self._last_region_export_manifest=None
             self.refresh_items(focus);self.draw()
             self.status.set(pick(self.language, '已保存：','Saved: ')+str(path))
             self.update_save_state()
