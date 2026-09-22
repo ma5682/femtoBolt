@@ -205,22 +205,30 @@ class BlockGapTests(unittest.TestCase):
                         self.assertTrue(_point_on_triangle(b["xyz_m"], mesh.vertices, triangle))
             self.assertGreater(connectors, 0)
             self.assertEqual(result.statistics["gap_counts"]["disconnected_surface"], 1)
-            # Each block must reproduce exactly what the v2 planner yields for that surface alone:
-            # same rows, same connected turns, same kept gaps, same XYZ. No block gets a relaxed rule.
+            # Each block scans exactly the samples the v2 planner yields for that surface alone
+            # (same rows, same scan XYZ, same non-turn gaps). Block mode may connect more turns only
+            # because it recognises row ends on shared boundary vertices (1e-7 m snap); no gate is relaxed.
             # Visit order is image reading order: the flat patch has the smaller v_min, so it is block 1.
             for block, part in zip(result.blocks["items"], (flat, tilted)):
                 alone_dir = Path(tmp) / f"alone_{block['block_index']}"
                 alone_dir.mkdir()
                 alone = plan_mesh_slice(make_export(alone_dir, part), connect_rows=True)
-                self.assertEqual(block["connected_row_turns"], alone.statistics["connected_row_turns"])
                 self.assertEqual(block["row_count"], alone.statistics["row_count"])
-                self.assertEqual(block["segment_count"], alone.statistics["segment_count"])
-                self.assertEqual(block["gap_counts"], alone.statistics["gap_counts"])
-                self.assertAlmostEqual(block["connector_length_m"], alone.statistics["connector_length_m"])
-                own = [p["xyz_m"] for s in result.ordered_items if isinstance(s, ScanSegment)
-                       and s.block_index == block["block_index"] for p in s.points]
-                theirs = [p["xyz_m"] for s in alone.ordered_items if isinstance(s, ScanSegment) for p in s.points]
-                np.testing.assert_allclose(own, theirs, atol=1e-9)
+                self.assertGreaterEqual(block["connected_row_turns"], alone.statistics["connected_row_turns"])
+                self.assertEqual({k: v for k, v in block["gap_counts"].items() if k != "row_turn"},
+                                 {k: v for k, v in alone.statistics["gap_counts"].items() if k != "row_turn"})
+                # Connected turns swallow the next row's first sample into the connector run, so
+                # compare against the unconnected v1 slice samples: every v1 sample is still present
+                # (as scan or as the connector's landing point) and no other scan sample was added.
+                v1 = plan_mesh_slice(make_export(alone_dir / "v1", part) if (alone_dir / "v1").mkdir() is None else None)
+                slice_samples = {tuple(np.round(p["xyz_m"], 9)) for s in v1.ordered_items if isinstance(s, ScanSegment) for p in s.points}
+                own_points = [p for s in result.ordered_items if isinstance(s, ScanSegment)
+                              and s.block_index == block["block_index"] for p in s.points]
+                own_scan = {tuple(np.round(p["xyz_m"], 9)) for p in own_points if p.get("role") != "connector"}
+                own_all = {tuple(np.round(p["xyz_m"], 9)) for p in own_points}
+                self.assertTrue(own_scan <= slice_samples)
+                self.assertTrue(slice_samples <= own_all)
+                self.assertEqual(block["connected_row_turns"], block["row_count"] - 1)
 
 
 class BlockStatusTests(unittest.TestCase):
@@ -348,7 +356,7 @@ class BlockCompatibilityTests(unittest.TestCase):
             blocks_csv = (folder / "blocks.csv").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(blocks_csv), 1 + result.statistics["block_count"])
             gap_rows = (folder / "gaps.csv").read_text(encoding="utf-8").splitlines()
-            self.assertTrue(gap_rows[0].endswith("block_from,block_to"))
+            self.assertTrue(gap_rows[0].endswith("block_from,block_to,row_turn_failure_reason"))
             payload = json.loads((folder / "trajectory.json").read_text(encoding="utf-8"))
             payload["blocks"]["items"][0]["face_count"] += 1
             (folder / "trajectory.json").write_text(json.dumps(payload), encoding="utf-8")
@@ -388,6 +396,94 @@ class BlockCompatibilityTests(unittest.TestCase):
             payload["blocks"] = v3.to_dict()["blocks"]
             with self.assertRaises(ValueError):
                 SurfaceTrajectory.from_dict(payload)
+
+
+class RowOrderAndDiagnosticTests(unittest.TestCase):
+    def test_rows_follow_block_sweep_axis_not_image_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # A strongly tilted patch: image v and the block's e2 disagree in scale, so
+            # ordering by image rows would not visit slices in geometric order.
+            tilted = rotated(grid_mesh(0.04, 0.03, 0.0025), 55, [1, 0, 0])
+            source = make_export(tmp, tilted)
+            result = plan(source)
+            block = result.blocks["items"][0]
+            e2 = np.asarray(block["sweep_frame"]["e2"])
+            origin = np.asarray(block["sweep_frame"]["origin"])
+            rows = {}
+            for segment in result.ordered_items:
+                if isinstance(segment, ScanSegment):
+                    for point in segment.points:
+                        if point.get("role") != "connector":
+                            rows.setdefault(point["row_index"], []).append(float((np.asarray(point["xyz_m"]) - origin) @ e2))
+            positions = [np.mean(rows[index]) for index in sorted(rows)]
+            steps = np.diff(positions)
+            self.assertTrue(np.all(steps > 0) or np.all(steps < 0), "rows must be monotone along e2")
+            np.testing.assert_allclose(np.abs(steps), 0.005, atol=1e-6)
+            self.assertEqual(result.gap_report["row_turn_failure_counts"].get("non_adjacent_slice", 0), 0)
+            self.assertEqual(block["connected_row_turns"], block["row_count"] - 1)
+            # start_corner still names the image-side end: top_left begins at the smallest pixel v row.
+            first_v = np.mean([p["pixel"][1] for p in result.ordered_items[0].points[:5]])
+            bottom = plan(source, start_corner="bottom_left")
+            last_v = np.mean([p["pixel"][1] for p in bottom.ordered_items[0].points[:5]])
+            self.assertLess(first_v, last_v)
+            self.assertEqual(plan(source).to_dict(), result.to_dict())
+
+    def test_row_turn_failures_carry_diagnostic_reason_without_changing_decisions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # A forbidden strip over the right-hand boundary blocks the turns that would run through it.
+            source = make_export(tmp, forbidden=[[110, 98], [114, 98], [114, 102], [110, 102]])
+            result = plan(source)
+            turns = [g for g in gaps(result) if g.reason == "row_turn"]
+            self.assertTrue(turns)
+            for gap in turns:
+                self.assertIn(gap.detail["row_turn_failure_reason"], {"no_boundary_path_in_band", "ambiguous_boundary",
+                                                                      "endpoint_not_on_boundary", "forbidden_blocked"})
+                self.assertEqual(gap.detail["decision_use"], "none")
+            counts = result.gap_report["row_turn_failure_counts"]
+            self.assertEqual(sum(counts.values()), len(turns))
+            self.assertEqual(sum(b.get("row_turn_failure_counts", {}).get(k, 0) for b in result.blocks["items"] for k in counts),
+                             len(turns))
+            self.assertEqual(result.statistics["connected_row_turns"] + len(turns),
+                             result.statistics["row_count"] - result.statistics["plannable_block_count"])
+            folder = export_trajectory(result, Path(tmp) / "results", include_visuals=False)
+            header, *rows = (folder / "gaps.csv").read_text(encoding="utf-8").splitlines()
+            column = header.split(",").index("row_turn_failure_reason")
+            self.assertEqual({row.split(",")[column] for row in rows if row.split(",")[1] == "row_turn"},
+                             set(counts))
+            self.assertEqual(load_trajectory(folder).to_dict(), result.to_dict())
+            payload = result.to_dict()
+            gap_item = next(item for item in payload["ordered_items"] if item["kind"] == "gap" and item["reason"] == "row_turn")
+            gap_item["detail"]["row_turn_failure_reason"] = "made_up"
+            with self.assertRaises(ValueError):
+                SurfaceTrajectory.from_dict(payload)
+            v2 = plan_mesh_slice(source, connect_rows=True).to_dict()
+            v2_gap = next(item for item in v2["ordered_items"] if item["kind"] == "gap" and item["reason"] == "row_turn")
+            v2_gap["detail"]["row_turn_failure_reason"] = "no_boundary_path_in_band"
+            with self.assertRaises(ValueError):
+                SurfaceTrajectory.from_dict(v2)
+
+    def test_spacing_report_separates_outliers_and_old_v3_files_need_regeneration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = make_export(tmp, grid_mesh(0.06, 0.03, 0.002, hole=(-0.02, 0.02, -0.004, 0.004)))
+            result = plan(source)
+            report = result.spacing_report
+            self.assertEqual(report["spacing_outlier_threshold_mm"], 10.0)
+            self.assertEqual(report["raw_spacing_statistics"], report["distribution"])
+            self.assertLessEqual(report["effective_spacing_statistics"]["max_mm"], 10.0)
+            self.assertEqual(report["spacing_outlier_count"] + sum(1 for r in report["measurements"]
+                             if r["surface_graph_distance_mm"] is not None and r["surface_graph_distance_mm"] <= 10.0),
+                             sum(1 for r in report["measurements"] if r["surface_graph_distance_mm"] is not None))
+            from femto.planning.trajectory_diagram import report_text
+            self.assertIn("有效行距", report_text(result))
+            folder = export_trajectory(result, Path(tmp) / "results", include_visuals=False)
+            payload = json.loads((folder / "trajectory.json").read_text(encoding="utf-8"))
+            payload["planner"]["algorithm_version"] = "mesh-slice-serpentine-v3"
+            (folder / "trajectory.json").write_text(json.dumps(payload), encoding="utf-8")
+            from femto.planning.trajectory_export import write_files_manifest
+            write_files_manifest(folder, SurfaceTrajectory.from_dict(payload))
+            self.assertEqual(load_trajectory(folder, reproduce=False).planner["algorithm_version"], "mesh-slice-serpentine-v3")
+            with self.assertRaisesRegex(ValueError, "older algorithm version"):
+                load_trajectory(folder)
 
 
 class BlockPlaybackTests(unittest.TestCase):

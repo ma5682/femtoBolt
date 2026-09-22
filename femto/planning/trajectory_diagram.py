@@ -255,6 +255,18 @@ def export_glb(path: str | Path, trajectory: SurfaceTrajectory) -> None:
     Path(path).write_bytes(scene.export(file_type="glb"))
 
 
+def _spacing_outlier_lines(trajectory: SurfaceTrajectory) -> list[str]:
+    report = trajectory.spacing_report
+    if "effective_spacing_statistics" not in report:
+        return []
+    effective = report["effective_spacing_statistics"]
+    return [f"有效行距（排除 > {report['spacing_outlier_threshold_mm']:g} mm 的跨孔洞/缺面上界，共 "
+            f"{report['spacing_outlier_count']} 个异常样本，占 "
+            f"{(report['spacing_outlier_ratio'] or 0)*100:.1f}%）：" +
+            (json.dumps(effective, ensure_ascii=False, sort_keys=True) if effective else "无有效样本"),
+            "异常样本是图最短路上界，通常跨越孔洞或缺失表面，不代表真实排行间距；上一行为含异常值的原始分布。"]
+
+
 def _block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
     stats = trajectory.statistics
     if trajectory.blocks is None or "block_count" not in stats:
@@ -265,6 +277,9 @@ def _block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
         f"覆盖状态：{'全部块已规划' if stats['coverage_status']=='complete' else '部分覆盖，未规划块不在轨迹内'}",
         f"块间断开 gap：{stats['inter_block_gap_count']} 处（disconnected_surface）；块内扫描先完成再进入下一块；"
         "块访问顺序：参考图像从起始角开始的阅读顺序（不可投影块排最后）",
+        f"块内换行：应连接 {stats['row_count'] - stats['plannable_block_count']} 处，已贴面折返 {stats.get('connected_row_turns', 0)} 处，"
+        f"仍为 row_turn gap {stats['gap_counts'].get('row_turn', 0)} 处；未连接原因（仅诊断）："
+        + json.dumps(trajectory.gap_report.get("row_turn_failure_counts", {}), ensure_ascii=False, sort_keys=True),
         "上述扫描方向/法线来源仅为整体展示坐标系；每块扫描方向按块单独计算，见 blocks 记录。",
     ]
     for block in trajectory.blocks["items"]:
@@ -274,7 +289,8 @@ def _block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
                 f"{block['segment_count']} 段 / {block['gap_count']} gap / {block['point_count']} 点，扫描 "
                 f"{block['scan_length_m']*1000:.3f} mm，折返 {block['connected_row_turns']} 处 / "
                 f"{block['connector_length_m']*1000:.3f} mm，方向 {block['sweep_frame']['direction_source']}，"
-                f"法线 {block['sweep_frame']['normal_source']}")
+                f"法线 {block['sweep_frame']['normal_source']}，未连换行原因 "
+                + json.dumps(block.get('row_turn_failure_counts', {}), ensure_ascii=False, sort_keys=True))
         else:
             lines.append(f"  块 {block['block_index']+1}：未规划，{block['face_count']} 面，原因 {block['reason']}：{block['message']}")
     return lines
@@ -294,6 +310,7 @@ def report_text(trajectory: SurfaceTrajectory) -> str:
         "gap 分类：" + json.dumps(stats["gap_counts"], ensure_ascii=False, sort_keys=True),
         f"扫描方向来源：{frame['direction_source']}；法线来源：{frame['normal_source']}；特征值比：{frame['ratios']}",
         "实际网格间距分布（mm）：" + (json.dumps(spacing, ensure_ascii=False, sort_keys=True) if spacing else "无可测样本"),
+        *_spacing_outlier_lines(trajectory),
         "参考 RGB 路线图：" + json.dumps(route_status, ensure_ascii=False, sort_keys=True),
         *_block_report_lines(trajectory),
         "平面等距不等于曲面等距；黄色行表示采样间距报告超出容差。",

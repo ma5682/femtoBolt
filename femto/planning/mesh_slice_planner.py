@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 from types import SimpleNamespace
@@ -550,6 +551,52 @@ def _order_rows(records_by_slice: list[dict[str, Any]], params: dict[str, Any],
     return ordered_records
 
 
+def _image_axis_signs(origin, e1, e2, intrinsic, image_size):
+    """Sign of image u along e1 and image v along e2 at the block origin; +1 when unprojectable.
+
+    The reference image only decides which end of each sweep axis the start corner
+    names; it never orders rows or segments."""
+    signs = []
+    base = _project(origin, intrinsic, image_size)
+    for axis, index in ((e1, 0), (e2, 1)):
+        moved = _project(origin + axis * 1e-3, intrinsic, image_size)
+        delta = None if base is None or moved is None else moved[index] - base[index]
+        signs.append(-1.0 if delta is not None and delta < 0 else 1.0)
+    return signs[0], signs[1]
+
+
+def _order_rows_by_frame(records_by_slice, params, row_offset, origin, e1, e2, intrinsic, image_size):
+    """Block-mode order: rows by slice position along e2, segments by e1, serpentine parity.
+
+    Ties on position fall back to slice_index then the smallest triangle index; image
+    coordinates are never a sort key."""
+    u_sign, v_sign = _image_axis_signs(origin, e1, e2, intrinsic, image_size)
+    start_high_e2 = ("top" in params["start_corner"]) == (v_sign < 0)
+    records_by_slice.sort(key=lambda row: (row["position_m"], row["slice_index"]), reverse=start_high_e2)
+    ordered_records = []
+    for local_row, row in enumerate(records_by_slice):
+        row_index = row_offset + local_row
+        left_to_right = ("right" not in params["start_corner"]) ^ bool(local_row % 2)
+        increasing_e1 = left_to_right == (u_sign > 0)
+        for candidate in row["candidates"]:
+            xyz = np.asarray([point["xyz_m"] for point in candidate["points"]])
+            candidate["mean_s"] = float(((xyz - origin) @ e1).mean())
+            candidate["min_face"] = min(point["triangle_index"] for point in candidate["points"])
+        candidates = sorted(row["candidates"], key=lambda item: (item["mean_s"], item["min_face"]),
+                            reverse=not increasing_e1)
+        for candidate in candidates:
+            points = candidate["points"]
+            first = float((np.asarray(points[0]["xyz_m"]) - origin) @ e1)
+            last = float((np.asarray(points[-1]["xyz_m"]) - origin) @ e1)
+            if (first <= last) != increasing_e1:
+                points = list(reversed(points))
+            candidate.update(points=points, row_index=row_index,
+                             slice_index=row["slice_index"], position_m=row["position_m"],
+                             row_dropped=row["dropped"])
+            ordered_records.append(candidate)
+    return ordered_records
+
+
 def _build_items(ordered_records: list[dict[str, Any]], region: dict[str, Any],
                  intrinsic: np.ndarray, image_size: np.ndarray, step_m: float,
                  outer: dict[int, np.ndarray | None], origin: np.ndarray,
@@ -731,15 +778,35 @@ def _plan_block(vertices: np.ndarray, faces: np.ndarray, descriptor: dict[str, A
     if not records_by_slice:
         raise Unplannable("no_supported_segment", "No supported scan segment was produced",
                           details={"dropped_fragments": dropped_fragments})
-    ordered_records = _order_rows(records_by_slice, params, row_offset)
+    ordered_records = _order_rows_by_frame(records_by_slice, params, row_offset, origin, e1, e2,
+                                           intrinsic, image_size)
     segments, gaps = _build_items(ordered_records, region, intrinsic, image_size, step_m, outer, origin, e1, e2)
     # The boundary graph is built from this block's faces only, indexed in the whole PLY.
-    router = BoundaryTurns(SimpleNamespace(vertices=vertices, faces=faces), region, frame, check, face_ids=ids)
+    # Snap tolerance matches the 1e-7 m chain quantisation so a row end at a shared boundary
+    # vertex is recognised; v2 (connect_row_turns) keeps its original 1e-8 for reproducibility.
+    router = BoundaryTurns(SimpleNamespace(vertices=vertices, faces=faces), region, frame, check,
+                           face_ids=ids, snap_tolerance_m=1e-7)
+    eligible = _eligible_turns(ordered_records)
     chains, kept, connected, connector_length, added = connect_segments(
-        segments, gaps, _eligible_turns(ordered_records), router, step_m, check, e2=e2, used=budget["points"])
+        segments, gaps, eligible, router, step_m, check, e2=e2, used=budget["points"])
     budget["points"] += added
+    # Diagnostic only: why a row turn stayed a gap. Never changes any decision.
+    diagnosed = []
+    failure_counts = Counter()
+    for gap in kept:
+        if gap.reason != "row_turn":
+            diagnosed.append(gap)
+            continue
+        check()
+        if gap.gap_index not in eligible:
+            why = "non_adjacent_slice"
+        else:
+            why = router.diagnose(segments[gap.gap_index].points[-1], segments[gap.gap_index + 1].points[0], step_m, e2)
+        failure_counts[why] += 1
+        diagnosed.append(replace(gap, detail=dict(gap.detail, row_turn_failure_reason=why)))
     return {"frame": frame, "ordered_records": ordered_records, "segments": segments, "chains": chains,
-            "kept": kept, "connected": connected, "connector_length_m": connector_length,
+            "kept": diagnosed, "connected": connected, "connector_length_m": connector_length,
+            "row_turn_failure_counts": dict(sorted(failure_counts.items())),
             "dropped_fragments": dropped_fragments, "lengths": _segment_lengths(segments)}
 
 
@@ -751,8 +818,16 @@ def _merge_spacing(reports: list[dict[str, Any]], params: dict[str, Any], budget
     counts = {status: sum(report["counts"][status] for report in reports)
               for status in ("within_bounds", "outside_bounds", "uncertain_bounds", "unmeasurable")}
     values = [row["surface_graph_distance_mm"] for row in rows if row["surface_graph_distance_mm"] is not None]
+    outlier_threshold = 2 * target
+    effective = [value for value in values if value <= outlier_threshold]
     template = reports[0]
     return dict(schema=template["schema"], target_spacing_mm=target, tolerance_mm=template["tolerance_mm"],
+                raw_spacing_statistics=spacing_distribution(values, target),
+                effective_spacing_statistics=spacing_distribution(effective, target),
+                spacing_outlier_threshold_mm=outlier_threshold,
+                spacing_outlier_count=len(values) - len(effective),
+                spacing_outlier_ratio=(len(values) - len(effective)) / len(values) if values else None,
+                spacing_outlier_semantics="graph_upper_bounds_above_2x_nominal_spacing_usually_cross_holes_or_missing_surface_not_row_pitch",
                 method=template["method"], direction=template["direction"], sampling=template["sampling"],
                 sample_count=len(rows),
                 status="within_sampled_bounds" if rows and counts["within_bounds"] == len(rows) else "not_fully_verified",
@@ -854,7 +929,8 @@ def _plan_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: trimesh.Tr
                       gap_count=len(kept), gap_counts=dict(sorted(Counter(g.reason for g in kept).items())),
                       point_count=route_end - offsets["route"], row_index_first=offsets["row"], row_count=row_count,
                       scan_length_m=scan_length, connector_length_m=planned["connector_length_m"],
-                      connected_row_turns=planned["connected"], dropped_fragment_count=len(planned["dropped_fragments"]),
+                      connected_row_turns=planned["connected"], row_turn_failure_counts=planned["row_turn_failure_counts"],
+                      dropped_fragment_count=len(planned["dropped_fragments"]),
                       **_depth_statistics(depth))
         blocks.append(record)
         offsets.update(row=offsets["row"] + row_count, route=route_end,
@@ -907,7 +983,10 @@ def _plan_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: trimesh.Tr
     trajectory = SurfaceTrajectory(
         manifest["origin_reference"], planner, _source_record(manifest_path, manifest), items, statistics,
         {"counts": dict(sorted(gap_counts.items())), "dropped_fragments": dropped_fragments,
-         "dropped_fragment_count": len(dropped_fragments), "unplannable_blocks": unplannable},
+         "dropped_fragment_count": len(dropped_fragments), "unplannable_blocks": unplannable,
+         "row_turn_failure_counts": dict(sorted(Counter(
+             gap.detail["row_turn_failure_reason"] for gap in final_gaps
+             if gap.reason == "row_turn" and "row_turn_failure_reason" in gap.detail).items()))},
         _merge_spacing(spacing_reports, params, spacing_budget, scan_rows), row_report,
         manifest.get("data_layers"), None, block_record)
     validate_trajectory(trajectory, mesh=mesh)

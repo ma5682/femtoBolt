@@ -18,10 +18,13 @@ def _intersects(a, b, c, d):
 
 
 class BoundaryTurns:
-    def __init__(self, mesh, region, frame, check, face_ids=None):
+    def __init__(self, mesh, region, frame, check, face_ids=None, snap_tolerance_m=1e-8):
         from femto.planning.mesh_slice_planner import _forbidden_polygons
         self.vertices=np.asarray(mesh.vertices,float)
         self.check=check;self.frame=frame
+        # Numerical tolerance for recognising a row end that lies on a boundary edge
+        # (slice ends at shared vertices differ by ~1e-8 m between triangles). Not a geometry gate.
+        self.snap=float(snap_tolerance_m)
         view=region['view_reference']
         self.k=np.asarray(view['undistorted_intrinsic']);self.size=np.asarray(view['image_size'])
         self.polygons=_forbidden_polygons(region)
@@ -73,7 +76,7 @@ class BoundaryTurns:
             on=[]
             for node,p in points.items():
                 t=float((p-u)@delta)/den
-                if -1e-9<=t<=1+1e-9 and np.linalg.norm(p-(u+np.clip(t,0,1)*delta))<=1e-8:
+                if -1e-9<=t<=1+1e-9 and np.linalg.norm(p-(u+np.clip(t,0,1)*delta))<=self.snap:
                     on.append(node);link(node,i,face);link(node,j,face)
             if len(on)==2:link(-2,-1,face)
         distances={-2:0.};previous={};queue=[(0.,-2)]
@@ -103,6 +106,32 @@ class BoundaryTurns:
                     triangle_index=int(face),geometry_support='measured_mesh',role='connector',
                     row_index=right['row_index']))
         return samples
+
+
+    def _distance_to_boundary(self, point):
+        best=float('inf');p=np.asarray(point,float)
+        for i,j,_ in self.edges:
+            u,v=self.vertices[i],self.vertices[j];delta=v-u;den=float(delta@delta)
+            if den<=1e-24:continue
+            t=float(np.clip((p-u)@delta/den,0,1))
+            best=min(best,float(np.linalg.norm(p-(u+t*delta))))
+        return best
+
+    def diagnose(self, left, right, step, e2=None):
+        """Why no measured boundary turn exists between two row ends; diagnostic only, never a decision."""
+        if max(self._distance_to_boundary(left['xyz_m']),self._distance_to_boundary(right['xyz_m']))>self.snap:
+            return 'endpoint_not_on_boundary'
+        polygons=self.polygons
+        try:
+            self.polygons=[]
+            if self.route(left,right,step,e2):return 'forbidden_blocked'
+        finally:self.polygons=polygons
+        ambiguous=self.ambiguous
+        try:
+            self.ambiguous=set()
+            if self.route(left,right,step,e2):return 'ambiguous_boundary'
+        finally:self.ambiguous=ambiguous
+        return 'no_boundary_path_in_band'
 
 
 def connect_segments(segments, gaps, eligible, router, step, check, *, e2=None, used=0):

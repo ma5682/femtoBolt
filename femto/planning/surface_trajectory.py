@@ -18,7 +18,12 @@ GAP_REASONS = {
     "unsupported_geometry", "row_turn",
 }
 CONNECTED_ALGORITHM = "mesh-slice-serpentine-v2"
-BLOCK_ALGORITHM = "mesh-slice-serpentine-v3"
+BLOCK_ALGORITHM = "mesh-slice-serpentine-v3.1"
+BLOCK_ALGORITHMS = ("mesh-slice-serpentine-v3", BLOCK_ALGORITHM)
+ROW_TURN_FAILURE_REASONS = {
+    "non_adjacent_slice", "endpoint_not_on_boundary", "forbidden_blocked",
+    "ambiguous_boundary", "no_boundary_path_in_band",
+}
 BLOCKS_SCHEMA = "femto-surface-trajectory-blocks-v1"
 POINT_BUDGET = 200_000
 BLOCK_REASONS = {
@@ -319,14 +324,14 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
     parameters = trajectory.planner.get("parameters", {})
     sample_step_m = float(parameters.get("sample_step_mm", 1.0)) / 1000
     version = trajectory.planner.get("algorithm_version")
-    block_mode = version == BLOCK_ALGORITHM
-    connected_rows = version in (CONNECTED_ALGORITHM, BLOCK_ALGORITHM)
+    block_mode = version in BLOCK_ALGORITHMS
+    connected_rows = version == CONNECTED_ALGORITHM or block_mode
     if connected_rows and parameters.get("connect_rows") is not True:
         raise ValueError("Connected row trajectory requires connect_rows=True")
     if block_mode and parameters.get("block_planning") is not True:
         raise ValueError("Block trajectory requires block_planning=True")
     if not block_mode and trajectory.blocks is not None:
-        raise ValueError("Block records are only valid for mesh-slice-serpentine-v3")
+        raise ValueError("Block records are only valid for block-mode algorithm versions")
     blocks = _validated_blocks(trajectory) if block_mode else None
     for index, item in enumerate(trajectory.ordered_items):
         if bool(index % 2) != isinstance(item, Gap):
@@ -377,9 +382,15 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
         else:
             if type(item.gap_index) is not int or item.gap_index != len(gaps) or item.reason not in GAP_REASONS:
                 raise ValueError("Invalid gap index/reason")
-            if item.detail != {"inferred_cause": item.detail.get("inferred_cause"),
+            expected_detail = {"inferred_cause": item.detail.get("inferred_cause"),
                                "method": "sweep_plane_outer_loop_containment",
-                               "confidence": "heuristic", "decision_use": "none"}:
+                               "confidence": "heuristic", "decision_use": "none"}
+            failure = item.detail.get("row_turn_failure_reason") if isinstance(item.detail, dict) else None
+            if failure is not None:
+                if not block_mode or item.reason != "row_turn" or failure not in ROW_TURN_FAILURE_REASONS:
+                    raise ValueError("row_turn_failure_reason is only a diagnostic on block-mode row_turn gaps")
+                expected_detail["row_turn_failure_reason"] = failure
+            if item.detail != expected_detail:
                 raise ValueError("Invalid informational gap detail")
             _finite_xyz(item.previous_point.get("xyz_m"), "gap previous xyz_m")
             _finite_xyz(item.next_point.get("xyz_m"), "gap next xyz_m")
