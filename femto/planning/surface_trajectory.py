@@ -17,6 +17,16 @@ GAP_REASONS = {
     "forbidden_region", "disconnected_surface", "surface_gap",
     "unsupported_geometry", "row_turn",
 }
+CONNECTED_ALGORITHM = "mesh-slice-serpentine-v2"
+BLOCK_ALGORITHM = "mesh-slice-serpentine-v3"
+BLOCKS_SCHEMA = "femto-surface-trajectory-blocks-v1"
+POINT_BUDGET = 200_000
+BLOCK_REASONS = {
+    "insufficient_extent", "no_positive_area", "axis_perpendicular",
+    "narrower_than_row_spacing", "no_supported_segment",
+}
+BLOCK_STATISTIC_KEYS = ("segment_count", "gap_count", "point_count", "row_count",
+                        "scan_length_m", "connector_length_m", "connected_row_turns")
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -41,10 +51,14 @@ class ScanSegment:
     segment_index: int
     row_index: int
     points: list[dict[str, Any]]
+    block_index: Any = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"kind": "scan_segment", "segment_index": self.segment_index,
-                "row_index": self.row_index, "points": self.points}
+        result = {"kind": "scan_segment", "segment_index": self.segment_index,
+                  "row_index": self.row_index, "points": self.points}
+        if self.block_index is not None:
+            result["block_index"] = self.block_index
+        return result
 
     @classmethod
     def from_dict(cls, value: Any) -> "ScanSegment":
@@ -53,7 +67,7 @@ class ScanSegment:
         points = value.get("points")
         if not isinstance(points, list) or len(points) < 2:
             raise ValueError("A scan segment needs at least two supported points")
-        return cls(value.get("segment_index"), value.get("row_index"), points)
+        return cls(value.get("segment_index"), value.get("row_index"), points, value.get("block_index"))
 
 
 @dataclass(frozen=True)
@@ -97,6 +111,7 @@ class SurfaceTrajectory:
     row_report: list[dict[str, Any]]
     data_layers: Any = None
     route_diagram_status: Any = None
+    blocks: Any = None
 
     def to_dict(self) -> dict[str, Any]:
         items = [item.to_dict() for item in self.ordered_items]
@@ -115,6 +130,8 @@ class SurfaceTrajectory:
             result["data_layers"] = self.data_layers
         if self.route_diagram_status is not None:
             result["route_diagram_status"] = self.route_diagram_status
+        if self.blocks is not None:
+            result["blocks"] = self.blocks
         return result
 
     @classmethod
@@ -136,7 +153,8 @@ class SurfaceTrajectory:
         result = cls(value.get("origin_reference"), value.get("planner"), value.get("source"),
                      items, value.get("statistics"), value.get("gap_report"),
                      value.get("spacing_report"), value.get("row_report"),
-                     value.get("data_layers"), value.get("route_diagram_status"))
+                     value.get("data_layers"), value.get("route_diagram_status"),
+                     value.get("blocks"))
         validate_trajectory(result, expected_result_sha256=value.get("result_sha256"))
         return result
 
@@ -174,6 +192,115 @@ def _point_on_triangle(point: Any, vertices: np.ndarray, triangle: np.ndarray,
             and float(sum(uv)) <= 1 + barycentric_tolerance)
 
 
+def face_components(faces: np.ndarray) -> np.ndarray:
+    """Deterministic face connectivity labels: faces sharing an edge share a label.
+
+    Labels are 0-based and numbered by ascending smallest face index, so the
+    same PLY always yields the same component ids. No vertex welding or
+    tolerance merging: topology only."""
+    faces = np.asarray(faces, dtype=np.int64)
+    parent = np.arange(len(faces), dtype=np.int64)
+
+    def find(value: int) -> int:
+        while parent[value] != value:
+            parent[value] = parent[parent[value]]
+            value = int(parent[value])
+        return value
+
+    def union(left: int, right: int) -> None:
+        a, b = find(left), find(right)
+        if a != b:
+            if a > b:
+                a, b = b, a
+            parent[b] = a
+
+    incident: dict[tuple[int, int], int] = {}
+    for face_index, face in enumerate(faces):
+        for a, b in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
+            edge = tuple(sorted((int(a), int(b))))
+            if edge in incident:
+                union(face_index, incident[edge])
+            else:
+                incident[edge] = face_index
+    roots = [find(i) for i in range(len(faces))]
+    mapping = {root: index for index, root in enumerate(sorted(set(roots)))}
+    return np.asarray([mapping[root] for root in roots], dtype=np.int64)
+
+
+def face_list_sha256(face_indices: Any) -> str:
+    return hashlib.sha256(canonical_json_bytes([int(v) for v in face_indices])).hexdigest()
+
+
+def _validated_blocks(trajectory: SurfaceTrajectory) -> list[dict[str, Any]]:
+    blocks = trajectory.blocks
+    if (not isinstance(blocks, dict) or blocks.get("schema") != BLOCKS_SCHEMA or
+            not isinstance(blocks.get("items"), list) or not blocks["items"]):
+        raise ValueError("Block trajectory requires a femto-surface-trajectory-blocks-v1 record")
+    for position, item in enumerate(blocks["items"]):
+        if not isinstance(item, dict) or item.get("block_index") != position:
+            raise ValueError("Block items must be numbered by visit order")
+        for key in ("component_id", "face_count", "face_index_min", "face_index_max"):
+            if type(item.get(key)) is not int or item[key] < 0:
+                raise ValueError(f"Invalid block {key}")
+        digest = item.get("face_indices_sha256")
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError("Invalid block face list digest")
+        if item.get("status") == "planned":
+            for key in ("segment_index_first", "segment_count", "point_count", "row_index_first", "row_count"):
+                if type(item.get(key)) is not int or item[key] < 0:
+                    raise ValueError(f"Invalid planned block {key}")
+            if item["segment_count"] < 1:
+                raise ValueError("A planned block needs at least one scan segment")
+        elif item.get("status") == "unplannable":
+            if item.get("reason") not in BLOCK_REASONS:
+                raise ValueError("Invalid unplannable block reason")
+        else:
+            raise ValueError("Invalid block status")
+    return blocks["items"]
+
+
+def _check_block_consistency(trajectory: SurfaceTrajectory, blocks: list[dict[str, Any]],
+                             segments: list[ScanSegment], gaps: list[Gap],
+                             vertices: Any, faces: Any) -> None:
+    planned = [item for item in blocks if item["status"] == "planned"]
+    for item in planned:
+        owned = [segment for segment in segments if segment.block_index == item["block_index"]]
+        if (len(owned) != item["segment_count"] or not owned or
+                owned[0].segment_index != item["segment_index_first"] or
+                [segment.segment_index for segment in owned] != list(range(owned[0].segment_index, owned[0].segment_index + len(owned))) or
+                sum(len(segment.points) for segment in owned) != item["point_count"]):
+            raise ValueError("Block segment/point bookkeeping does not match ordered_items")
+    if any(segment.block_index not in {item["block_index"] for item in planned} for segment in segments):
+        raise ValueError("Scan segment refers to a block that was not planned")
+    for index, gap in enumerate(gaps):
+        crossing = segments[index].block_index != segments[index + 1].block_index
+        if crossing != (gap.reason == "disconnected_surface"):
+            raise ValueError("Only inter-block gaps may be disconnected_surface in block mode")
+    stats = trajectory.statistics if isinstance(trajectory.statistics, dict) else {}
+    expected = {"block_count": len(blocks), "plannable_block_count": len(planned),
+                "unplannable_block_count": len(blocks) - len(planned),
+                "segment_count": len(segments), "point_count": sum(len(s.points) for s in segments),
+                "inter_block_gap_count": sum(g.reason == "disconnected_surface" for g in gaps),
+                "coverage_status": "complete" if len(planned) == len(blocks) else "partial"}
+    for key, value in expected.items():
+        if stats.get(key) != value:
+            raise ValueError(f"Block statistics mismatch: {key}")
+    if faces is None:
+        return
+    components = face_components(faces)
+    if len(set(components.tolist())) != len(blocks):
+        raise ValueError("Block count does not match mesh connectivity")
+    for item in blocks:
+        ids = np.flatnonzero(components == item["component_id"])
+        if (len(ids) != item["face_count"] or int(ids.min()) != item["face_index_min"] or
+                int(ids.max()) != item["face_index_max"] or face_list_sha256(ids) != item["face_indices_sha256"]):
+            raise ValueError("Block face mapping does not match the bound mesh")
+    for segment in segments:
+        expected_component = blocks[segment.block_index]["component_id"]
+        if any(int(components[point["triangle_index"]]) != expected_component for point in segment.points):
+            raise ValueError("Scan point lies on a face outside its block")
+
+
 def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
                         expected_result_sha256: Any = None) -> None:
     if not isinstance(trajectory.origin_reference, dict) or trajectory.origin_reference.get("kind") != "initial_color_camera":
@@ -189,10 +316,18 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
     expected_route = 0
     segments: list[ScanSegment] = []
     gaps: list[Gap] = []
-    sample_step_m = float(trajectory.planner.get("parameters", {}).get("sample_step_mm", 1.0)) / 1000
-    connected_rows = trajectory.planner.get('algorithm_version') == 'mesh-slice-serpentine-v2'
-    if connected_rows and trajectory.planner.get('parameters', {}).get('connect_rows') is not True:
-        raise ValueError('Connected row trajectory requires connect_rows=True')
+    parameters = trajectory.planner.get("parameters", {})
+    sample_step_m = float(parameters.get("sample_step_mm", 1.0)) / 1000
+    version = trajectory.planner.get("algorithm_version")
+    block_mode = version == BLOCK_ALGORITHM
+    connected_rows = version in (CONNECTED_ALGORITHM, BLOCK_ALGORITHM)
+    if connected_rows and parameters.get("connect_rows") is not True:
+        raise ValueError("Connected row trajectory requires connect_rows=True")
+    if block_mode and parameters.get("block_planning") is not True:
+        raise ValueError("Block trajectory requires block_planning=True")
+    if not block_mode and trajectory.blocks is not None:
+        raise ValueError("Block records are only valid for mesh-slice-serpentine-v3")
+    blocks = _validated_blocks(trajectory) if block_mode else None
     for index, item in enumerate(trajectory.ordered_items):
         if bool(index % 2) != isinstance(item, Gap):
             raise ValueError("ordered_items must strictly alternate segment and gap")
@@ -201,6 +336,13 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
                 raise ValueError("Invalid segment index")
             if type(item.row_index) is not int or item.row_index < 0:
                 raise ValueError("Invalid row index")
+            if block_mode:
+                if type(item.block_index) is not int or not 0 <= item.block_index < len(blocks):
+                    raise ValueError("Every block-mode scan segment needs a valid block_index")
+                if segments and item.block_index < segments[-1].block_index:
+                    raise ValueError("Blocks must be scanned one after another in visit order")
+            elif item.block_index is not None:
+                raise ValueError("block_index is only valid for block trajectories")
             previous = None
             for point in item.points:
                 if not isinstance(point, dict) or point.get("geometry_support") != "measured_mesh":
@@ -253,10 +395,33 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
             raise ValueError("Gap previous endpoint mismatch")
         if gap.next_point != {"route_index": after["route_index"], "xyz_m": after["xyz_m"]}:
             raise ValueError("Gap next endpoint mismatch")
+    if block_mode:
+        _check_block_consistency(trajectory, blocks, segments, gaps, vertices, faces)
     payload = trajectory.to_dict()
     _forbidden_orientation_keys(payload)
     if expected_result_sha256 is not None and payload["result_sha256"] != expected_result_sha256:
         raise ValueError("Surface trajectory result hash mismatch")
+
+
+def block_view(trajectory: SurfaceTrajectory) -> dict[str, Any] | None:
+    """Display-only block summary; never changes ordered_items."""
+    if trajectory.blocks is None:
+        return None
+    chain_blocks = [item.block_index for item in trajectory.ordered_items if isinstance(item, ScanSegment)]
+    items = []
+    for block in trajectory.blocks["items"]:
+        chains = [index for index, value in enumerate(chain_blocks) if value == block["block_index"]]
+        items.append({key: block.get(key) for key in
+                      ("block_index", "component_id", "status", "reason", "message", "face_count",
+                       "area_m2", "segment_count", "gap_count", "point_count", "row_count",
+                       "scan_length_m", "connector_length_m", "connected_row_turns")}
+                     | {"chain_indices": chains, "label": f"块 {block['block_index'] + 1}"})
+    stats = trajectory.statistics
+    summary = {key: stats.get(key) for key in
+               ("block_count", "plannable_block_count", "unplannable_block_count", "coverage_status",
+                "inter_block_gap_count", "unplannable_face_count", "unplannable_area_m2")}
+    return {"chain_blocks": chain_blocks, "items": items, "summary": summary,
+            "order_rule": trajectory.blocks.get("order_rule")}
 
 
 def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, Any]:
@@ -265,6 +430,15 @@ def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, 
     segments = [[dict(point, motion_kind=point.get("role", "scan")) for point in item.points]
                 for item in model.ordered_items if isinstance(item, ScanSegment)]
     gaps = [item for item in model.ordered_items if isinstance(item, Gap)]
+    blocks = block_view(model)
+    chain_blocks = blocks["chain_blocks"] if blocks else None
+
+    def explanation(index: int, gap: Gap) -> str:
+        if chain_blocks and chain_blocks[index] != chain_blocks[index + 1]:
+            return (f"{gap.reason}：块 {chain_blocks[index] + 1} 与块 {chain_blocks[index + 1] + 1} 是拓扑分离的网格表面，"
+                    "块间没有已规划运动；继续仅定位下一块起点")
+        return f"{gap.reason}：段间没有已规划运动；继续只定位下一段起点"
+
     result = {
         "schema": "femto-surface-trajectory-player-view-v1",
         "segments": segments,
@@ -275,8 +449,10 @@ def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, 
             "from_xyz_m": gap.previous_point["xyz_m"],
             "to_xyz_m": gap.next_point["xyz_m"],
             "reason": gap.reason,
-            "explanation": f"{gap.reason}：段间没有已规划运动；继续只定位下一段起点",
+            "explanation": explanation(index, gap),
             "transition_planned": False, "transition_time_s": None,
+            **({"block_from": chain_blocks[index], "block_to": chain_blocks[index + 1],
+                "inter_block": chain_blocks[index] != chain_blocks[index + 1]} if chain_blocks else {}),
         } for index, gap in enumerate(gaps)],
         "motion_demo": {"speed_mm_s": 20.0, "cross_chain_time_s": None if gaps else 0.0,
                         "gap_policy": "stop_require_explicit_continue_no_interpolated_transition",
@@ -287,6 +463,8 @@ def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, 
                                                for segment in segments for point in segment[1:])},
         "execution_ready": False, "physical_accuracy_verified": False,
     }
+    if blocks is not None:
+        result["blocks"] = blocks
     if model.planner.get("parameters", {}).get("row_spacing_mm") is not None:
         result.update(spacing_mm=model.planner["parameters"]["row_spacing_mm"],
                       spacing_semantics="parallel_plane_spacing_not_uniform_surface_spacing",

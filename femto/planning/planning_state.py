@@ -11,7 +11,8 @@ def signature(value: Any) -> str:
 BINDING_VERSION = 'femto-plan-binding-v1'
 ALGORITHMS = {'raster': 'raster-v1', 'metric': 'mesh-contours-v1',
               'coverage': 'mesh-coverage-v1', 'serpentine': 'serpentine-v1', 'serpentine_v2':'serpentine-v2', 'serpentine_v3':'serpentine-v3', 'serpentine_v4':'serpentine-v4', 'surface_spacing':'mesh-surface-spacing-v1',
-              'mesh_slice':'mesh-slice-serpentine-v1', 'mesh_slice_connected':'mesh-slice-serpentine-v2'}
+              'mesh_slice':'mesh-slice-serpentine-v1', 'mesh_slice_connected':'mesh-slice-serpentine-v2',
+              'mesh_slice_blocks':'mesh-slice-serpentine-v3'}
 
 
 def trajectory_binding(trajectory: Any) -> dict[str, Any]:

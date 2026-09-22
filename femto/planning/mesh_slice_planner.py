@@ -13,7 +13,10 @@ import math
 import numpy as np
 import trimesh
 
-from femto.planning.surface_trajectory import Gap, ScanSegment, SurfaceTrajectory, validate_trajectory
+from femto.planning.surface_trajectory import (
+    BLOCK_ALGORITHM, BLOCKS_SCHEMA, Gap, POINT_BUDGET, ScanSegment, SurfaceTrajectory,
+    face_components, face_list_sha256, validate_trajectory,
+)
 
 
 ALGORITHM_VERSION = "mesh-slice-serpentine-v1"
@@ -29,6 +32,16 @@ FROZEN = {
     "inplane_ambiguity_ratio_max": 0.8, "planarity_ratio_max": 0.5,
     "normal_view_angle_max_deg": 60.0, "adaptive_rows": False,
 }
+GAP_DETAIL_METHOD = "sweep_plane_outer_loop_containment"
+
+
+class Unplannable(ValueError):
+    """A surface (whole mesh or one block) that the frozen rules cannot plan."""
+
+    def __init__(self, reason: str, message: str, details: Any = None):
+        super().__init__(message)
+        self.reason = reason
+        self.details = details
 
 
 def _sha256(path: Path) -> str:
@@ -127,7 +140,7 @@ def _unit_projection(axis: np.ndarray, normal: np.ndarray, label: str) -> np.nda
     projected = axis - normal * float(np.dot(axis, normal))
     length = float(np.linalg.norm(projected))
     if length < math.sin(math.radians(10)):
-        raise ValueError(f"{label} is almost perpendicular to the surface; choose another axis")
+        raise Unplannable("axis_perpendicular", f"{label} is almost perpendicular to the surface; choose another axis")
     return projected / length
 
 
@@ -138,7 +151,7 @@ def _pca_frame(mesh: trimesh.Trimesh, params: dict[str, Any]) -> tuple[np.ndarra
     cross = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
     areas = np.linalg.norm(cross, axis=1) / 2
     if not np.isfinite(areas).all() or float(areas.sum()) <= 0:
-        raise ValueError("Region mesh has no positive-area triangles")
+        raise Unplannable("no_positive_area", "Region mesh has no positive-area triangles")
     centers = triangles.mean(axis=1)
     mu = np.average(centers, axis=0, weights=areas)
     delta = centers - mu
@@ -148,7 +161,7 @@ def _pca_frame(mesh: trimesh.Trimesh, params: dict[str, Any]) -> tuple[np.ndarra
     eigenvalues = eigenvalues[order]
     eigenvectors = eigenvectors[:, order]
     if eigenvalues[1] <= 1e-20 or eigenvalues[0] <= 1e-20:
-        raise ValueError("Region mesh has insufficient two-dimensional extent")
+        raise Unplannable("insufficient_extent", "Region mesh has insufficient two-dimensional extent")
     view_axis = np.array([0.0, 0.0, -1.0])
     n_pca = eigenvectors[:, 2]
     normal_angle = math.degrees(math.acos(float(np.clip(abs(np.dot(n_pca, view_axis)), 0, 1))))
@@ -201,33 +214,7 @@ def _pca_frame(mesh: trimesh.Trimesh, params: dict[str, Any]) -> tuple[np.ndarra
     return mu, e1, e2, n, frame
 
 
-def _face_components(faces: np.ndarray) -> np.ndarray:
-    parent = np.arange(len(faces), dtype=np.int64)
-
-    def find(value: int) -> int:
-        while parent[value] != value:
-            parent[value] = parent[parent[value]]
-            value = int(parent[value])
-        return value
-
-    def union(left: int, right: int) -> None:
-        a, b = find(left), find(right)
-        if a != b:
-            if a > b:
-                a, b = b, a
-            parent[b] = a
-
-    incident: dict[tuple[int, int], int] = {}
-    for face_index, face in enumerate(faces):
-        for a, b in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
-            edge = tuple(sorted((int(a), int(b))))
-            if edge in incident:
-                union(face_index, incident[edge])
-            else:
-                incident[edge] = face_index
-    roots = [find(i) for i in range(len(faces))]
-    mapping = {root: index for index, root in enumerate(sorted(set(roots)))}
-    return np.asarray([mapping[root] for root in roots], dtype=np.int64)
+_face_components = face_components
 
 
 def _quantized(point: np.ndarray) -> tuple[int, int, int]:
@@ -332,6 +319,21 @@ def _project(point: np.ndarray, intrinsic: np.ndarray, image_size: np.ndarray) -
     return [float(u), float(v)]
 
 
+def _pixel_extent(points: np.ndarray, intrinsic: np.ndarray,
+                  image_size: np.ndarray) -> tuple[list[float] | None, list[float] | None]:
+    """Display-only projected bounds/centre of the points that fall inside the reference image."""
+    z = points[:, 2]
+    ok = z > 0
+    safe = np.where(ok, z, 1.0)
+    u = intrinsic[0, 0] * points[:, 0] / safe + intrinsic[0, 2]
+    v = intrinsic[1, 1] * points[:, 1] / safe + intrinsic[1, 2]
+    ok &= np.isfinite(u) & np.isfinite(v) & (u >= 0) & (u < image_size[0]) & (v >= 0) & (v < image_size[1])
+    if not ok.any():
+        return None, None
+    return ([float(u[ok].min()), float(v[ok].min()), float(u[ok].max()), float(v[ok].max())],
+            [float(u[ok].mean()), float(v[ok].mean())])
+
+
 def _split_supported(samples: list[tuple[np.ndarray, int]], intrinsic: np.ndarray,
                      image_size: np.ndarray, min_length_m: float) -> tuple[list[list[dict[str, Any]]], int]:
     runs: list[list[dict[str, Any]]] = []
@@ -370,52 +372,54 @@ def _point_in_polygon(point: np.ndarray, polygon: np.ndarray) -> bool:
     return bool(inside)
 
 
+def _outer_loop(vertices: np.ndarray, faces: np.ndarray, origin: np.ndarray,
+                e1: np.ndarray, e2: np.ndarray) -> np.ndarray | None:
+    """Largest projected boundary loop of one connected face set, or None when undetermined."""
+    counts: Counter[tuple[int, int]] = Counter()
+    for face in faces:
+        counts.update(tuple(sorted((int(a), int(b)))) for a, b in
+                      ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])))
+    boundary = [edge for edge, count in counts.items() if count == 1]
+    adjacency: dict[int, list[int]] = defaultdict(list)
+    for a, b in boundary:
+        adjacency[a].append(b)
+        adjacency[b].append(a)
+    if not boundary or any(len(values) != 2 for values in adjacency.values()):
+        return None
+    unused = {tuple(sorted(edge)) for edge in boundary}
+    loops = []
+    while unused:
+        first = min(unused)
+        start, current, previous = first[0], first[0], None
+        loop = [start]
+        while True:
+            choices = sorted(node for node in adjacency[current]
+                             if tuple(sorted((current, node))) in unused)
+            if not choices:
+                break
+            nxt = choices[0]
+            unused.remove(tuple(sorted((current, nxt))))
+            previous, current = current, nxt
+            loop.append(current)
+            if current == start:
+                break
+        if len(loop) >= 4 and loop[-1] == start:
+            xyz = vertices[np.asarray(loop[:-1])]
+            uv = np.c_[(xyz - origin) @ e1, (xyz - origin) @ e2]
+            loops.append(uv)
+    if not loops:
+        return None
+
+    def area(poly: np.ndarray) -> float:
+        return abs(float(np.sum(poly[:, 0] * np.roll(poly[:, 1], -1)
+                                - poly[:, 1] * np.roll(poly[:, 0], -1)) / 2))
+    return max(loops, key=lambda poly: (area(poly), tuple(poly.ravel())))
+
+
 def _outer_loops(vertices: np.ndarray, faces: np.ndarray, components: np.ndarray,
                  origin: np.ndarray, e1: np.ndarray, e2: np.ndarray) -> dict[int, np.ndarray | None]:
-    result: dict[int, np.ndarray | None] = {}
-    for component in sorted(set(int(v) for v in components)):
-        ids = np.flatnonzero(components == component)
-        counts: Counter[tuple[int, int]] = Counter()
-        for face in faces[ids]:
-            counts.update(tuple(sorted((int(a), int(b)))) for a, b in
-                          ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])))
-        boundary = [edge for edge, count in counts.items() if count == 1]
-        adjacency: dict[int, list[int]] = defaultdict(list)
-        for a, b in boundary:
-            adjacency[a].append(b)
-            adjacency[b].append(a)
-        if not boundary or any(len(values) != 2 for values in adjacency.values()):
-            result[component] = None
-            continue
-        unused = {tuple(sorted(edge)) for edge in boundary}
-        loops = []
-        while unused:
-            first = min(unused)
-            start, current, previous = first[0], first[0], None
-            loop = [start]
-            while True:
-                choices = sorted(node for node in adjacency[current]
-                                 if tuple(sorted((current, node))) in unused)
-                if not choices:
-                    break
-                nxt = choices[0]
-                unused.remove(tuple(sorted((current, nxt))))
-                previous, current = current, nxt
-                loop.append(current)
-                if current == start:
-                    break
-            if len(loop) >= 4 and loop[-1] == start:
-                xyz = vertices[np.asarray(loop[:-1])]
-                uv = np.c_[(xyz - origin) @ e1, (xyz - origin) @ e2]
-                loops.append(uv)
-        if not loops:
-            result[component] = None
-        else:
-            def area(poly: np.ndarray) -> float:
-                return abs(float(np.sum(poly[:, 0] * np.roll(poly[:, 1], -1)
-                                        - poly[:, 1] * np.roll(poly[:, 0], -1)) / 2))
-            result[component] = max(loops, key=lambda poly: (area(poly), tuple(poly.ravel())))
-    return result
+    return {component: _outer_loop(vertices, faces[np.flatnonzero(components == component)], origin, e1, e2)
+            for component in sorted(set(int(v) for v in components))}
 
 
 def _forbidden_polygons(region: dict[str, Any]) -> list[np.ndarray]:
@@ -461,66 +465,56 @@ def _direction(points: list[dict[str, Any]]) -> list[float]:
     return (delta / max(length, 1e-15)).tolist()
 
 
-def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float = 5.0,
-                    sample_step_mm: float = 1.0, row_direction: Any = "auto",
-                    start_corner: str = "top_left", min_segment_mm: float = 2.0,
-                    spacing_tolerance: float = 0.5,
-                    inplane_ambiguity_ratio_max: float = 0.8,
-                    planarity_ratio_max: float = 0.5,
-                    normal_view_angle_max_deg: float = 60.0,
-                    adaptive_rows: bool = False,
-                    connect_rows: bool = False,
-                    check: Callable[[], None] = lambda: None) -> SurfaceTrajectory:
-    """Generate only measured-mesh scan samples; no gap interpolation or motion."""
-    params = _parameters(locals())
-    check()
-    manifest_path, manifest, mesh = _load_input(export_dir_or_manifest)
-    vertices = np.asarray(mesh.vertices, dtype=np.float64)
-    faces = np.asarray(mesh.faces, dtype=np.int64)
-    region = manifest["region"]
-    intrinsic = np.asarray(region["view_reference"]["undistorted_intrinsic"], dtype=np.float64)
-    image_size = np.asarray(region["view_reference"]["image_size"], dtype=np.int64)
-    origin, e1, e2, normal, sweep_frame = _pca_frame(mesh, params)
-    components = _face_components(faces)
-    outer = _outer_loops(vertices, faces, components, origin, e1, e2)
-    coordinates = (vertices - origin) @ e2
-    low, high = float(coordinates.min()), float(coordinates.max())
+def _gap_detail(inferred: str) -> dict[str, Any]:
+    return {"inferred_cause": inferred, "method": GAP_DETAIL_METHOD,
+            "confidence": "heuristic", "decision_use": "none"}
+
+
+def _slice_rows(sliced: trimesh.Trimesh, face_lookup: np.ndarray | None, components: np.ndarray,
+                origin: np.ndarray, e2: np.ndarray, positions: np.ndarray, params: dict[str, Any],
+                intrinsic: np.ndarray, image_size: np.ndarray, check: Callable[[], None],
+                budget: dict[str, int], block_index: int | None = None
+                ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Slice one surface at every row position; the shared budget counts every retained sample."""
     spacing_m = params["row_spacing_mm"] / 1000
     step_m = params["sample_step_mm"] / 1000
-    positions = np.arange(low + spacing_m / 2, high + 1e-12, spacing_m)
-    if not len(positions):
-        raise ValueError("Region is narrower than one row spacing")
     records_by_slice: list[dict[str, Any]] = []
-    dropped_fragments = []
-    total_points = 0
+    dropped_fragments: list[dict[str, Any]] = []
+
+    def dropped(slice_index: int, length: Any, reason: str) -> dict[str, Any]:
+        record = {"slice_index": slice_index, "length_m": length, "reason": reason}
+        if block_index is not None:
+            record["block_index"] = block_index
+        return record
+
     for slice_index, position in enumerate(positions):
         check()
         lines, face_ids = trimesh.intersections.mesh_plane(
-            mesh, plane_normal=e2, plane_origin=origin + e2 * position, return_faces=True)
-        chains, branched = _chains(np.asarray(lines), np.asarray(face_ids))
+            sliced, plane_normal=e2, plane_origin=origin + e2 * position, return_faces=True)
+        face_ids = np.asarray(face_ids)
+        if face_lookup is not None and len(face_ids):
+            face_ids = face_lookup[face_ids.astype(np.int64)]
+        chains, branched = _chains(np.asarray(lines), face_ids)
         candidates = []
         row_dropped = 0
         for chain_index, (polyline, edge_faces) in enumerate(chains):
             length = float(np.linalg.norm(np.diff(polyline, axis=0), axis=1).sum())
             if length + 1e-12 < params["min_segment_mm"] / 1000:
                 row_dropped += 1
-                dropped_fragments.append({"slice_index": slice_index, "length_m": length,
-                                          "reason": "below_min_segment"})
+                dropped_fragments.append(dropped(slice_index, length, "below_min_segment"))
                 continue
             samples = _resample(polyline, edge_faces, step_m)
             runs, unsupported = _split_supported(samples, intrinsic, image_size,
                                                   params["min_segment_mm"] / 1000)
             row_dropped += unsupported
-            dropped_fragments.extend({"slice_index": slice_index, "length_m": None,
-                                      "reason": "outside_reference_image_or_short_supported_run"}
+            dropped_fragments.extend(dropped(slice_index, None, "outside_reference_image_or_short_supported_run")
                                      for _ in range(unsupported))
             if branched:
-                dropped_fragments.append({"slice_index": slice_index, "length_m": None,
-                                          "reason": "branched_slice_split"})
+                dropped_fragments.append(dropped(slice_index, None, "branched_slice_split"))
             for run in runs:
-                total_points += len(run)
-                if total_points > 200_000:
-                    raise ValueError("Trajectory exceeds 200000 samples; increase row spacing or shrink the region")
+                budget["points"] += len(run)
+                if budget["points"] > POINT_BUDGET:
+                    raise ValueError(f"Trajectory exceeds {POINT_BUDGET} samples; increase row spacing or shrink the region")
                 candidates.append({"points": run, "component": int(components[run[0]["triangle_index"]]),
                                    "unsupported": bool(unsupported or branched),
                                    "mean_u": float(np.mean([point["pixel"][0] for point in run])),
@@ -530,13 +524,18 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
             records_by_slice.append({"slice_index": slice_index, "position_m": float(position),
                                      "mean_v": float(np.mean([item["mean_v"] for item in candidates])),
                                      "candidates": candidates, "dropped": row_dropped})
-    if not records_by_slice:
-        raise ValueError("No supported scan segment was produced")
+    return records_by_slice, dropped_fragments
+
+
+def _order_rows(records_by_slice: list[dict[str, Any]], params: dict[str, Any],
+                row_offset: int = 0) -> list[dict[str, Any]]:
+    """Serpentine row order from the preferred corner; parity restarts at row_offset."""
     reverse_rows = "bottom" in params["start_corner"]
     records_by_slice.sort(key=lambda row: (row["mean_v"], row["position_m"]), reverse=reverse_rows)
     ordered_records = []
-    for row_index, row in enumerate(records_by_slice):
-        left_to_right = ("right" not in params["start_corner"]) ^ bool(row_index % 2)
+    for local_row, row in enumerate(records_by_slice):
+        row_index = row_offset + local_row
+        left_to_right = ("right" not in params["start_corner"]) ^ bool(local_row % 2)
         candidates = sorted(row["candidates"], key=lambda item: (item["mean_u"], item["component"]),
                             reverse=not left_to_right)
         for candidate in candidates:
@@ -548,6 +547,14 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
                              slice_index=row["slice_index"], position_m=row["position_m"],
                              row_dropped=row["dropped"])
             ordered_records.append(candidate)
+    return ordered_records
+
+
+def _build_items(ordered_records: list[dict[str, Any]], region: dict[str, Any],
+                 intrinsic: np.ndarray, image_size: np.ndarray, step_m: float,
+                 outer: dict[int, np.ndarray | None], origin: np.ndarray,
+                 e1: np.ndarray, e2: np.ndarray) -> tuple[list[ScanSegment], list[Gap]]:
+    """Locally numbered scan segments and the gap between each adjacent pair."""
     route_index = 0
     segments = []
     for segment_index, record in enumerate(ordered_records):
@@ -556,51 +563,53 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
             points.append(dict(point, row_index=record["row_index"], route_index=route_index))
             route_index += 1
         segments.append(ScanSegment(segment_index, record["row_index"], points))
-    items: list[ScanSegment | Gap] = []
-    gap_counts: Counter[str] = Counter()
-    for index, segment in enumerate(segments):
-        items.append(segment)
-        if index == len(segments) - 1:
-            continue
+    gaps = []
+    for index in range(len(segments) - 1):
         left, right = ordered_records[index], ordered_records[index + 1]
         reason, inferred = _gap_reason(left, right, region, intrinsic, image_size, step_m,
                                        outer, origin, e1, e2)
-        gap_counts[reason] += 1
-        before, after = segment.points[-1], segments[index + 1].points[0]
-        items.append(Gap(index, reason, {
-            "inferred_cause": inferred, "method": "sweep_plane_outer_loop_containment",
-            "confidence": "heuristic", "decision_use": "none",
-        }, {"route_index": before["route_index"], "xyz_m": before["xyz_m"]},
-           {"route_index": after["route_index"], "xyz_m": after["xyz_m"]},
-           _direction(segment.points), segment.row_index, segments[index + 1].row_index,
-           float(np.linalg.norm(np.asarray(after["xyz_m"]) - before["xyz_m"]))))
-    lengths = [float(np.linalg.norm(np.diff(np.asarray([point["xyz_m"] for point in segment.points]), axis=0), axis=1).sum())
-               for segment in segments]
-    all_z = np.asarray([point["xyz_m"][2] for segment in segments for point in segment.points])
-    row_report = []
+        before, after = segments[index].points[-1], segments[index + 1].points[0]
+        gaps.append(Gap(index, reason, _gap_detail(inferred),
+                        {"route_index": before["route_index"], "xyz_m": before["xyz_m"]},
+                        {"route_index": after["route_index"], "xyz_m": after["xyz_m"]},
+                        _direction(segments[index].points), segments[index].row_index,
+                        segments[index + 1].row_index,
+                        float(np.linalg.norm(np.asarray(after["xyz_m"]) - before["xyz_m"]))))
+    return segments, gaps
+
+
+def _segment_lengths(segments: list[ScanSegment]) -> list[float]:
+    return [float(np.linalg.norm(np.diff(np.asarray([point["xyz_m"] for point in segment.points]), axis=0), axis=1).sum())
+            for segment in segments]
+
+
+def _row_report(segments: list[ScanSegment], lengths: list[float], gaps: list[Gap],
+                block_index: int | None = None) -> list[dict[str, Any]]:
+    report = []
     for row_index in sorted(set(segment.row_index for segment in segments)):
         selected = [segment for segment in segments if segment.row_index == row_index]
         z = np.asarray([point["xyz_m"][2] for segment in selected for point in segment.points])
-        row_report.append({"row_index": row_index, "segment_count": len(selected),
-                           "point_count": int(sum(len(segment.points) for segment in selected)),
-                           "scan_length_m": float(sum(lengths[segment.segment_index] for segment in selected)),
-                           "depth_min_m": float(z.min()), "depth_max_m": float(z.max()),
-                           "depth_span_m": float(z.max() - z.min()),
-                           "gap_count": sum(isinstance(item, Gap) and item.row_index_from == row_index
-                                            for item in items)})
-    temporary_segments = []
-    for record, segment in zip(ordered_records, segments):
-        temporary_segments.append([dict(point, surface_level_m=record["level_m"]) for point in segment.points])
-    from femto.planning.surface_spacing_report import spacing_report as measure_spacing
-    check()
-    spacing_mesh = SimpleNamespace(vertices=vertices, triangles=faces)
-    spacing = measure_spacing(spacing_mesh, {"triangle_indices": list(range(len(faces)))},
-                              {"segments": temporary_segments}, params["row_spacing_mm"],
-                              params["row_spacing_mm"] * params["spacing_tolerance"], check)
-    spacing["spacing_semantics"] = "parallel_plane_spacing_not_uniform_surface_spacing"
-    spacing["warning_threshold_mm"] = params["row_spacing_mm"] * (1 + params["spacing_tolerance"])
+        row = {"row_index": row_index, "segment_count": len(selected),
+               "point_count": int(sum(len(segment.points) for segment in selected)),
+               "scan_length_m": float(sum(lengths[segment.segment_index] for segment in selected)),
+               "depth_min_m": float(z.min()), "depth_max_m": float(z.max()),
+               "depth_span_m": float(z.max() - z.min()),
+               "gap_count": sum(gap.row_index_from == row_index for gap in gaps)}
+        if block_index is not None:
+            row["block_index"] = block_index
+        report.append(row)
+    return report
+
+
+def _level_segments(ordered_records: list[dict[str, Any]], segments: list[ScanSegment]) -> list[list[dict[str, Any]]]:
+    return [[dict(point, surface_level_m=record["level_m"]) for point in segment.points]
+            for record, segment in zip(ordered_records, segments)]
+
+
+def _source_record(manifest_path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
     from femto.planning.planning_state import region_signature
-    source = {
+    region = manifest["region"]
+    return {
         "region_export_dir": str(manifest_path.parent), "region_manifest": str(manifest_path),
         "region_manifest_sha256": _sha256(manifest_path),
         "mesh_file": manifest["files"]["mesh_file"],
@@ -608,28 +617,330 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
         "geometry_sha256": manifest["geometry_sha256"],
         "region_id": region.get("annotation_id"), "region_signature": region_signature(region),
     }
+
+
+def _depth_statistics(points: np.ndarray) -> dict[str, float]:
+    return {"depth_min_m": float(points.min()), "depth_max_m": float(points.max()),
+            "depth_span_m": float(points.max() - points.min())}
+
+
+def _plan_single_surface(manifest_path: Path, manifest: dict[str, Any], mesh: trimesh.Trimesh,
+                         params: dict[str, Any], check: Callable[[], None]) -> tuple[SurfaceTrajectory, list[dict[str, Any]]]:
+    """v1: one sweep frame for the whole mesh, rows ordered globally across every component."""
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    region = manifest["region"]
+    intrinsic = np.asarray(region["view_reference"]["undistorted_intrinsic"], dtype=np.float64)
+    image_size = np.asarray(region["view_reference"]["image_size"], dtype=np.int64)
+    origin, e1, e2, normal, sweep_frame = _pca_frame(mesh, params)
+    components = face_components(faces)
+    outer = _outer_loops(vertices, faces, components, origin, e1, e2)
+    coordinates = (vertices - origin) @ e2
+    low, high = float(coordinates.min()), float(coordinates.max())
+    spacing_m = params["row_spacing_mm"] / 1000
+    step_m = params["sample_step_mm"] / 1000
+    positions = np.arange(low + spacing_m / 2, high + 1e-12, spacing_m)
+    if not len(positions):
+        raise ValueError("Region is narrower than one row spacing")
+    records_by_slice, dropped_fragments = _slice_rows(mesh, None, components, origin, e2, positions, params,
+                                                      intrinsic, image_size, check, {"points": 0})
+    if not records_by_slice:
+        raise ValueError("No supported scan segment was produced")
+    ordered_records = _order_rows(records_by_slice, params)
+    segments, gaps = _build_items(ordered_records, region, intrinsic, image_size, step_m, outer, origin, e1, e2)
+    items: list[ScanSegment | Gap] = []
+    for index, segment in enumerate(segments):
+        items.append(segment)
+        if index < len(gaps):
+            items.append(gaps[index])
+    gap_counts = Counter(gap.reason for gap in gaps)
+    lengths = _segment_lengths(segments)
+    all_z = np.asarray([point["xyz_m"][2] for segment in segments for point in segment.points])
+    row_report = _row_report(segments, lengths, gaps)
+    from femto.planning.surface_spacing_report import spacing_report as measure_spacing
+    check()
+    spacing_mesh = SimpleNamespace(vertices=vertices, triangles=faces)
+    spacing = measure_spacing(spacing_mesh, {"triangle_indices": list(range(len(faces)))},
+                              {"segments": _level_segments(ordered_records, segments)}, params["row_spacing_mm"],
+                              params["row_spacing_mm"] * params["spacing_tolerance"], check)
+    spacing["spacing_semantics"] = "parallel_plane_spacing_not_uniform_surface_spacing"
+    spacing["warning_threshold_mm"] = params["row_spacing_mm"] * (1 + params["spacing_tolerance"])
     planner = {"kind": "mesh_slice", "algorithm_version": ALGORITHM_VERSION,
                "parameters": params, "sweep_frame": sweep_frame}
+    route_index = sum(len(segment.points) for segment in segments)
     trajectory = SurfaceTrajectory(
-        manifest["origin_reference"], planner, source, items,
+        manifest["origin_reference"], planner, _source_record(manifest_path, manifest), items,
         {"segment_count": len(segments), "gap_count": len(segments) - 1,
          "gap_counts": dict(sorted(gap_counts.items())), "point_count": route_index,
          "scan_length_m": float(sum(lengths)), "row_count": len(row_report),
-         "depth_min_m": float(all_z.min()), "depth_max_m": float(all_z.max()),
-         "depth_span_m": float(all_z.max() - all_z.min())},
+         **_depth_statistics(all_z)},
         {"counts": dict(sorted(gap_counts.items())), "dropped_fragments": dropped_fragments,
          "dropped_fragment_count": len(dropped_fragments)},
         spacing, row_report, manifest.get("data_layers"))
     validate_trajectory(trajectory, mesh=mesh)
+    return trajectory, ordered_records
+
+
+def _eligible_turns(ordered_records: list[dict[str, Any]]) -> set[int]:
+    return {index for index, (left, right) in enumerate(zip(ordered_records, ordered_records[1:]))
+            if left["component"] == right["component"] and
+            abs(left["slice_index"] - right["slice_index"]) == 1 and
+            left["row_index"] != right["row_index"]}
+
+
+def _block_descriptors(vertices: np.ndarray, faces: np.ndarray, components: np.ndarray,
+                       intrinsic: np.ndarray, image_size: np.ndarray, corner: str) -> list[dict[str, Any]]:
+    """Blocks are mesh connectivity components; visit order is reading order from the start corner."""
+    descriptors = []
+    for component in sorted(set(int(v) for v in components)):
+        ids = np.flatnonzero(components == component)
+        triangles = vertices[faces[ids]]
+        area = float(np.linalg.norm(np.cross(triangles[:, 1] - triangles[:, 0],
+                                             triangles[:, 2] - triangles[:, 0]), axis=1).sum() / 2)
+        bounds, center = _pixel_extent(vertices[np.unique(faces[ids])], intrinsic, image_size)
+        if bounds is None:
+            key = (1, 0.0, 0.0, component)
+        else:
+            key = (0, bounds[1] if "top" in corner else -bounds[3],
+                   bounds[0] if "left" in corner else -bounds[2], component)
+        descriptors.append({"component_id": component, "face_ids": ids, "area_m2": area,
+                            "pixel_bounds": bounds, "center_pixel": center, "key": key})
+    descriptors.sort(key=lambda item: item["key"])
+    return descriptors
+
+
+def _plan_block(vertices: np.ndarray, faces: np.ndarray, descriptor: dict[str, Any], components: np.ndarray,
+                params: dict[str, Any], region: dict[str, Any], intrinsic: np.ndarray, image_size: np.ndarray,
+                check: Callable[[], None], budget: dict[str, int], row_offset: int,
+                block_index: int) -> dict[str, Any]:
+    """Plan one block alone: its own sweep frame, rows, gaps and boundary row turns."""
+    from femto.planning.surface_row_turns import BoundaryTurns, connect_segments
+    ids = descriptor["face_ids"]
+    component = descriptor["component_id"]
+    spacing_m = params["row_spacing_mm"] / 1000
+    step_m = params["sample_step_mm"] / 1000
+    block_mesh = trimesh.Trimesh(vertices=vertices, faces=faces[ids], process=False)
+    origin, e1, e2, _normal, frame = _pca_frame(block_mesh, params)
+    outer = {component: _outer_loop(vertices, faces[ids], origin, e1, e2)}
+    coordinates = (vertices[np.unique(faces[ids])] - origin) @ e2
+    positions = np.arange(float(coordinates.min()) + spacing_m / 2, float(coordinates.max()) + 1e-12, spacing_m)
+    if not len(positions):
+        raise Unplannable("narrower_than_row_spacing", "Block is narrower than one row spacing")
+    records_by_slice, dropped_fragments = _slice_rows(block_mesh, ids, components, origin, e2, positions, params,
+                                                      intrinsic, image_size, check, budget, block_index)
+    if not records_by_slice:
+        raise Unplannable("no_supported_segment", "No supported scan segment was produced",
+                          details={"dropped_fragments": dropped_fragments})
+    ordered_records = _order_rows(records_by_slice, params, row_offset)
+    segments, gaps = _build_items(ordered_records, region, intrinsic, image_size, step_m, outer, origin, e1, e2)
+    # The boundary graph is built from this block's faces only, indexed in the whole PLY.
+    router = BoundaryTurns(SimpleNamespace(vertices=vertices, faces=faces), region, frame, check, face_ids=ids)
+    chains, kept, connected, connector_length, added = connect_segments(
+        segments, gaps, _eligible_turns(ordered_records), router, step_m, check, e2=e2, used=budget["points"])
+    budget["points"] += added
+    return {"frame": frame, "ordered_records": ordered_records, "segments": segments, "chains": chains,
+            "kept": kept, "connected": connected, "connector_length_m": connector_length,
+            "dropped_fragments": dropped_fragments, "lengths": _segment_lengths(segments)}
+
+
+def _merge_spacing(reports: list[dict[str, Any]], params: dict[str, Any], budget: dict[str, int],
+                   scan_rows: list[int]) -> dict[str, Any]:
+    from femto.planning.surface_spacing_report import spacing_distribution
+    target = params["row_spacing_mm"]
+    rows = [row for report in reports for row in report["measurements"]]
+    counts = {status: sum(report["counts"][status] for report in reports)
+              for status in ("within_bounds", "outside_bounds", "uncertain_bounds", "unmeasurable")}
+    values = [row["surface_graph_distance_mm"] for row in rows if row["surface_graph_distance_mm"] is not None]
+    template = reports[0]
+    return dict(schema=template["schema"], target_spacing_mm=target, tolerance_mm=template["tolerance_mm"],
+                method=template["method"], direction=template["direction"], sampling=template["sampling"],
+                sample_count=len(rows),
+                status="within_sampled_bounds" if rows and counts["within_bounds"] == len(rows) else "not_fully_verified",
+                counts=counts, distribution=spacing_distribution(values, target), measurements=rows,
+                budget=dict(template["budget"], expansions=budget["expansions"], distance_pairs=budget["distance_pairs"]),
+                limitations=list(template["limitations"]) + ["每块单独测量，只与同一块内的前一扫描层比较；块之间不测量间距。"],
+                spacing_semantics="parallel_plane_spacing_not_uniform_surface_spacing",
+                warning_threshold_mm=target * (1 + params["spacing_tolerance"]),
+                scan_segment_rows=scan_rows,
+                blocks=[dict(block_index=report["block_index"], sample_count=report["sample_count"],
+                             counts=report["counts"], status=report["status"], distribution=report["distribution"])
+                        for report in reports])
+
+
+def _plan_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: trimesh.Trimesh,
+                 params: dict[str, Any], check: Callable[[], None]) -> SurfaceTrajectory:
+    """v3: every connectivity component is planned alone and visited one after another."""
+    from femto.planning.surface_row_turns import chain_items
+    from femto.planning.surface_spacing_report import spacing_report as measure_spacing
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    region = manifest["region"]
+    intrinsic = np.asarray(region["view_reference"]["undistorted_intrinsic"], dtype=np.float64)
+    image_size = np.asarray(region["view_reference"]["image_size"], dtype=np.int64)
+    components = face_components(faces)
+    descriptors = _block_descriptors(vertices, faces, components, intrinsic, image_size, params["start_corner"])
+    budget = {"points": 0}
+    spacing_budget = {"expansions": 0, "distance_pairs": 0}
+    offsets = {"row": 0, "route": 0, "segment": 0, "gap": 0, "pre_segment": 0}
+    items: list[ScanSegment | Gap] = []
+    blocks: list[dict[str, Any]] = []
+    unplannable: list[dict[str, Any]] = []
+    dropped_fragments: list[dict[str, Any]] = []
+    row_report: list[dict[str, Any]] = []
+    spacing_reports: list[dict[str, Any]] = []
+    scan_rows: list[int] = []
+    final_gaps: list[Gap] = []
+    spacing_mesh = SimpleNamespace(vertices=vertices, triangles=faces)
+    for block_index, descriptor in enumerate(descriptors):
+        check()
+        ids = descriptor["face_ids"]
+        record = {"block_index": block_index, "component_id": descriptor["component_id"],
+                  "face_count": int(len(ids)), "face_index_min": int(ids.min()), "face_index_max": int(ids.max()),
+                  "face_indices_sha256": face_list_sha256(ids), "area_m2": descriptor["area_m2"],
+                  "pixel_bounds": descriptor["pixel_bounds"], "center_pixel": descriptor["center_pixel"]}
+        try:
+            planned = _plan_block(vertices, faces, descriptor, components, params, region, intrinsic,
+                                  image_size, check, budget, offsets["row"], block_index)
+        except Unplannable as error:
+            record.update(status="unplannable", reason=error.reason, message=str(error))
+            if error.details:
+                dropped_fragments.extend(error.details.get("dropped_fragments", []))
+                record["dropped_fragment_count"] = len(error.details.get("dropped_fragments", []))
+            blocks.append(record)
+            unplannable.append({key: record[key] for key in
+                                ("block_index", "component_id", "reason", "message", "face_count", "area_m2")})
+            continue
+        inter_gap = None
+        if items:
+            inter_gap = offsets["gap"]
+            offsets["gap"] += 1
+        block_items, route_end = chain_items(planned["chains"], planned["kept"], route_start=offsets["route"],
+                                             segment_start=offsets["segment"], gap_start=offsets["gap"],
+                                             block_index=block_index)
+        segments_final = [item for item in block_items if isinstance(item, ScanSegment)]
+        kept = [item for item in block_items if isinstance(item, Gap)]
+        if inter_gap is not None:
+            previous = items[-1]
+            assert isinstance(previous, ScanSegment)
+            first = segments_final[0]
+            before, after = previous.points[-1], first.points[0]
+            gap = Gap(inter_gap, "disconnected_surface", _gap_detail("not_applicable"),
+                      {"route_index": before["route_index"], "xyz_m": before["xyz_m"]},
+                      {"route_index": after["route_index"], "xyz_m": after["xyz_m"]},
+                      _direction(previous.points), previous.row_index, first.row_index,
+                      float(np.linalg.norm(np.asarray(after["xyz_m"]) - before["xyz_m"])))
+            items.append(gap)
+            final_gaps.append(gap)
+        items.extend(block_items)
+        final_gaps.extend(kept)
+        lengths = planned["lengths"]
+        scan_length = float(sum(lengths))
+        depth = np.asarray([point["xyz_m"][2] for segment in segments_final for point in segment.points])
+        row_report.extend(_row_report(planned["segments"], lengths, [], block_index))
+        check()
+        report = measure_spacing(spacing_mesh, {"triangle_indices": [int(v) for v in ids]},
+                                 {"segments": _level_segments(planned["ordered_records"], planned["segments"])},
+                                 params["row_spacing_mm"], params["row_spacing_mm"] * params["spacing_tolerance"],
+                                 check, budget=spacing_budget)
+        report["measurements"] = [dict(row, chain_index=row["chain_index"] + offsets["pre_segment"], block_index=block_index)
+                                  for row in report["measurements"]]
+        report["block_index"] = block_index
+        spacing_reports.append(report)
+        scan_rows.extend(segment.row_index for segment in planned["segments"])
+        dropped_fragments.extend(planned["dropped_fragments"])
+        row_count = len({segment.row_index for segment in planned["segments"]})
+        record.update(status="planned", sweep_frame=planned["frame"],
+                      segment_index_first=segments_final[0].segment_index, segment_count=len(segments_final),
+                      gap_count=len(kept), gap_counts=dict(sorted(Counter(g.reason for g in kept).items())),
+                      point_count=route_end - offsets["route"], row_index_first=offsets["row"], row_count=row_count,
+                      scan_length_m=scan_length, connector_length_m=planned["connector_length_m"],
+                      connected_row_turns=planned["connected"], dropped_fragment_count=len(planned["dropped_fragments"]),
+                      **_depth_statistics(depth))
+        blocks.append(record)
+        offsets.update(row=offsets["row"] + row_count, route=route_end,
+                       segment=segments_final[-1].segment_index + 1, gap=offsets["gap"] + len(kept),
+                       pre_segment=offsets["pre_segment"] + len(planned["segments"]))
+    planned_blocks = [block for block in blocks if block["status"] == "planned"]
+    if not planned_blocks:
+        raise Unplannable("all_blocks_unplannable",
+                          "No block can be planned: " + "; ".join(
+                              f"block {b['block_index'] + 1} ({b['face_count']} faces): {b['reason']}" for b in blocks),
+                          details={"blocks": blocks})
+    for row in row_report:
+        row["gap_count"] = sum(gap.row_index_from == row["row_index"] for gap in final_gaps)
+    segments_all = [item for item in items if isinstance(item, ScanSegment)]
+    gap_counts = Counter(gap.reason for gap in final_gaps)
+    all_z = np.asarray([point["xyz_m"][2] for segment in segments_all for point in segment.points])
+    scan_length = float(sum(block["scan_length_m"] for block in planned_blocks))
+    connector_length = float(sum(block["connector_length_m"] for block in planned_blocks))
+    try:
+        display_frame = dict(_pca_frame(mesh, dict(params, row_direction="auto"))[4],
+                             role="display_only_whole_mesh_frame")
+    except Unplannable:
+        display_frame = dict(planned_blocks[0]["sweep_frame"], role="display_only_first_planned_block_frame")
+    planner = {"kind": "mesh_slice", "algorithm_version": BLOCK_ALGORITHM,
+               "parameters": dict(params, connect_rows=True, block_planning=True), "sweep_frame": display_frame}
+    statistics = {
+        "segment_count": len(segments_all), "gap_count": len(final_gaps),
+        "gap_counts": dict(sorted(gap_counts.items())), "point_count": offsets["route"],
+        "scan_length_m": scan_length, "connector_length_m": connector_length,
+        "connected_row_turns": int(sum(block["connected_row_turns"] for block in planned_blocks)),
+        "total_length_m": scan_length + connector_length, "row_count": len(row_report),
+        **_depth_statistics(all_z),
+        "block_count": len(blocks), "plannable_block_count": len(planned_blocks),
+        "unplannable_block_count": len(blocks) - len(planned_blocks),
+        "inter_block_gap_count": int(gap_counts.get("disconnected_surface", 0)),
+        "coverage_status": "complete" if len(planned_blocks) == len(blocks) else "partial",
+        "unplannable_face_count": int(sum(block["face_count"] for block in unplannable)),
+        "unplannable_area_m2": float(sum(block["area_m2"] for block in unplannable)),
+    }
+    block_record = {
+        "schema": BLOCKS_SCHEMA,
+        "block_definition": "faces sharing an edge in the bound region PLY; no vertex welding, no distance merging",
+        "order_rule": {"visit_order": "reference_image_reading_order_from_start_corner",
+                       "start_corner": params["start_corner"],
+                       "keys": "top: v_min ascending / bottom: v_max descending, then left: u_min ascending / right: u_max descending",
+                       "unprojectable_blocks": "after all projectable blocks",
+                       "tie_break": "component_id ascending (component ids follow the smallest face index)"},
+        "items": blocks,
+    }
+    trajectory = SurfaceTrajectory(
+        manifest["origin_reference"], planner, _source_record(manifest_path, manifest), items, statistics,
+        {"counts": dict(sorted(gap_counts.items())), "dropped_fragments": dropped_fragments,
+         "dropped_fragment_count": len(dropped_fragments), "unplannable_blocks": unplannable},
+        _merge_spacing(spacing_reports, params, spacing_budget, scan_rows), row_report,
+        manifest.get("data_layers"), None, block_record)
+    validate_trajectory(trajectory, mesh=mesh)
+    return trajectory
+
+
+def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float = 5.0,
+                    sample_step_mm: float = 1.0, row_direction: Any = "auto",
+                    start_corner: str = "top_left", min_segment_mm: float = 2.0,
+                    spacing_tolerance: float = 0.5,
+                    inplane_ambiguity_ratio_max: float = 0.8,
+                    planarity_ratio_max: float = 0.5,
+                    normal_view_angle_max_deg: float = 60.0,
+                    adaptive_rows: bool = False,
+                    connect_rows: bool = False,
+                    block_planning: bool = False,
+                    check: Callable[[], None] = lambda: None) -> SurfaceTrajectory:
+    """Generate only measured-mesh scan samples; no gap interpolation or motion."""
+    params = _parameters(locals())
     if type(connect_rows) is not bool:
         raise ValueError('connect_rows must be boolean')
+    if type(block_planning) is not bool:
+        raise ValueError('block_planning must be boolean')
+    if block_planning and not connect_rows:
+        raise ValueError('block_planning requires connect_rows=True')
+    check()
+    manifest_path, manifest, mesh = _load_input(export_dir_or_manifest)
+    if block_planning:
+        return _plan_blocks(manifest_path, manifest, mesh, params, check)
+    trajectory, ordered_records = _plan_single_surface(manifest_path, manifest, mesh, params, check)
     if connect_rows:
         from femto.planning.surface_row_turns import connect_row_turns
-        eligible={index for index,(left,right) in enumerate(zip(ordered_records,ordered_records[1:]))
-                  if left['component']==right['component'] and
-                  abs(left['slice_index']-right['slice_index'])==1 and
-                  left['row_index']!=right['row_index']}
-        return connect_row_turns(trajectory,mesh,region,eligible,check)
+        return connect_row_turns(trajectory, mesh, manifest["region"], _eligible_turns(ordered_records), check)
     return trajectory
 
 
@@ -652,10 +963,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         trajectory = plan_mesh_slice(args.source, row_spacing_mm=args.row_mm,
                                      sample_step_mm=args.step_mm, row_direction=direction,
-                                     start_corner=args.start_corner, connect_rows=True)
+                                     start_corner=args.start_corner, connect_rows=True,
+                                     block_planning=True)
         folder = export_trajectory(trajectory, output)
     except (OSError, ValueError, TypeError, KeyError, IndexError) as error:
-        folder = export_blocked(output, args.source, error)
+        folder = export_blocked(output, args.source, error, details=getattr(error, "details", None))
         print(folder)
         return 2
     print(folder)

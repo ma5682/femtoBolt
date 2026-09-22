@@ -35,6 +35,9 @@ def history_rows(reconstruction, check=lambda: None):
             else:
                 payload = json.loads(Path(row.get('target', row['source'])).read_text(encoding='utf-8-sig'))
                 row['parent_manifest'] = Path(payload['source']['region_manifest']).resolve()
+                row['block_status'] = saved_block_status(payload)
+                if row['block_status']:
+                    row['status'] = row.get('status', '') + '；' + row['block_status']
         except (OSError, ValueError, KeyError, TypeError, IndexError):
             pass
     # The product history presents one current result per saved region. Older
@@ -56,11 +59,39 @@ def generate(row, control):
     from femto.planning.trajectory_export import export_trajectory, load_trajectory
     manifest = region_manifest(row)
     old = previous_trajectories(manifest)
-    trajectory = plan_mesh_slice(manifest, connect_rows=True, check=control.check)
+    # Block planning: each connected mesh surface is scanned completely before the next one.
+    trajectory = plan_mesh_slice(manifest, connect_rows=True, block_planning=True, check=control.check)
     folder = export_trajectory(trajectory, manifest.parent, check=control.check, commit=control.publish)
     load_trajectory(folder, reproduce=False)
     removed, warnings = remove_previous(manifest, old, folder)
-    return dict(folder=folder, removed=removed, warnings=warnings)
+    return dict(folder=folder, removed=removed, warnings=warnings, blocks=block_summary(trajectory))
+
+
+def block_summary(trajectory):
+    """Short user-facing block status; None for single-surface (v1/v2) results."""
+    stats = trajectory.statistics if isinstance(trajectory.statistics, dict) else {}
+    if trajectory.blocks is None or 'block_count' not in stats:
+        return None
+    missing = [b for b in trajectory.blocks['items'] if b.get('status') != 'planned']
+    text = (f"共 {stats['block_count']} 块，可规划 {stats['plannable_block_count']} 块，"
+            f"未规划 {stats['unplannable_block_count']} 块（{stats['unplannable_face_count']} 面）；"
+            + ('全部块已规划。' if stats['coverage_status'] == 'complete' else
+               '部分覆盖：未规划块 ' + '、'.join(f"块 {b['block_index']+1}（{b['face_count']} 面，{b['reason']}）"
+                                                   for b in missing[:8]) + ('…' if len(missing) > 8 else '') + '。'))
+    return dict(text=text, coverage_status=stats['coverage_status'], block_count=stats['block_count'],
+                plannable_block_count=stats['plannable_block_count'],
+                unplannable=[dict(block_index=b['block_index'], face_count=b['face_count'], reason=b.get('reason'))
+                             for b in missing])
+
+
+def saved_block_status(payload):
+    """Cheap block coverage text from a saved trajectory.json; None for v1/v2 files."""
+    stats = payload.get('statistics') if isinstance(payload, dict) else None
+    if not isinstance(stats, dict) or 'block_count' not in stats or not isinstance(payload.get('blocks'), dict):
+        return None
+    return (f"{stats['block_count']} 块 / 可规划 {stats['plannable_block_count']} / "
+            + ('全部块已规划' if stats.get('coverage_status') == 'complete'
+               else f"部分覆盖（{stats['unplannable_block_count']} 块未规划）"))
 
 
 def previous_trajectories(manifest):
@@ -85,7 +116,7 @@ def remove_previous(manifest, candidates, current):
     """Delete only validated old output folders after new output verification."""
     manifest = Path(manifest).resolve(); current = Path(current).resolve()
     permitted = set(previous_trajectories(manifest))
-    allowed = {'trajectory.json', 'trajectory.csv', 'gaps.csv', 'trajectory_files.json',
+    allowed = {'trajectory.json', 'trajectory.csv', 'gaps.csv', 'blocks.csv', 'trajectory_files.json',
                'region_with_trajectory.glb', 'route_diagram.png', 'depth_diagram.png',
                'trajectory_report.txt'}
     removed = [];warnings = []

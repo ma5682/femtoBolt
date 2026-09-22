@@ -438,6 +438,8 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
         row=selected()
         def done(result):
             notice=f"新轨迹已生成；已删除 {len(result['removed'])} 个旧轨迹目录（不进入回收站）。"
+            blocks=result.get('blocks')
+            if blocks:notice+=' '+blocks['text']
             if result['warnings']:notice+=' 部分旧文件保留：'+'；'.join(result['warnings'])
             refresh(result['folder'],notice)
         if row and row.get('export_manifest'):start('生成三维扫描轨迹',lambda c:generate(row,c),done)

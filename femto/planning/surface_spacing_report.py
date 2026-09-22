@@ -3,7 +3,15 @@ import heapq
 import numpy as np
 from femto.planning.region_coverage import point_segment_distance
 
-def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None):
+
+def spacing_distribution(values,target_mm):
+    """Summary of measured spacing samples; None when nothing was measurable."""
+    values=np.asarray(values,dtype=float);errors=values-target_mm
+    return None if not len(values) else dict(min_mm=float(values.min()),p05_mm=float(np.percentile(values,5)),median_mm=float(np.median(values)),p95_mm=float(np.percentile(values,95)),max_mm=float(values.max()),mean_mm=float(values.mean()),signed_mean_deviation_mm=float(errors.mean()),rmse_mm=float(np.sqrt(np.mean(errors**2))),max_abs_deviation_mm=float(np.max(np.abs(errors))))
+
+
+def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None,budget=None):
+    """`budget` may be shared across calls so several surfaces consume one expansion budget."""
     vertices=np.asarray(mesh.vertices);faces=np.asarray(mesh.triangles);ids=region['triangle_indices']
     graph={int(v):{} for v in np.unique(faces[ids])}
     for ordinal,face in enumerate(faces[ids]):
@@ -11,7 +19,8 @@ def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None):
         for a,b in ((face[0],face[1]),(face[1],face[2]),(face[2],face[0])):
             graph[int(a)][int(b)]=graph[int(b)][int(a)]=float(np.linalg.norm(vertices[a]-vertices[b]))
     levels=sorted({p['surface_level_m'] for c in plan['segments'] for p in c})
-    rows=[];expanded=0;distance_pairs=0;max_expanded=2000000
+    state=budget if budget is not None else dict(expansions=0,distance_pairs=0)
+    rows=[];max_expanded=2000000
     if len(levels)*len(graph)>10000000:raise ValueError('表面间距测量预算超过1000万层/顶点组合，请增大间距或缩小区域')
     for level in levels:
         check();previous=level-target_mm/1000
@@ -31,17 +40,17 @@ def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None):
         while queue:
             d,v=heapq.heappop(queue)
             if d!=distances[v]:continue
-            expanded+=1
-            if expanded%512==0:check()
-            if expanded>max_expanded:raise ValueError('表面间距测量超过200万节点展开预算')
+            state['expansions']+=1
+            if state['expansions']%512==0:check()
+            if state['expansions']>max_expanded:raise ValueError('表面间距测量超过200万节点展开预算')
             for other,w in graph[v].items():
                 if d+w<distances[other]:distances[other]=d+w;heapq.heappush(queue,(d+w,other))
         # A sample-to-node distance minus the longest source edge is a lower bound to all source segments.
         source_points=np.asarray(source_points)
         for ci,chain in targets:
             for index in np.unique(np.linspace(0,len(chain)-1,min(32,len(chain))).astype(int)):
-                check();distance_pairs+=len(source_points)+len(by_face.get(chain[index]['triangle_index'],[]))
-                if distance_pairs>100000000:raise ValueError('表面间距测量超过1亿距离对预算，请增大间距/步长或缩小区域')
+                check();state['distance_pairs']+=len(source_points)+len(by_face.get(chain[index]['triangle_index'],[]))
+                if state['distance_pairs']>100000000:raise ValueError('表面间距测量超过1亿距离对预算，请增大间距/步长或缩小区域')
                 p=chain[index];xyz=np.asarray(p['xyz_m']);face=faces[p['triangle_index']]
                 upper=min(distances[int(v)]+float(np.linalg.norm(xyz-vertices[v])) for v in face)
                 for a,b in by_face.get(p['triangle_index'],[]):upper=min(upper,float(point_segment_distance(xyz[None],a,b)[0]))
@@ -52,15 +61,15 @@ def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None):
                 rows.append(dict(chain_index=ci,sample_index=int(index),triangle_index=p['triangle_index'],xyz_m=p['xyz_m'],pixel=p['pixel'],
                     level_m=level,preceding_level_m=previous,surface_graph_distance_mm=measured,lower_bound_mm=lower_mm,
                     signed_deviation_mm=None if measured is None else measured-target_mm,status=status))
-    values=np.asarray([r['surface_graph_distance_mm'] for r in rows if r['surface_graph_distance_mm'] is not None]);errors=values-target_mm
-    distribution=None if not len(values) else dict(min_mm=float(values.min()),p05_mm=float(np.percentile(values,5)),median_mm=float(np.median(values)),p95_mm=float(np.percentile(values,95)),max_mm=float(values.max()),mean_mm=float(values.mean()),signed_mean_deviation_mm=float(errors.mean()),rmse_mm=float(np.sqrt(np.mean(errors**2))),max_abs_deviation_mm=float(np.max(np.abs(errors))))
+    values=np.asarray([r['surface_graph_distance_mm'] for r in rows if r['surface_graph_distance_mm'] is not None])
+    distribution=spacing_distribution(values,target_mm)
     counts={status:sum(r['status']==status for r in rows) for status in ('within_bounds','outside_bounds','uncertain_bounds','unmeasurable')}
     return dict(schema='femto-surface-spacing-report-v1',target_spacing_mm=target_mm,tolerance_mm=tolerance_mm,
         method='mesh_edge_shortest_path_upper_bound_with_face_local_endpoint_segments; euclidean_node_minus_max_edge_lower_bound',
         direction='from_each_retained_level_to_immediately_preceding_target_level_not_nearest_arbitrary_chain',
         sampling='up_to_32_uniform_sample_indices_per_chain_not_uniform_area; first_level_excluded',
         sample_count=len(rows),status='within_sampled_bounds' if rows and counts['within_bounds']==len(rows) else 'not_fully_verified',
-        counts=counts,distribution=distribution,measurements=rows,budget=dict(expansions=expanded,max_expansions=max_expanded,max_level_vertex_pairs=10000000,distance_pairs=distance_pairs,max_distance_pairs=100000000),
+        counts=counts,distribution=distribution,measurements=rows,budget=dict(expansions=state['expansions'],max_expansions=max_expanded,max_level_vertex_pairs=10000000,distance_pairs=state['distance_pairs'],max_distance_pairs=100000000),
         limitations=['测量为实际保留路线之间的网格可行路径上界，不是精确连续测地距离；图方向、粗网格和障碍会扩大误差。',
             '欧氏下界可能跨空缺，仅作数学下界，不作为连接或运动；不可达不报告有限表面间距。',
             '前一目标层缺失或分量不连通时记录无法测量；不跳过缺层冒称目标等距。',

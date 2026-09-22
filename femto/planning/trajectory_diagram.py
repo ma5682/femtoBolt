@@ -66,11 +66,35 @@ def prepare_export_trajectory(trajectory: SurfaceTrajectory) -> SurfaceTrajector
     return replace(trajectory, route_diagram_status=status)
 
 
+def _block_labels(trajectory: SurfaceTrajectory) -> list[tuple[int, str, str]]:
+    """(first chain index, label, status) per block, in visit order; display only."""
+    if trajectory.blocks is None:
+        return []
+    from femto.planning.surface_trajectory import block_view
+    view = block_view(trajectory)
+    labels = []
+    for item in view["items"]:
+        if item["chain_indices"]:
+            labels.append((item["chain_indices"][0], f"块 {item['block_index'] + 1}", item["status"]))
+    return labels
+
+
+def _block_header(trajectory: SurfaceTrajectory) -> str | None:
+    stats = trajectory.statistics
+    if trajectory.blocks is None or "block_count" not in stats:
+        return None
+    return (f"分块：{stats['block_count']} 块 | 可规划 {stats['plannable_block_count']} | 未规划 "
+            f"{stats['unplannable_block_count']}（{stats['unplannable_face_count']} 面） | "
+            + ("全部块已规划" if stats["coverage_status"] == "complete" else "部分覆盖，未规划块见报告")
+            + "；块间只标 gap，不画跨块连线")
+
+
 def render_route_diagram(rgb: np.ndarray, trajectory: SurfaceTrajectory) -> Image.Image:
     height, width = rgb.shape[:2]
     scale = min(1.0, 1400 / width, 850 / height)
     display_size = (max(1, round(width * scale)), max(1, round(height * scale)))
-    header = 112
+    block_line = _block_header(trajectory)
+    header = 112 + (28 if block_line else 0)
     image = Image.new("RGB", (display_size[0], display_size[1] + header), (18, 28, 38))
     image.paste(Image.fromarray(rgb).resize(display_size, Image.Resampling.LANCZOS), (0, header))
     draw = ImageDraw.Draw(image)
@@ -79,6 +103,8 @@ def render_route_diagram(rgb: np.ndarray, trajectory: SurfaceTrajectory) -> Imag
     lines = ["三维表面蛇形扫描轨迹 · 固定初始 RGB 视角",
              f"{stats['row_count']} 行 | {stats['segment_count']} 段 | {stats['point_count']} 点 | 段内长度 {stats['scan_length_m']*1000:.1f} mm",
              "黄色：有 Mesh 支持的扫描段；gap 不连线。研发预览，非设备执行轨迹。"]
+    if block_line:
+        lines.append(block_line)
     for index, line in enumerate(lines):
         draw.text((12, 8 + index * 28), line, font=font, fill="#e4edf4")
     segments = [item for item in trajectory.ordered_items if isinstance(item, ScanSegment)]
@@ -87,6 +113,10 @@ def render_route_diagram(rgb: np.ndarray, trajectory: SurfaceTrajectory) -> Imag
         draw.line([tuple(point) for point in points], fill="#ffd52b", width=2)
         for point, color in ((points[0], "#35ea87"), (points[-1], "#ff5765")):
             draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=color)
+    for chain_index, label, _status in _block_labels(trajectory):
+        xy = np.asarray(segments[chain_index].points[0]["pixel"]) * scale + [0, header]
+        draw.rectangle((xy[0] - 2, xy[1] - 20, xy[0] + 12 * len(label) + 4, xy[1] - 2), fill="#20344a")
+        draw.text((xy[0], xy[1] - 20), label, font=font, fill="#7fd8ff")
     if segments:
         for point, label, color in ((segments[0].points[0]["pixel"], "START", "#35ea87"),
                                     (segments[-1].points[-1]["pixel"], "END", "#ff5765")):
@@ -152,6 +182,13 @@ def render_depth_diagram(trajectory: SurfaceTrajectory) -> Image.Image:
             xy = np.array([np.dot(point, e1), np.dot(point, e2)]) * scale + offset
             color = tuple(GAP_COLORS[item.reason][:3])
             draw.ellipse((xy[0] - 3, xy[1] - 3, xy[0] + 3, xy[1] + 3), fill=color)
+    for chain_index, label, _status in _block_labels(trajectory):
+        point = np.asarray(segments[chain_index].points[0]["xyz_m"]) - origin
+        xy = np.array([np.dot(point, e1), np.dot(point, e2)]) * scale + offset
+        draw.text((xy[0] + 4, xy[1] - 20), label, font=font, fill="#7fd8ff")
+    block_line = _block_header(trajectory)
+    if block_line:
+        draw.text((15, header - 22), block_line, font=_font(14), fill="#7fd8ff")
     bar_x = int(canvas[0] - 45)
     for y in range(120, int(canvas[1] + header - 50)):
         ratio = (y - 120) / max(1, canvas[1] + header - 170)
@@ -188,8 +225,18 @@ def export_glb(path: str | Path, trajectory: SurfaceTrajectory) -> None:
     scene.add_geometry(surface, node_name="selected_region_W0", geom_name="selected_region", transform=transform)
     player = to_player_plan(trajectory)
     from femto.planning.region_path_glb import direction_markers, path_tubes
-    scene.add_geometry(path_tubes(player), node_name="surface_trajectory_W0",
-                       geom_name="surface_trajectory", transform=transform)
+    blocks = player.get("blocks")
+    if blocks:
+        # One display node per planned block in visit order; tubes never join two blocks.
+        for item in blocks["items"]:
+            if not item["chain_indices"]:
+                continue
+            subset = {"segments": [player["segments"][index] for index in item["chain_indices"]]}
+            name = f"surface_trajectory_block_{item['block_index'] + 1:03d}"
+            scene.add_geometry(path_tubes(subset), node_name=name + "_W0", geom_name=name, transform=transform)
+    else:
+        scene.add_geometry(path_tubes(player), node_name="surface_trajectory_W0",
+                           geom_name="surface_trajectory", transform=transform)
     for name, marker in direction_markers(player).items():
         scene.add_geometry(marker, node_name=name + "_W0", geom_name=name, transform=transform)
     for reason, marker in _gap_markers(trajectory).items():
@@ -199,7 +246,38 @@ def export_glb(path: str | Path, trajectory: SurfaceTrajectory) -> None:
                           coordinate_frame="world_rdf", unit="metre", execution_ready=False,
                           gap_display="colored_endpoint_markers_only_no_tubes",
                           glb_scene_from_W0=transform.tolist())
+    if blocks:
+        scene.metadata.update(blocks={"summary": blocks["summary"], "order_rule": blocks["order_rule"],
+                                      "items": [{key: item[key] for key in ("block_index", "component_id", "status",
+                                                                            "reason", "face_count", "chain_indices")}
+                                                for item in blocks["items"]],
+                                      "display": "one_tube_node_per_planned_block_no_inter_block_tubes"})
     Path(path).write_bytes(scene.export(file_type="glb"))
+
+
+def _block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
+    stats = trajectory.statistics
+    if trajectory.blocks is None or "block_count" not in stats:
+        return []
+    lines = [
+        f"分块规划：{stats['block_count']} 块（按网格面连通关系，不按外观或距离合并）；可规划 {stats['plannable_block_count']} 块，"
+        f"未规划 {stats['unplannable_block_count']} 块（{stats['unplannable_face_count']} 面 / {stats['unplannable_area_m2']*1e6:.1f} mm²）；"
+        f"覆盖状态：{'全部块已规划' if stats['coverage_status']=='complete' else '部分覆盖，未规划块不在轨迹内'}",
+        f"块间断开 gap：{stats['inter_block_gap_count']} 处（disconnected_surface）；块内扫描先完成再进入下一块；"
+        "块访问顺序：参考图像从起始角开始的阅读顺序（不可投影块排最后）",
+        "上述扫描方向/法线来源仅为整体展示坐标系；每块扫描方向按块单独计算，见 blocks 记录。",
+    ]
+    for block in trajectory.blocks["items"]:
+        if block["status"] == "planned":
+            lines.append(
+                f"  块 {block['block_index']+1}：已规划，{block['face_count']} 面，{block['row_count']} 行 / "
+                f"{block['segment_count']} 段 / {block['gap_count']} gap / {block['point_count']} 点，扫描 "
+                f"{block['scan_length_m']*1000:.3f} mm，折返 {block['connected_row_turns']} 处 / "
+                f"{block['connector_length_m']*1000:.3f} mm，方向 {block['sweep_frame']['direction_source']}，"
+                f"法线 {block['sweep_frame']['normal_source']}")
+        else:
+            lines.append(f"  块 {block['block_index']+1}：未规划，{block['face_count']} 面，原因 {block['reason']}：{block['message']}")
+    return lines
 
 
 def report_text(trajectory: SurfaceTrajectory) -> str:
@@ -217,6 +295,7 @@ def report_text(trajectory: SurfaceTrajectory) -> str:
         f"扫描方向来源：{frame['direction_source']}；法线来源：{frame['normal_source']}；特征值比：{frame['ratios']}",
         "实际网格间距分布（mm）：" + (json.dumps(spacing, ensure_ascii=False, sort_keys=True) if spacing else "无可测样本"),
         "参考 RGB 路线图：" + json.dumps(route_status, ensure_ascii=False, sort_keys=True),
+        *_block_report_lines(trajectory),
         "平面等距不等于曲面等距；黄色行表示采样间距报告超出容差。",
         "所有点仅证明受当前 TSDF Mesh 支持；gap 处没有规划运动。贴面折返仅连接已验证连续网格边界。",
         "没有姿态、速度、避障、自由空间过渡或机械臂接口。",

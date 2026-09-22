@@ -31,26 +31,47 @@ def _write_csv(path: Path, rows: list[list[Any]]) -> None:
 def _write_core(folder: Path, trajectory: SurfaceTrajectory, check: Callable[[], None]) -> None:
     payload = trajectory.to_dict()
     (folder / "trajectory.json").write_bytes(canonical_json_bytes(payload))
+    blocks = trajectory.blocks
     point_rows = [["route_index", "segment_index", "row_index", "point_index",
-                   "x_m", "y_m", "z_m", "triangle_index", "geometry_support"]]
+                   "x_m", "y_m", "z_m", "triangle_index", "geometry_support"]
+                  + (["block_index"] if blocks else [])]
     gap_rows = [["gap_index", "reason", "inferred_cause", "row_index_from", "row_index_to",
                  "previous_route_index", "next_route_index", "prev_x_m", "prev_y_m", "prev_z_m",
                  "next_x_m", "next_y_m", "next_z_m", "chord_length_m",
-                 "scan_dir_x", "scan_dir_y", "scan_dir_z"]]
+                 "scan_dir_x", "scan_dir_y", "scan_dir_z"] + (["block_from", "block_to"] if blocks else [])]
+    previous_block = None
     for item in trajectory.ordered_items:
         check()
         if isinstance(item, ScanSegment):
             for point_index, point in enumerate(item.points):
                 point_rows.append([point["route_index"], item.segment_index, item.row_index, point_index,
-                                   *point["xyz_m"], point["triangle_index"], point["geometry_support"]])
+                                   *point["xyz_m"], point["triangle_index"], point["geometry_support"]]
+                                  + ([item.block_index] if blocks else []))
+            previous_block = item.block_index
         else:
             gap_rows.append([item.gap_index, item.reason, item.detail["inferred_cause"],
                              item.row_index_from, item.row_index_to,
                              item.previous_point["route_index"], item.next_point["route_index"],
                              *item.previous_point["xyz_m"], *item.next_point["xyz_m"],
                              item.chord_length_m, *item.scan_direction_w0])
+            if blocks:
+                gap_rows[-1].extend([previous_block, _next_block(trajectory, item.gap_index)])
     _write_csv(folder / "trajectory.csv", point_rows)
     _write_csv(folder / "gaps.csv", gap_rows)
+    if blocks:
+        # One row per mesh block in visit order; the same authority as trajectory.json.
+        block_rows = [["block_index", "component_id", "status", "reason", "face_count", "face_index_min",
+                       "face_index_max", "face_indices_sha256", "area_m2", "segment_index_first",
+                       "segment_count", "gap_count", "point_count", "row_index_first", "row_count",
+                       "scan_length_m", "connector_length_m", "connected_row_turns"]]
+        for block in blocks["items"]:
+            block_rows.append([block.get(key) for key in block_rows[0]])
+        _write_csv(folder / "blocks.csv", block_rows)
+
+
+def _next_block(trajectory: SurfaceTrajectory, gap_index: int) -> Any:
+    segments = [item for item in trajectory.ordered_items if isinstance(item, ScanSegment)]
+    return segments[gap_index + 1].block_index if gap_index + 1 < len(segments) else None
 
 
 def write_files_manifest(folder: str | Path, trajectory: SurfaceTrajectory) -> Path:
