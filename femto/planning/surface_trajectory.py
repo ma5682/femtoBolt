@@ -1,6 +1,7 @@
 """Unified, research-only surface trajectory records in W0/RDF metres."""
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -264,6 +265,91 @@ def _validated_blocks(trajectory: SurfaceTrajectory) -> list[dict[str, Any]]:
     return blocks["items"]
 
 
+def _close(left: Any, right: Any) -> bool:
+    return (type(left) is float and type(right) is float and math.isfinite(left)
+            and math.isclose(left, right, rel_tol=1e-9, abs_tol=1e-9))
+
+
+def _length_split(points: list[dict[str, Any]]) -> tuple[float, float]:
+    """(scan, connector) polyline length of one chain; an edge is a connector edge when its end is."""
+    xyz = np.asarray([point["xyz_m"] for point in points], dtype=np.float64)
+    steps = np.linalg.norm(np.diff(xyz, axis=0), axis=1)
+    connector = np.asarray([point.get("role") == "connector" for point in points[1:]])
+    return float(steps[~connector].sum()), float(steps[connector].sum())
+
+
+def _check_block_statistics(trajectory: SurfaceTrajectory, blocks: list[dict[str, Any]],
+                            segments: list[ScanSegment], gaps: list[Gap],
+                            vertices: Any, faces: Any) -> None:
+    """Every per-block and global figure must be recomputable from ordered_items (and the mesh)."""
+    strict = trajectory.planner.get("algorithm_version") == BLOCK_ALGORITHM
+    planned = [item for item in blocks if item["status"] == "planned"]
+    next_row = 0
+    totals = {"scan": 0.0, "connector": 0.0, "turns": 0, "rows": 0}
+    failures: Counter[str] = Counter()
+    for item in planned:
+        owned = [segment for segment in segments if segment.block_index == item["block_index"]]
+        points = [point for segment in owned for point in segment.points]
+        rows = sorted({point["row_index"] for point in points})
+        if (item.get("row_index_first") != next_row or rows != list(range(next_row, next_row + item["row_count"]))):
+            raise ValueError("Block row bookkeeping does not match its scan points")
+        next_row += item["row_count"]
+        lengths = [_length_split(segment.points) for segment in owned]
+        scan, connector = float(sum(v[0] for v in lengths)), float(sum(v[1] for v in lengths))
+        if not _close(item.get("scan_length_m"), scan) or not _close(item.get("connector_length_m"), connector):
+            raise ValueError("Block scan/connector length does not match its scan points")
+        first, last = owned[0].segment_index, owned[-1].segment_index
+        inside = [gap for index, gap in enumerate(gaps) if first <= index < last]
+        counts = dict(sorted(Counter(gap.reason for gap in inside).items()))
+        turns = item["row_count"] - 1 - counts.get("row_turn", 0)
+        if (item.get("gap_count") != len(inside) or item.get("gap_counts") != counts
+                or type(item.get("connected_row_turns")) is not int or item["connected_row_turns"] != turns):
+            raise ValueError("Block gap classification or connected row turns do not match ordered_items")
+        reasons = Counter(gap.detail.get("row_turn_failure_reason") for gap in inside if gap.reason == "row_turn")
+        if strict and (None in reasons or "row_turn_failure_counts" not in item):
+            raise ValueError("Every block-mode row_turn gap needs a diagnostic reason")
+        reasons.pop(None, None)
+        if "row_turn_failure_counts" in item and item["row_turn_failure_counts"] != dict(sorted(reasons.items())):
+            raise ValueError("Block row-turn failure counts do not match its gaps")
+        failures.update(reasons)
+        z = np.asarray([point["xyz_m"][2] for point in points], dtype=np.float64)
+        if not (_close(item.get("depth_min_m"), float(z.min())) and _close(item.get("depth_max_m"), float(z.max()))
+                and _close(item.get("depth_span_m"), float(z.max() - z.min()))):
+            raise ValueError("Block depth statistics do not match its scan points")
+        totals["scan"] += scan
+        totals["connector"] += connector
+        totals["turns"] += turns
+        totals["rows"] += item["row_count"]
+    stats = trajectory.statistics
+    unplannable = [item for item in blocks if item["status"] != "planned"]
+    gap_counts = dict(sorted(Counter(gap.reason for gap in gaps).items()))
+    z = np.asarray([point["xyz_m"][2] for segment in segments for point in segment.points], dtype=np.float64)
+    checks = {
+        "row_count": stats.get("row_count") == totals["rows"],
+        "gap_count": stats.get("gap_count") == len(gaps),
+        "gap_counts": stats.get("gap_counts") == gap_counts,
+        "connected_row_turns": stats.get("connected_row_turns") == totals["turns"],
+        "scan_length_m": _close(stats.get("scan_length_m"), totals["scan"]),
+        "connector_length_m": _close(stats.get("connector_length_m"), totals["connector"]),
+        "total_length_m": _close(stats.get("total_length_m"), totals["scan"] + totals["connector"]),
+        "unplannable_face_count": stats.get("unplannable_face_count") == sum(item["face_count"] for item in unplannable),
+        "unplannable_area_m2": _close(stats.get("unplannable_area_m2"), float(sum(item["area_m2"] for item in unplannable))),
+        "depth_min_m": _close(stats.get("depth_min_m"), float(z.min())),
+        "depth_max_m": _close(stats.get("depth_max_m"), float(z.max())),
+        "depth_span_m": _close(stats.get("depth_span_m"), float(z.max() - z.min())),
+    }
+    for key, ok in checks.items():
+        if not ok:
+            raise ValueError(f"Block statistics mismatch: {key}")
+    report = trajectory.gap_report if isinstance(trajectory.gap_report, dict) else {}
+    if report.get("counts") != gap_counts:
+        raise ValueError("Block gap report counts do not match ordered_items")
+    if strict and "row_turn_failure_counts" not in report:
+        raise ValueError("Block-mode gap report needs row_turn_failure_counts")
+    if "row_turn_failure_counts" in report and report["row_turn_failure_counts"] != dict(sorted(failures.items())):
+        raise ValueError("Gap report row-turn failure counts do not match the gaps")
+
+
 def _check_block_consistency(trajectory: SurfaceTrajectory, blocks: list[dict[str, Any]],
                              segments: list[ScanSegment], gaps: list[Gap],
                              vertices: Any, faces: Any) -> None:
@@ -290,6 +376,10 @@ def _check_block_consistency(trajectory: SurfaceTrajectory, blocks: list[dict[st
     for key, value in expected.items():
         if stats.get(key) != value:
             raise ValueError(f"Block statistics mismatch: {key}")
+    for item in blocks:
+        if type(item.get("area_m2")) is not float or not math.isfinite(item["area_m2"]) or item["area_m2"] < 0:
+            raise ValueError("Invalid block area")
+    _check_block_statistics(trajectory, blocks, segments, gaps, vertices, faces)
     if faces is None:
         return
     components = face_components(faces)
@@ -300,6 +390,11 @@ def _check_block_consistency(trajectory: SurfaceTrajectory, blocks: list[dict[st
         if (len(ids) != item["face_count"] or int(ids.min()) != item["face_index_min"] or
                 int(ids.max()) != item["face_index_max"] or face_list_sha256(ids) != item["face_indices_sha256"]):
             raise ValueError("Block face mapping does not match the bound mesh")
+        triangles = vertices[faces[ids]]
+        area = float(np.linalg.norm(np.cross(triangles[:, 1] - triangles[:, 0],
+                                             triangles[:, 2] - triangles[:, 0]), axis=1).sum() / 2)
+        if not _close(item["area_m2"], area):
+            raise ValueError("Block area does not match the bound mesh")
     for segment in segments:
         expected_component = blocks[segment.block_index]["component_id"]
         if any(int(components[point["triangle_index"]]) != expected_component for point in segment.points):
@@ -412,6 +507,24 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
     _forbidden_orientation_keys(payload)
     if expected_result_sha256 is not None and payload["result_sha256"] != expected_result_sha256:
         raise ValueError("Surface trajectory result hash mismatch")
+
+
+def non_overlapping_labels(boxes: list[tuple[Any, tuple[float, float, float, float]]]
+                           ) -> tuple[list[Any], list[Any]]:
+    """Display only: keep labels in the given order, skip any whose box overlaps a kept one.
+
+    Boxes are (x0, y0, x1, y1). Returns (kept keys, skipped keys); deterministic, no threshold
+    on block size, so small blocks are still numbered whenever there is room."""
+    kept: list[tuple[Any, tuple[float, float, float, float]]] = []
+    skipped: list[Any] = []
+    for key, box in boxes:
+        clash = any(box[0] < other[2] and other[0] < box[2] and box[1] < other[3] and other[1] < box[3]
+                    for _, other in kept)
+        if clash:
+            skipped.append(key)
+        else:
+            kept.append((key, box))
+    return [key for key, _ in kept], skipped
 
 
 def block_view(trajectory: SurfaceTrajectory) -> dict[str, Any] | None:

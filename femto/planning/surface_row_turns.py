@@ -18,13 +18,15 @@ def _intersects(a, b, c, d):
 
 
 class BoundaryTurns:
-    def __init__(self, mesh, region, frame, check, face_ids=None, snap_tolerance_m=1e-8):
+    # Tolerance for recognising a row end on a boundary edge. Frozen with v2; changing it
+    # changes which turns exist, so it needs an explicit decision, not a local tweak.
+    SNAP_M=1e-8
+
+    def __init__(self, mesh, region, frame, check, face_ids=None):
         from femto.planning.mesh_slice_planner import _forbidden_polygons
         self.vertices=np.asarray(mesh.vertices,float)
         self.check=check;self.frame=frame
-        # Numerical tolerance for recognising a row end that lies on a boundary edge
-        # (slice ends at shared vertices differ by ~1e-8 m between triangles). Not a geometry gate.
-        self.snap=float(snap_tolerance_m)
+        self.snap=self.SNAP_M
         view=region['view_reference']
         self.k=np.asarray(view['undistorted_intrinsic']);self.size=np.asarray(view['image_size'])
         self.polygons=_forbidden_polygons(region)

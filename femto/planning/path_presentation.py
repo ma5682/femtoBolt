@@ -36,6 +36,23 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
     if plan.get('surface_mode'):header=237
     blocks=plan.get('blocks')
     if blocks:header+=28
+    kept_block_labels={};skipped_block_labels=[]
+    if blocks:
+        # Display only: labels sit at the first displayed chain of each planned block; a label
+        # whose box would overlap an earlier one is skipped and listed, never a block dropped.
+        from femto.planning.surface_trajectory import non_overlapping_labels
+        visible=({segment_index} if segment_index is not None else set(chain_indices) if chain_indices is not None
+                 else set(range(len(plan['segments']))))
+        boxes=[]
+        for item in blocks['items']:
+            first=next((i for i in item['chain_indices'] if i in visible and 0<=i<len(plan['segments'])),None)
+            if first is None:continue
+            p=np.asarray(plan['segments'][first][0]['pixel'])*scale
+            boxes.append(((item['label'],first),(p[0]-2,p[1]-22,p[0]+13*len(item['label'])+6,p[1]-4)))
+        kept,skipped=non_overlapping_labels(boxes)
+        kept_block_labels=dict(kept);skipped_block_labels=[label for label,_ in skipped]
+        if skipped_block_labels:header+=28
+    if plan.get('algorithm_notice'):header+=28
     canvas=Image.new('RGB',(max(size[0],1100) if plan.get('route_quality') or plan.get('surface_mode') else size[0],size[1]+header),(18,28,38));canvas.paste(picture,(0,header))
     draw=ImageDraw.Draw(canvas)
     font_path=Path('C:/Windows/Fonts/msyh.ttc')
@@ -83,6 +100,10 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
             ' | 当前仅显示 '+'、'.join(item['label'] for item in blocks['items'] if item['chain_indices'] and set(item['chain_indices'])<=set(chain_indices)))
         lines.append(f"分块：{summary['block_count']} 块 | 可规划 {summary['plannable_block_count']} | 未规划 {summary['unplannable_block_count']}"
                      f"（{summary['unplannable_face_count']} 面） | {'全部块已规划' if summary['coverage_status']=='complete' else '部分覆盖'} | 块间只停不连线"+shown)
+        if skipped_block_labels:
+            lines.append(f"{len(skipped_block_labels)} 个块编号标签因重叠未显示（"+'、'.join(skipped_block_labels[:12])
+                         +('…' if len(skipped_block_labels)>12 else '')+'）；用“块”下拉逐块查看')
+    if plan.get('algorithm_notice'):lines.append(plan['algorithm_notice'])
     for i,line in enumerate(lines):draw.text((12,8+28*i),line,font=font,fill='#e4edf4')
     polygon=region.get('screen_polygon')
     if polygon:
@@ -121,8 +142,8 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
         if blocks:
             # Block labels sit at the first displayed chain of each planned block; no line joins blocks.
             for item in blocks['items']:
-                first=next((i for i in item['chain_indices'] if i in shown_chains),None)
-                if first is None:continue
+                first=kept_block_labels.get(item['label'])
+                if first is None or first not in shown_chains:continue
                 p=np.asarray(plan['segments'][first][0]['pixel'])*scale+[0,header]
                 draw.rectangle((p[0]-2,p[1]-22,p[0]+13*len(item['label'])+6,p[1]-4),fill='#20344a')
                 draw.text((p[0],p[1]-22),item['label'],font=font,fill='#7fd8ff')

@@ -89,12 +89,27 @@ def _block_header(trajectory: SurfaceTrajectory) -> str | None:
             + "；块间只标 gap，不画跨块连线")
 
 
+def _skipped_label_line(skipped: list[str]) -> str | None:
+    if not skipped:
+        return None
+    shown = "、".join(skipped[:12]) + ("…" if len(skipped) > 12 else "")
+    return f"{len(skipped)} 个块编号标签因重叠未显示（{shown}）；编号与状态见 blocks.csv 和报告"
+
+
 def render_route_diagram(rgb: np.ndarray, trajectory: SurfaceTrajectory) -> Image.Image:
+    from femto.planning.surface_trajectory import non_overlapping_labels
     height, width = rgb.shape[:2]
     scale = min(1.0, 1400 / width, 850 / height)
     display_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+    segments = [item for item in trajectory.ordered_items if isinstance(item, ScanSegment)]
+    boxes = []
+    for chain_index, label, _status in _block_labels(trajectory):
+        xy = np.asarray(segments[chain_index].points[0]["pixel"]) * scale
+        boxes.append(((chain_index, label), (xy[0] - 2, xy[1] - 20, xy[0] + 12 * len(label) + 4, xy[1] - 2)))
+    kept_labels, skipped = non_overlapping_labels(boxes)
     block_line = _block_header(trajectory)
-    header = 112 + (28 if block_line else 0)
+    skipped_line = _skipped_label_line([label for _, label in skipped])
+    header = 112 + (28 if block_line else 0) + (28 if skipped_line else 0)
     image = Image.new("RGB", (display_size[0], display_size[1] + header), (18, 28, 38))
     image.paste(Image.fromarray(rgb).resize(display_size, Image.Resampling.LANCZOS), (0, header))
     draw = ImageDraw.Draw(image)
@@ -105,15 +120,16 @@ def render_route_diagram(rgb: np.ndarray, trajectory: SurfaceTrajectory) -> Imag
              "黄色：有 Mesh 支持的扫描段；gap 不连线。研发预览，非设备执行轨迹。"]
     if block_line:
         lines.append(block_line)
+    if skipped_line:
+        lines.append(skipped_line)
     for index, line in enumerate(lines):
         draw.text((12, 8 + index * 28), line, font=font, fill="#e4edf4")
-    segments = [item for item in trajectory.ordered_items if isinstance(item, ScanSegment)]
     for segment in segments:
         points = np.asarray([point["pixel"] for point in segment.points], dtype=float) * scale + [0, header]
         draw.line([tuple(point) for point in points], fill="#ffd52b", width=2)
         for point, color in ((points[0], "#35ea87"), (points[-1], "#ff5765")):
             draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=color)
-    for chain_index, label, _status in _block_labels(trajectory):
+    for chain_index, label in kept_labels:
         xy = np.asarray(segments[chain_index].points[0]["pixel"]) * scale + [0, header]
         draw.rectangle((xy[0] - 2, xy[1] - 20, xy[0] + 12 * len(label) + 4, xy[1] - 2), fill="#20344a")
         draw.text((xy[0], xy[1] - 20), label, font=font, fill="#7fd8ff")
@@ -146,7 +162,20 @@ def render_depth_diagram(trajectory: SurfaceTrajectory) -> Image.Image:
     canvas = np.array([1200, 760])
     margin = np.array([80, 100])
     scale = float(min((canvas - 2 * margin) / span))
-    header = 110
+    from femto.planning.surface_trajectory import non_overlapping_labels
+
+    def label_xy(chain_index: int) -> np.ndarray:
+        point = np.asarray(segments[chain_index].points[0]["xyz_m"]) - origin
+        return np.array([np.dot(point, e1), np.dot(point, e2)]) * scale + margin - low * scale
+
+    boxes = []
+    for chain_index, label, _status in _block_labels(trajectory):
+        xy = label_xy(chain_index)
+        boxes.append(((chain_index, label), (xy[0] + 4, xy[1] - 20, xy[0] + 4 + 12 * len(label), xy[1] - 2)))
+    kept_labels, skipped = non_overlapping_labels(boxes)
+    block_line = _block_header(trajectory)
+    skipped_line = _skipped_label_line([label for _, label in skipped])
+    header = 110 + (28 if skipped_line else 0)
     image = Image.new("RGB", (int(canvas[0]), int(canvas[1] + header)), (18, 28, 38))
     draw = ImageDraw.Draw(image)
     font = _font(16)
@@ -182,13 +211,13 @@ def render_depth_diagram(trajectory: SurfaceTrajectory) -> Image.Image:
             xy = np.array([np.dot(point, e1), np.dot(point, e2)]) * scale + offset
             color = tuple(GAP_COLORS[item.reason][:3])
             draw.ellipse((xy[0] - 3, xy[1] - 3, xy[0] + 3, xy[1] + 3), fill=color)
-    for chain_index, label, _status in _block_labels(trajectory):
-        point = np.asarray(segments[chain_index].points[0]["xyz_m"]) - origin
-        xy = np.array([np.dot(point, e1), np.dot(point, e2)]) * scale + offset
+    for chain_index, label in kept_labels:
+        xy = label_xy(chain_index) + [0, header]
         draw.text((xy[0] + 4, xy[1] - 20), label, font=font, fill="#7fd8ff")
-    block_line = _block_header(trajectory)
     if block_line:
         draw.text((15, header - 22), block_line, font=_font(14), fill="#7fd8ff")
+    if skipped_line:
+        draw.text((15, header - 50), skipped_line, font=_font(14), fill="#7fd8ff")
     bar_x = int(canvas[0] - 45)
     for y in range(120, int(canvas[1] + header - 50)):
         ratio = (y - 120) / max(1, canvas[1] + header - 170)

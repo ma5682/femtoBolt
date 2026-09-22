@@ -782,10 +782,8 @@ def _plan_block(vertices: np.ndarray, faces: np.ndarray, descriptor: dict[str, A
                                            intrinsic, image_size)
     segments, gaps = _build_items(ordered_records, region, intrinsic, image_size, step_m, outer, origin, e1, e2)
     # The boundary graph is built from this block's faces only, indexed in the whole PLY.
-    # Snap tolerance matches the 1e-7 m chain quantisation so a row end at a shared boundary
-    # vertex is recognised; v2 (connect_row_turns) keeps its original 1e-8 for reproducibility.
-    router = BoundaryTurns(SimpleNamespace(vertices=vertices, faces=faces), region, frame, check,
-                           face_ids=ids, snap_tolerance_m=1e-7)
+    # Same router and same frozen snap tolerance as v2; nothing is relaxed per block.
+    router = BoundaryTurns(SimpleNamespace(vertices=vertices, faces=faces), region, frame, check, face_ids=ids)
     eligible = _eligible_turns(ordered_records)
     chains, kept, connected, connector_length, added = connect_segments(
         segments, gaps, eligible, router, step_m, check, e2=e2, used=budget["points"])

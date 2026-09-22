@@ -187,8 +187,11 @@ class BlockGapTests(unittest.TestCase):
 
     def test_row_turns_inside_blocks_keep_face_support_and_step(self):
         with tempfile.TemporaryDirectory() as tmp:
-            tilted = shifted(grid_mesh(0.03, 0.02, 0.0025, tilt_deg=25), [-0.02, 0, 0])
-            flat = shifted(grid_mesh(0.03, 0.02, 0.0025), [0.02, 0, 0])
+            # Cell 2 mm keeps the 2.5 + 5k mm slice planes off the lattice vertex rows of both patches;
+            # a plane through a vertex lands the row end ~2e-8..7e-8 m off the boundary, which the frozen
+            # 1e-8 m snap reports as endpoint_not_on_boundary (fixture artefact, not a gate).
+            tilted = shifted(grid_mesh(0.03, 0.02, 0.002, tilt_deg=25), [-0.02, 0, 0])
+            flat = shifted(grid_mesh(0.03, 0.02, 0.002), [0.02, 0, 0])
             source = make_export(tmp, trimesh.util.concatenate([tilted, flat]))
             result = plan(source)
             mesh = trimesh.load(Path(tmp) / "region_1_mesh_m.ply", process=False)
@@ -206,17 +209,15 @@ class BlockGapTests(unittest.TestCase):
             self.assertGreater(connectors, 0)
             self.assertEqual(result.statistics["gap_counts"]["disconnected_surface"], 1)
             # Each block scans exactly the samples the v2 planner yields for that surface alone
-            # (same rows, same scan XYZ, same non-turn gaps). Block mode may connect more turns only
-            # because it recognises row ends on shared boundary vertices (1e-7 m snap); no gate is relaxed.
+            # (same rows, same scan XYZ, same gaps, same number of turns: same router, same snap).
             # Visit order is image reading order: the flat patch has the smaller v_min, so it is block 1.
             for block, part in zip(result.blocks["items"], (flat, tilted)):
                 alone_dir = Path(tmp) / f"alone_{block['block_index']}"
                 alone_dir.mkdir()
                 alone = plan_mesh_slice(make_export(alone_dir, part), connect_rows=True)
                 self.assertEqual(block["row_count"], alone.statistics["row_count"])
-                self.assertGreaterEqual(block["connected_row_turns"], alone.statistics["connected_row_turns"])
-                self.assertEqual({k: v for k, v in block["gap_counts"].items() if k != "row_turn"},
-                                 {k: v for k, v in alone.statistics["gap_counts"].items() if k != "row_turn"})
+                self.assertEqual(block["connected_row_turns"], alone.statistics["connected_row_turns"])
+                self.assertEqual(block["gap_counts"], alone.statistics["gap_counts"])
                 # Connected turns swallow the next row's first sample into the connector run, so
                 # compare against the unconnected v1 slice samples: every v1 sample is still present
                 # (as scan or as the connector's landing point) and no other scan sample was added.
@@ -403,7 +404,7 @@ class RowOrderAndDiagnosticTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             # A strongly tilted patch: image v and the block's e2 disagree in scale, so
             # ordering by image rows would not visit slices in geometric order.
-            tilted = rotated(grid_mesh(0.04, 0.03, 0.0025), 55, [1, 0, 0])
+            tilted = rotated(grid_mesh(0.04, 0.03, 0.002), 55, [1, 0, 0])
             source = make_export(tmp, tilted)
             result = plan(source)
             block = result.blocks["items"][0]
@@ -484,6 +485,102 @@ class RowOrderAndDiagnosticTests(unittest.TestCase):
             self.assertEqual(load_trajectory(folder, reproduce=False).planner["algorithm_version"], "mesh-slice-serpentine-v3")
             with self.assertRaisesRegex(ValueError, "older algorithm version"):
                 load_trajectory(folder)
+            # Playback path: an accepted older version is hash-checked and mesh-validated, not re-planned.
+            older = load_trajectory(folder, allow_older_versions=True)
+            self.assertEqual(older.planner["algorithm_version"], "mesh-slice-serpentine-v3")
+            from femto.planning.trajectory_export import current_algorithm_version
+            self.assertEqual(current_algorithm_version(older.planner["parameters"]), BLOCK_ALGORITHM)
+            self.assertEqual(current_algorithm_version({"connect_rows": True}), "mesh-slice-serpentine-v2")
+            self.assertEqual(current_algorithm_version({}), "mesh-slice-serpentine-v1")
+            # A tampered older file is still rejected before playback.
+            payload["statistics"]["scan_length_m"] += 1.0
+            (folder / "trajectory.json").write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_trajectory(folder, allow_older_versions=True)
+
+
+class ReviewFixTests(unittest.TestCase):
+    def test_block_and_global_statistics_must_be_recomputable(self):
+        from dataclasses import replace
+        from femto.planning.surface_trajectory import validate_trajectory
+        with tempfile.TemporaryDirectory() as tmp:
+            source = make_export(tmp, two_patches())
+            result = plan(source)
+            base = result.to_dict()
+            self.assertEqual(SurfaceTrajectory.from_dict(base).to_dict(), base)
+            block = next(b for b in base["blocks"]["items"] if b["status"] == "planned")
+            tampers = [
+                ("blocks", lambda p: p["blocks"]["items"][block["block_index"]].__setitem__("scan_length_m", block["scan_length_m"] + 999.0)),
+                ("blocks", lambda p: p["blocks"]["items"][block["block_index"]].__setitem__("connector_length_m", block["connector_length_m"] + 1e-6)),
+                ("blocks", lambda p: p["blocks"]["items"][block["block_index"]].__setitem__("row_count", block["row_count"] + 1)),
+                ("blocks", lambda p: p["blocks"]["items"][block["block_index"]].__setitem__("connected_row_turns", block["connected_row_turns"] + 1)),
+                ("blocks", lambda p: p["blocks"]["items"][block["block_index"]].__setitem__("gap_counts", {"row_turn": 99})),
+                ("blocks", lambda p: p["blocks"]["items"][block["block_index"]].__setitem__("depth_max_m", block["depth_max_m"] + 0.001)),
+                ("blocks", lambda p: p["blocks"]["items"][block["block_index"]].__setitem__("row_turn_failure_counts", {"no_boundary_path_in_band": 7})),
+                ("statistics", lambda p: p["statistics"].__setitem__("scan_length_m", base["statistics"]["scan_length_m"] + 999.0)),
+                ("statistics", lambda p: p["statistics"].__setitem__("connector_length_m", base["statistics"]["connector_length_m"] + 1e-6)),
+                ("statistics", lambda p: p["statistics"].__setitem__("total_length_m", base["statistics"]["total_length_m"] + 1e-6)),
+                ("statistics", lambda p: p["statistics"].__setitem__("row_count", base["statistics"]["row_count"] + 1)),
+                ("statistics", lambda p: p["statistics"].__setitem__("gap_counts", {"row_turn": 99})),
+                ("statistics", lambda p: p["statistics"].__setitem__("connected_row_turns", base["statistics"]["connected_row_turns"] + 1)),
+                ("statistics", lambda p: p["statistics"].__setitem__("unplannable_area_m2", 1e-6)),
+                ("gap_report", lambda p: p["gap_report"].__setitem__("row_turn_failure_counts", {"ambiguous_boundary": 1})),
+                ("gap_report", lambda p: p["gap_report"].__setitem__("counts", {})),
+            ]
+            for name, tamper in tampers:
+                payload = json.loads(json.dumps(base))
+                tamper(payload)
+                with self.assertRaises(ValueError, msg=name):
+                    SurfaceTrajectory.from_dict(payload)
+            # Area needs the bound mesh: from_dict cannot see it, load_trajectory can.
+            mesh = trimesh.load(Path(tmp) / "region_1_mesh_m.ply", process=False)
+            items = json.loads(json.dumps(result.blocks["items"]))
+            items[0]["area_m2"] += 1e-6
+            with self.assertRaises(ValueError):
+                validate_trajectory(replace(result, blocks=dict(result.blocks, items=items)), mesh=mesh)
+            validate_trajectory(result, mesh=mesh)
+
+    def test_overlapping_block_labels_are_skipped_and_listed_not_dropped(self):
+        from femto.planning.surface_trajectory import non_overlapping_labels
+        from femto.planning.path_presentation import render_diagram
+        from femto.planning.trajectory_diagram import render_route_diagram
+        kept, skipped = non_overlapping_labels([("a", (0, 0, 10, 10)), ("b", (5, 5, 15, 15)), ("c", (20, 0, 30, 10)),
+                                                ("d", (9, 9, 12, 12))])
+        self.assertEqual((kept, skipped), (["a", "c"], ["b", "d"]))
+        with tempfile.TemporaryDirectory() as tmp:
+            result = plan(make_export(tmp, two_patches()))
+            player_plan = to_player_plan(result)
+            rgb = np.zeros((200, 200, 3), np.uint8)
+            ids = np.zeros((200, 200), int)
+            region = {"triangle_indices": [0]}
+            clear = np.asarray(render_diagram(rgb, ids, region, player_plan))
+            second = player_plan["blocks"]["items"][1]["chain_indices"][0]
+            first = player_plan["blocks"]["items"][0]["chain_indices"][0]
+            crowded = json.loads(json.dumps(player_plan))
+            crowded["segments"][second][0]["pixel"] = list(player_plan["segments"][first][0]["pixel"])
+            image = np.asarray(render_diagram(rgb, ids, region, crowded))
+            self.assertEqual(image.shape[0], clear.shape[0] + 28)
+            self.assertEqual(len(crowded["blocks"]["items"]), 2)
+            noted = dict(player_plan, algorithm_notice="旧算法版本 mesh-slice-serpentine-v3")
+            self.assertEqual(np.asarray(render_diagram(rgb, ids, region, noted)).shape[0], clear.shape[0] + 28)
+            route = render_route_diagram(rgb, result)
+            segments = [s for s in result.ordered_items if isinstance(s, ScanSegment)]
+            from dataclasses import replace
+
+            def moved(pixel):
+                points = list(segments[second].points)
+                points[0] = dict(points[0], pixel=list(pixel))
+                items = list(result.ordered_items)
+                items[result.ordered_items.index(segments[second])] = ScanSegment(
+                    segments[second].segment_index, segments[second].row_index, points, segments[second].block_index)
+                return replace(result, ordered_items=items)
+            # At scale 1 the two patch labels (42 px wide, ~18 px apart) already overlap: one is skipped
+            # and a header line says so. Moving block 2's label away restores both labels and drops the line.
+            crowded_route = render_route_diagram(rgb, moved(segments[first].points[0]["pixel"]))
+            apart_route = render_route_diagram(rgb, moved([150.0, 150.0]))
+            self.assertEqual(route.size[1], 200 + 112 + 28 + 28)
+            self.assertEqual(crowded_route.size[1], route.size[1])
+            self.assertEqual(apart_route.size[1], route.size[1] - 28)
 
 
 class BlockPlaybackTests(unittest.TestCase):

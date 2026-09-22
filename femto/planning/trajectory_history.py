@@ -139,10 +139,12 @@ def remove_previous(manifest, candidates, current):
 
 
 def prepare_playback(row, reconstruction, control):
-    from femto.planning.trajectory_export import load_trajectory
+    from femto.planning.trajectory_export import current_algorithm_version, load_trajectory
     from femto.annotation.fixed_rgb_geometry import FixedRGBModel
     from femto.planning.surface_trajectory import to_player_plan
-    trajectory = load_trajectory(row.get('target', row['source']), check=control.check)
+    # Playback is viewing only: an accepted older-version file is hash-checked and mesh-validated
+    # but not re-planned; regeneration stays an explicit user action.
+    trajectory = load_trajectory(row.get('target', row['source']), check=control.check, allow_older_versions=True)
     manifest = json.loads(Path(trajectory.source['region_manifest']).read_text(encoding='utf-8-sig'))
     model = FixedRGBModel(reconstruction, cancel=control)
     if (model.store.digest != trajectory.source['geometry_sha256'] or
@@ -153,4 +155,9 @@ def prepare_playback(row, reconstruction, control):
         if model.view_reference.get(key) != view.get(key):
             raise ValueError('历史轨迹参考图像或标定不一致：'+key)
     control.check()
-    return model, manifest['region'], to_player_plan(trajectory)
+    plan = to_player_plan(trajectory)
+    saved = trajectory.planner.get('algorithm_version')
+    current = current_algorithm_version(trajectory.planner.get('parameters', {}))
+    if saved != current:
+        plan['algorithm_notice'] = f'旧算法版本 {saved}（当前 {current}）：仅回放已保存结果，未重算；要采用当前算法请重新生成'
+    return model, manifest['region'], plan
