@@ -59,6 +59,9 @@ def bound_export(tmp, mesh, depth, mask, *, other_depths=(), other_poses=()):
         rows.append(dict(frame=index, rgb=f"../../rgb/{index:06d}.png", depth=f"../../depth/{index:06d}.png",
                          pose=f"pose/{index:06d}.json", pose_valid=True))
     (dataset / "frames.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    # the range the dataset was reconstructed with; FixedProjection's fixture default is the same 0.25–2.21 m
+    (dataset / "manifest.json").write_text(json.dumps(dict(schema="synthetic-posed-dataset", data_kind="synthetic",
+                                                           camera=dict(depth_range_m=[0.25, 2.21]))), encoding="utf-8")
     export = tmp / "export"
     export.mkdir()
     manifest_path = make_export(export, mesh, selection=dict(mask=mask), depth=depths[0])
@@ -196,6 +199,53 @@ class DerivedSurfaceCandidateTests(unittest.TestCase):
                 load_candidates(folder)
             record = json.loads((folder / JSON_NAME).read_text(encoding="utf-8"))
             self.assertEqual(record["status"], STATUS)
+
+    def test_reload_reverifies_raw_evidence_and_binding_checks_depth_range(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = bound_export(tmp, hole_mesh(), flat_depth(), AROUND_HOLE, other_depths=[flat_depth()], other_poses=[shifted_pose()])
+            folder = export_candidates(build_candidates(source))
+            evidence = load_candidates(folder)["payload"]["evidence"]
+            raw = Path(tmp) / "raw"
+            dataset = raw / "derived" / "local_posed"
+            self.assertEqual(evidence["frames_jsonl_sha256"], sha(dataset / "frames.jsonl"))
+            self.assertEqual(evidence["dataset_manifest_sha256"], sha(dataset / "manifest.json"))
+            self.assertEqual(evidence["depth_range_m"], [0.25, 2.21])
+            self.assertEqual([f["role"] for f in evidence["frames"]], ["reference", "other_view"])
+            tampers = [  # (file, new content writer, expected refusal message)
+                (raw / "depth" / "000001.png", lambda p: write_png(p, flat_depth(503)), "evidence"),
+                (raw / "rgb" / "000001.png", lambda p: write_png(p, np.full((200, 200, 3), 91, np.uint8)), "evidence"),
+                (dataset / "pose" / "000001.json", lambda p: p.write_text(json.dumps(dict(
+                    frame=1, pose_valid=True, T_WC=shifted_pose(0.006, 0.0).tolist())), encoding="utf-8"), "evidence"),
+                (dataset / "frames.jsonl", lambda p: p.write_text(p.read_text(encoding="utf-8") + "\n", encoding="utf-8"), "evidence"),
+                (dataset / "pose" / "000000.json", lambda p: p.write_text(json.dumps(dict(
+                    frame=0, pose_valid=True, T_WC=shifted_pose(0.001, 0.0).tolist())), encoding="utf-8"), "SHA-256"),
+                (raw / "depth" / "000000.png", lambda p: write_png(p, flat_depth(501)), "SHA-256"),
+                (dataset / "calibration" / "camera_metadata.json", lambda p: p.write_text("{}", encoding="utf-8"), "Calibration"),
+                (dataset / "manifest.json", lambda p: p.write_text(json.dumps(dict(camera=dict(depth_range_m=[9.0, 10.0]))),
+                                                                   encoding="utf-8"), "depth range"),
+                (dataset / "manifest.json", lambda p: p.write_text(json.dumps(dict(camera=dict(depth_range_m=[0.25, 2.21]),
+                                                                                   note="x")), encoding="utf-8"), "evidence"),
+            ]
+            for target, tamper, message in tampers:
+                original = target.read_bytes()
+                tamper(target)
+                with self.assertRaisesRegex(ValueError, message, msg=str(target)):
+                    load_candidates(folder)
+                target.write_bytes(original)
+            self.assertIsNotNone(load_candidates(folder)["candidate_mesh"], "restored evidence loads again")
+            # the export's own depth range is not trusted either: it must equal the bound dataset's range
+            manifest = json.loads(source.read_text(encoding="utf-8"))
+            manifest["region"]["selection_support"]["depth_range_m"] = [9.0, 10.0]
+            source.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "depth range"):
+                build_candidates(source)
+            with self.assertRaisesRegex(ValueError, "Region export changed"):
+                load_candidates(folder)
+            manifest["region"]["selection_support"]["depth_range_m"] = [0.25, 2.21]
+            manifest["region"]["selection_support"]["derived_surface"]["status"] = "admitted_to_planning"
+            source.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not_generated"):
+                build_candidates(source)
 
     def test_binding_refusals_and_cli(self):
         with tempfile.TemporaryDirectory() as tmp:

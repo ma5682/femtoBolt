@@ -84,21 +84,47 @@ def _rows(dataset: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
+def _dataset_depth_range_m(dataset: Path) -> list[float]:
+    """Depth range the reconstruction and the fixed RGB page used for this dataset (same lookup as
+    `complete_demo._depth_range_mm`, without its defaults: a dataset without a range is refused)."""
+    manifest = load_json(dataset / "manifest.json")
+    parameters = manifest.get("parameters") or {}
+    range_m = (manifest.get("camera") or {}).get("depth_range_m")
+    minimum_mm = parameters.get("depth_min_mm", 1000.0 * range_m[0] if range_m else None)
+    maximum_mm = parameters.get("depth_max_mm", 1000.0 * range_m[1] if range_m else None)
+    if minimum_mm is None or maximum_mm is None:
+        raise ValueError("Bound dataset manifest records no depth range")
+    return [float(minimum_mm) / 1000.0, float(maximum_mm) / 1000.0]
+
+
+def evidence_record(binding: dict[str, Any]) -> dict[str, Any]:
+    """The `evidence` block of the record; `load_candidates` recomputes it from disk and requires equality."""
+    reference = binding["frames"][binding["reference_index"]]
+    return dict(dataset=binding["dataset"], dataset_manifest_sha256=binding["dataset_manifest_sha256"],
+                frames_jsonl_sha256=binding["frames_jsonl_sha256"], calibration_sha256=binding["calibration"]["sha256"],
+                reference_frame_id=reference["frame"], frames=binding["frames"],
+                depth_range_m=binding["depth_range_m"], transform_direction="T_W0_Ct",
+                kind="raw_per_view_depth_calibration_pose_not_display_cloud_or_texture")
+
+
 def bind_evidence(manifest: dict[str, Any], *, check: Callable[[], None] = lambda: None) -> dict[str, Any]:
     """Resolve and verify raw depth, calibration and poses bound by a region export.
 
     Requires the export's selection intent + support; the reference pose must be the W0
-    identity and every hash in the export must match the bytes on disk."""
+    identity, every hash in the export must match the bytes on disk, and the support record's
+    depth range must be the range the bound dataset was reconstructed with."""
     region = manifest["region"]
     view = region["view_reference"]
     origin = manifest["origin_reference"]
     if not isinstance(region.get("selection_intent"), dict) or not isinstance(region.get("selection_support"), dict):
         raise Unplannable("selection_intent_missing", INTENT_MISSING_MESSAGE)
     intent = validate_selection_intent(region["selection_intent"], view["image_size"])
-    support = validate_selection_support(region["selection_support"], intent_mask(intent))
     dataset = Path(origin["source_dataset"]).resolve()
     if not dataset.is_dir():
         raise ValueError("Bound posed dataset is missing: " + str(dataset))
+    support = validate_selection_support(region["selection_support"], intent_mask(intent),
+                                         expected_depth_range_m=_dataset_depth_range_m(dataset))
+    depth_range_m = [float(v) for v in support["depth_range_m"]]
     rows = _rows(dataset)
     reference_id = origin["reference_frame_id"]
     matches = [index for index, row in enumerate(rows) if row.get("frame") == reference_id]
@@ -134,9 +160,10 @@ def bind_evidence(manifest: dict[str, Any], *, check: Callable[[], None] = lambd
         raise ValueError("Undistorted reference intrinsic / image size mismatch")
     return dict(dataset=str(dataset), frames=frames, reference_index=reference_index, poses=poses,
                 calibration=calibration, map_x=map_x, map_y=map_y, k=k, width=width, height=height,
+                dataset_manifest_sha256=_sha(dataset / "manifest.json"), frames_jsonl_sha256=_sha(dataset / "frames.jsonl"),
                 intrinsic=SimpleNamespace(**load_json(dataset / "calibration" / "color_intrinsic.json")),
                 distortion=load_json(dataset / "calibration" / "distortion.json")["rgb"],
-                intent=intent, support=support, depth_range_m=[float(v) for v in support["depth_range_m"]])
+                intent=intent, support=support, depth_range_m=depth_range_m)
 
 
 def _pixels(uv: np.ndarray, width: int, height: int) -> tuple[np.ndarray, np.ndarray]:
@@ -324,10 +351,7 @@ def build_candidates(source: str | Path, *, check: Callable[[], None] = lambda: 
                     mesh_file_sha256=manifest["file_sha256"][manifest["files"]["mesh_file"]],
                     geometry_sha256=manifest["geometry_sha256"], selection_intent_sha256=intent["selected_mask_sha256"],
                     selection_support_sha256=support["class_sha256"], region_id=manifest["region"].get("annotation_id")),
-        evidence=dict(dataset=binding["dataset"], calibration_sha256=binding["calibration"]["sha256"],
-                      reference_frame_id=reference["frame"], frames=binding["frames"],
-                      depth_range_m=binding["depth_range_m"], transform_direction="T_W0_Ct",
-                      kind="raw_per_view_depth_calibration_pose_not_display_cloud_or_texture"),
+        evidence=evidence_record(binding),
         mesher=dict(mesher, note="existing single-frame pixel-adjacency rule on the reference raw depth; unchanged thresholds"),
         selection=dict(component_count=len(intent["components"]), hole_count=len(intent["explicit_unselected_holes"]),
                        support_counts=support["counts"], candidate_pixel_count=int(len(xs)),
@@ -435,7 +459,12 @@ def export_blocked(parent: str | Path, source: str | Path, error: Exception) -> 
 
 
 def load_candidates(folder: str | Path) -> dict[str, Any]:
-    """Re-read a diagnostic folder: file hashes, export binding and strict selection containment are re-verified."""
+    """Re-read a diagnostic folder.
+
+    Re-verified: file hashes, the record's status / admission / safety flags, the region export
+    and its selection intent + support, the bound raw evidence (every view's RGB / depth / pose
+    bytes, `frames.jsonl`, dataset manifest, calibration identity, reference W0 identity pose,
+    depth range) exactly as recorded, and every candidate face's whole-pixel containment."""
     folder = Path(folder).resolve()
     files = json.loads((folder / FILES_NAME).read_text(encoding="utf-8"))
     if files.get("schema") != FILES_SCHEMA or not isinstance(files.get("files"), dict):
@@ -454,9 +483,13 @@ def load_candidates(folder: str | Path) -> dict[str, Any]:
         raise ValueError("Region export changed since the candidates were generated")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     region = manifest["region"]
-    intent = validate_selection_intent(region["selection_intent"], region["view_reference"]["image_size"])
-    if intent["selected_mask_sha256"] != payload["source"]["selection_intent_sha256"]:
-        raise ValueError("Selection intent changed since the candidates were generated")
+    binding = bind_evidence(manifest)
+    intent, support = binding["intent"], binding["support"]
+    if (intent["selected_mask_sha256"] != payload["source"]["selection_intent_sha256"]
+            or support["class_sha256"] != payload["source"]["selection_support_sha256"]):
+        raise ValueError("Selection intent / support changed since the candidates were generated")
+    if json.loads(canonical_json_bytes(evidence_record(binding))) != payload.get("evidence"):
+        raise ValueError("Bound raw evidence (RGB / depth / pose / calibration / frames) changed since the candidates were generated")
     mesh = None
     if "ply" in payload["files"]:
         loaded = trimesh.load(folder / payload["files"]["ply"], force="mesh", process=False)

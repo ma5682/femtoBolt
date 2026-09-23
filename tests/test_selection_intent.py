@@ -96,6 +96,29 @@ class SelectionIntentRecordTests(unittest.TestCase):
             validate_selection_support(broken, mask)
         with self.assertRaises(ValueError):
             validate_selection_support(support, box(mask.copy(), 0, 0, 2, 2))
+        # metadata the classes were derived from (or that downstream reads) is locked, not display text
+        for tamper in (lambda s: s["depth_range_m"].__setitem__(0, 9.0),
+                       lambda s: s.__setitem__("depth_range_m", [2.21, .25]),
+                       lambda s: s.__setitem__("depth_range_m", ["0.25", "2.21"]),
+                       lambda s: s["derived_surface"].__setitem__("status", "admitted_to_planning"),
+                       lambda s: s["derived_surface"].__setitem__("candidate_pixel_count", 1),
+                       lambda s: s.__setitem__("derived_surface", None),
+                       lambda s: s.__setitem__("source", "fused_multiview_cloud"),
+                       lambda s: s.__setitem__("evidence", "multiview_cloud"),
+                       lambda s: s["classes"].__setitem__("2", "measured_mesh"),
+                       lambda s: s.__setitem__("interpretation", "surface_area_m2")):
+            broken = copy.deepcopy(support)
+            tamper(broken)
+            with self.assertRaises(ValueError):
+                validate_selection_support(broken, mask)
+        self.assertEqual(validate_selection_support(support, mask)["depth_range_m"], [.25, 2.21])
+        # a plausible but wrong range is only detectable against the bound dataset's range
+        plausible = copy.deepcopy(support)
+        plausible["depth_range_m"] = [9.0, 10.0]
+        validate_selection_support(plausible, mask)
+        with self.assertRaisesRegex(ValueError, "depth range"):
+            validate_selection_support(plausible, mask, expected_depth_range_m=[.25, 2.21])
+        validate_selection_support(support, mask, expected_depth_range_m=[.25, 2.21])
 
     def test_restriction_only_removes_pixels_and_layers_render(self):
         mask = box(np.zeros((40, 60), bool), 5, 5, 29, 29)

@@ -35,6 +35,11 @@ SUPPORT_CLASSES = {
     6: 'no_source_pixel',
 }
 UNCONFIRMED_CLASSES = (2, 3, 4, 5, 6)
+SUPPORT_SOURCE = 'bound_mesh_first_hit_and_reference_raw_depth'
+SUPPORT_EVIDENCE = 'reference_frame_raw_depth_only_not_multiview_cloud'
+SUPPORT_INTERPRETATION = 'image_pixel_classification_not_surface_area'
+DERIVED_SURFACE_STATUS = 'not_generated'
+DERIVED_SURFACE_REASON = 'pending_user_confirmed_method_and_thresholds'
 CLASS_MEANING = {
     'measured_mesh': '有实测 Mesh 支持',
     'no_surface_reference_depth_present': '参考帧有深度但 Mesh 缺面（派生表面待用户确认方法与门限）',
@@ -288,26 +293,51 @@ def build_selection_support(mask: Any, projection: Any) -> dict[str, Any]:
     unconfirmed = int(sum(counts[SUPPORT_CLASSES[code]] for code in UNCONFIRMED_CLASSES))
     height, width = mask.shape
     return dict(schema=SUPPORT_SCHEMA, coordinate_frame=IMAGE_FRAME, unit='pixel', image_size=[width, height],
-                source='bound_mesh_first_hit_and_reference_raw_depth',
-                evidence='reference_frame_raw_depth_only_not_multiview_cloud',
+                source=SUPPORT_SOURCE, evidence=SUPPORT_EVIDENCE,
                 classes={str(code): name for code, name in SUPPORT_CLASSES.items()},
                 class_runs=encode_runs(classes), class_sha256=digest(classes),
                 counts=counts, selected_pixel_count=int(mask.sum()),
                 geometry_supported_pixel_count=counts['measured_mesh'],
                 geometry_unconfirmed_pixel_count=unconfirmed,
-                depth_range_m=[minimum, maximum],
-                interpretation='image_pixel_classification_not_surface_area',
-                derived_surface=dict(status='not_generated',
-                                     reason='pending_user_confirmed_method_and_thresholds',
+                depth_range_m=_depth_range(minimum, maximum),
+                interpretation=SUPPORT_INTERPRETATION,
+                derived_surface=dict(status=DERIVED_SURFACE_STATUS, reason=DERIVED_SURFACE_REASON,
                                      candidate_pixel_count=counts['no_surface_reference_depth_present']),
                 physical_accuracy_verified=False)
 
 
-def validate_selection_support(value: Any, mask: Any) -> dict[str, Any]:
+def _depth_range(minimum: Any, maximum: Any) -> list[float]:
+    values = [minimum, maximum]
+    if (len(values) != 2 or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in values)
+            or not all(np.isfinite(float(v)) for v in values) or not 0 < float(minimum) < float(maximum)):
+        raise ValueError('Invalid selection support depth range')
+    return [float(minimum), float(maximum)]
+
+
+def validate_selection_support(value: Any, mask: Any, *, expected_depth_range_m: Any = None) -> dict[str, Any]:
+    """Recompute the classification and lock every field the classes were derived from.
+
+    `depth_range_m`, `source`, `evidence`, the class mapping, the interpretation and the
+    `derived_surface` state are inputs or contracts of the record, not display text: a
+    changed depth range would silently change what downstream candidate generation does,
+    and `derived_surface.status` must stay `not_generated` until the user decides admission.
+    Callers that know the range the bound dataset was reconstructed with pass it as
+    `expected_depth_range_m`; the record alone cannot tell a wrong-but-plausible range."""
     if not isinstance(value, dict) or value.get('schema') != SUPPORT_SCHEMA:
         raise ValueError('Invalid selection support record')
     if value.get('coordinate_frame') != IMAGE_FRAME or value.get('unit') != 'pixel':
         raise ValueError('Selection support image coordinate contract mismatch')
+    if (value.get('source') != SUPPORT_SOURCE or value.get('evidence') != SUPPORT_EVIDENCE
+            or value.get('interpretation') != SUPPORT_INTERPRETATION
+            or value.get('classes') != {str(code): name for code, name in SUPPORT_CLASSES.items()}):
+        raise ValueError('Selection support source / evidence / class contract mismatch')
+    depth_range = value.get('depth_range_m')
+    if not isinstance(depth_range, list) or len(depth_range) != 2:
+        raise ValueError('Invalid selection support depth range')
+    depth_range = _depth_range(*depth_range)
+    if expected_depth_range_m is not None and not np.allclose(
+            _depth_range(*expected_depth_range_m), depth_range, rtol=0, atol=1e-9):
+        raise ValueError('Selection support depth range does not match the bound dataset depth range')
     mask = _as_mask(mask, value.get('image_size'))
     classes = decode_runs(value.get('class_runs'), value['image_size'], values=SUPPORT_CLASSES.keys())
     if value.get('class_sha256') != digest(classes) or not np.array_equal(classes > 0, mask):
@@ -319,6 +349,9 @@ def validate_selection_support(value: Any, mask: Any) -> dict[str, Any]:
             or value.get('selected_pixel_count') != int(mask.sum())
             or value.get('physical_accuracy_verified') is not False):
         raise ValueError('Selection support counts do not match its classes')
+    if value.get('derived_surface') != dict(status=DERIVED_SURFACE_STATUS, reason=DERIVED_SURFACE_REASON,
+                                            candidate_pixel_count=counts['no_surface_reference_depth_present']):
+        raise ValueError('Selection support derived_surface state is not the locked not_generated record')
     return dict(value)
 
 
