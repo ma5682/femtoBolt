@@ -27,7 +27,8 @@ from femto.annotation.selection_intent import (
     intent_mask, support_classes, validate_selection_intent, validate_selection_support,
 )
 from femto.planning.surface_trajectory import (
-    Gap, LINK_FAILURE_REASONS, ROW_TURN_FAILURE_REASONS, SELECTION_ALGORITHM, SELECTION_BLOCKS_SCHEMA,
+    FACE_PORTAL_SELECTION_ALGORITHM, Gap, LINK_FAILURE_REASONS, ROW_TURN_FAILURE_REASONS,
+    SELECTION_ALGORITHM, SELECTION_BLOCKS_SCHEMA,
     SELECTION_BLOCK_REASONS, ScanSegment, SurfaceTrajectory, _close, _length_split, face_components,
     face_list_sha256, validate_trajectory,
 )
@@ -156,6 +157,9 @@ def _plan_fragment(vertices: np.ndarray, faces: np.ndarray, ids: np.ndarray, mes
     from femto.planning.surface_trajectory import OPTIMIZED_SELECTION_ALGORITHM
     from femto.planning.surface_link_optimization import OptimizedSurfaceLinks
     router_class = OptimizedSurfaceLinks if algorithm_version == OPTIMIZED_SELECTION_ALGORITHM else SurfaceLinks
+    if algorithm_version == FACE_PORTAL_SELECTION_ALGORITHM:
+        from femto.planning.surface_face_routing import FacePortalSurfaceLinks
+        router_class = FacePortalSurfaceLinks
     router = router_class(SimpleNamespace(vertices=vertices, faces=faces), region, prepared["frame"], check, ids,
                           allowed=allowed)
     linked = connect_links(prepared["segments"], gaps, _eligible_turns(prepared["ordered_records"]), router,
@@ -562,6 +566,10 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
         block_record["link_rule"]["then"] += ("; locally shorten inside that existing triangle corridor using same-face "
             "chords and manifold shared-edge crossings; preserve endpoints, check every edge against the selection "
             "and forbidden polygons; never increase connector length; not global geodesic or smoothing")
+    if algorithm_version == FACE_PORTAL_SELECTION_ALGORITHM:
+        block_record["link_rule"]["then"] += ("; when the retained connector search fails, search supported face-interior "
+            "paths through manifold shared-edge portals inside the same measured fragment and selected work block; "
+            "recheck every complete edge, never bridge missing geometry or explicitly unselected pixels")
     planner = {"kind": "mesh_slice", "algorithm_version": algorithm_version,
                "parameters": dict(params, connect_rows=True, block_planning=True, selection_blocks=True),
                "sweep_frame": display_frame}

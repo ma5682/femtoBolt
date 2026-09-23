@@ -173,9 +173,9 @@ def _verify_files(folder: Path, result_sha256: str) -> None:
 def current_algorithm_version(parameters: dict[str, Any]) -> str:
     """Current product version for these saved parameters (the API also retains v4)."""
     from femto.planning.mesh_slice_planner import ALGORITHM_VERSION
-    from femto.planning.surface_trajectory import BLOCK_ALGORITHM, CONNECTED_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM
+    from femto.planning.surface_trajectory import BLOCK_ALGORITHM, CONNECTED_ALGORITHM, FACE_PORTAL_SELECTION_ALGORITHM
     if parameters.get("selection_blocks") is True:
-        return OPTIMIZED_SELECTION_ALGORITHM
+        return FACE_PORTAL_SELECTION_ALGORITHM
     if parameters.get("block_planning") is True:
         return BLOCK_ALGORITHM
     return CONNECTED_ALGORITHM if parameters.get("connect_rows") is True else ALGORITHM_VERSION
@@ -183,15 +183,16 @@ def current_algorithm_version(parameters: dict[str, Any]) -> str:
 
 def product_algorithm_notice(parameters: dict[str, Any], saved_version: Any) -> str | None:
     """User-facing notice when a saved file is not the current selection-block product rule."""
-    from femto.planning.surface_trajectory import SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM
+    from femto.planning.surface_trajectory import SELECTION_ALGORITHMS, FACE_PORTAL_SELECTION_ALGORITHM
     current = current_algorithm_version(parameters)
-    if saved_version == SELECTION_ALGORITHM and parameters.get("selection_blocks") is True:
-        return (f'旧算法版本 {saved_version}（当前 {OPTIMIZED_SELECTION_ALGORITHM}）：'
+    if (saved_version in SELECTION_ALGORITHMS and saved_version != FACE_PORTAL_SELECTION_ALGORITHM
+            and parameters.get("selection_blocks") is True):
+        return (f'旧算法版本 {saved_version}（当前 {FACE_PORTAL_SELECTION_ALGORITHM}）：'
                 '可回放已保存结果，也可按保存的旧版算法重算；要采用当前算法请重新生成，不会自动升级')
     if saved_version != current:
         return f'旧算法版本 {saved_version}（当前 {current}）：仅回放已保存结果，未重算；要采用当前算法请重新生成'
-    if saved_version != OPTIMIZED_SELECTION_ALGORITHM:
-        return (f'此结果由算法 {saved_version} 生成；当前产品规则为 {OPTIMIZED_SELECTION_ALGORITHM}'
+    if saved_version != FACE_PORTAL_SELECTION_ALGORITHM:
+        return (f'此结果由算法 {saved_version} 生成；当前产品规则为 {FACE_PORTAL_SELECTION_ALGORITHM}'
                 '（工作块按医师选择组件划分、块内单条连续链）。仅回放，未重算；要采用当前规则请重新选择并导出区域后重新生成')
     return None
 
@@ -200,7 +201,7 @@ def load_trajectory(path: str | Path, *, check: Callable[[], None] = lambda: Non
                     reproduce: bool = True, allow_older_versions: bool = False) -> SurfaceTrajectory:
     """Read, hash-check and validate a saved trajectory; by default also re-plan and compare.
 
-    Selection-block v4/v4.1 files reproduce using their saved version, never silently
+    Selection-block v4/v4.1/v4.2 files reproduce using their saved version, never silently
     upgrading. Other accepted older versions without a retained planner are validated
     and returned for viewing only with allow_older_versions=True; otherwise rejected."""
     path = Path(path).resolve()

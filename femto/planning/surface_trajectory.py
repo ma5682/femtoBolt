@@ -24,7 +24,8 @@ BLOCK_ALGORITHMS = ("mesh-slice-serpentine-v3", BLOCK_ALGORITHM)
 # v4: work blocks are the physician's selection components; every planned block is one chain.
 SELECTION_ALGORITHM = "mesh-slice-serpentine-v4"
 OPTIMIZED_SELECTION_ALGORITHM = "mesh-slice-serpentine-v4.1"
-SELECTION_ALGORITHMS = (SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM)
+FACE_PORTAL_SELECTION_ALGORITHM = "mesh-slice-serpentine-v4.2"
+SELECTION_ALGORITHMS = (SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM, FACE_PORTAL_SELECTION_ALGORITHM)
 ROW_TURN_FAILURE_REASONS = {
     "non_adjacent_slice", "endpoint_not_on_boundary", "forbidden_blocked",
     "ambiguous_boundary", "no_boundary_path_in_band",
@@ -447,7 +448,7 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
     if block_mode and parameters.get("block_planning") is not True:
         raise ValueError("Block trajectory requires block_planning=True")
     if selection_mode != (parameters.get("selection_blocks") is True):
-        raise ValueError("selection_blocks=True requires a mesh-slice-serpentine-v4/v4.1 contract")
+        raise ValueError("selection_blocks=True requires a mesh-slice-serpentine-v4/v4.1/v4.2 contract")
     if not block_mode and trajectory.blocks is not None:
         raise ValueError("Block records are only valid for block-mode algorithm versions")
     blocks = _validated_blocks(trajectory) if block_mode else None

@@ -14,6 +14,8 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
     """`chain_indices` is a display filter (e.g. one mesh block); it never reorders or edits the plan."""
     height,width=rgb.shape[:2];scale=min(8. if plan.get('route_quality') or plan.get('surface_mode') else 1.,1400/width,900/height)
     size=(max(1,int(width*scale)),max(1,int(height*scale)))
+    blocks=plan.get('blocks')
+    selection_blocks=bool(blocks and blocks.get('selection_blocks'))
     mask=np.isin(ids,region['triangle_indices'])
     base=np.full_like(rgb,24)
     if show_region:base[mask]=rgb[mask]
@@ -27,16 +29,14 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
             selected=np.isin(ids,triangles)
             base[selected]=(base[selected]*.35+np.asarray(color)*.65).astype(np.uint8)
         polygon=region.get('screen_polygon')
-        if polygon:
+        if polygon and not selection_blocks:
             polygon_mask=Image.new('1',(width,height));ImageDraw.Draw(polygon_mask).polygon([tuple(p) for p in polygon],fill=1)
             missing=np.asarray(polygon_mask)&(ids<0)
             base[missing]=[180,70,200]
     picture=Image.fromarray(base).resize(size,Image.Resampling.LANCZOS)
     header=(293 if plan.get('route_quality') else 265) if plan.get('start_selection') else 125
     if plan.get('surface_mode'):header=237
-    blocks=plan.get('blocks')
     if blocks:header+=28
-    selection_blocks=bool(blocks and blocks.get('selection_blocks'))
     selection_lines=[]
     if selection_blocks:
         from femto.planning.trajectory_diagram import draw_selection_layers
@@ -124,7 +124,9 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
         from femto.planning.trajectory_diagram import _draw_selection_outlines
         _draw_selection_outlines(draw,region,rgb.shape[:2],scale,header,font)
     polygon=region.get('screen_polygon')
-    if polygon:
+    # Brush polygons can contain doubled bridges between independent components.
+    # Selection-block plans use the authoritative mask contours above, not those bridges.
+    if polygon and not selection_blocks:
         outline=np.asarray(polygon)*scale+[0,header]
         draw.line([tuple(p) for p in np.vstack([outline,outline[0]])],fill='#ee80ff',width=2)
     for forbidden in region.get('exclusion_polygons',[]):
@@ -200,6 +202,19 @@ def motion_position(plan: Any,elapsed: float,speed_mm_s: float=20.,gap_seconds: 
     return len(plan['segments'])-1,None,'finished'
 
 
+def _block_state_label(item: dict[str, Any], selection_blocks: bool) -> str:
+    """Display validated continuity counts without calling every route chain a break."""
+    if item['status']=='planned':return '单链完成' if selection_blocks else '已规划'
+    if item['status']=='incomplete':
+        continuity=item.get('continuity') or {}
+        chains=continuity.get('chain_count')
+        if chains is None:chains=len(item.get('chain_indices', []))
+        breaks=continuity.get('internal_gap_count')
+        if breaks is None:breaks=max(chains-1,0)
+        return f'未完成：{chains} 段路线 / {breaks} 处断开'
+    return '未规划：'+str(item.get('reason'))
+
+
 def show_presentation(parent: Any,model: Any,region: Any,plan: Any,is_current: Callable[..., Any]=lambda:True) -> None:
     import tkinter as tk
     import time
@@ -216,11 +231,8 @@ def show_presentation(parent: Any,model: Any,region: Any,plan: Any,is_current: C
     show_turns=tk.BooleanVar(value=bool(plan.get('route_quality')))
     selection=tk.StringVar(value='全部路径段')
     blocks=plan.get('blocks');block_selection=tk.StringVar(value='全部块')
-    def block_state(item):
-        if item['status']=='planned':return '已规划' if not blocks.get('selection_blocks') else '单链完成'
-        if item['status']=='incomplete':return '未完成：'+str((item.get('continuity') or {}).get('chain_count'))+' 条断链'
-        return '未规划：'+str(item.get('reason'))
-    block_labels=[f"{item['label']}（{block_state(item)}）" for item in blocks['items']] if blocks else []
+    block_labels=[f"{item['label']}（{_block_state_label(item, bool(blocks.get('selection_blocks')))}）"
+                  for item in blocks['items']] if blocks else []
     def chosen_block():
         if not blocks or block_selection.get()=='全部块':return None
         return blocks['items'][block_labels.index(block_selection.get())]

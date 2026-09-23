@@ -311,7 +311,7 @@ class BlockStatusTests(unittest.TestCase):
             self.assertTrue((result["folder"] / "blocks.csv").is_file())
             loaded = load_trajectory(result["folder"])
             self.assertEqual(loaded.statistics["block_count"], 2)
-            self.assertEqual(loaded.planner["algorithm_version"], "mesh-slice-serpentine-v4.1")
+            self.assertEqual(loaded.planner["algorithm_version"], "mesh-slice-serpentine-v4.2")
 
 
 class BlockBudgetTests(unittest.TestCase):

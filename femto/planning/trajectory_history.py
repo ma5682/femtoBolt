@@ -66,14 +66,14 @@ def history_rows(reconstruction, check=lambda: None):
 
 def generate(row, control):
     from femto.planning.mesh_slice_planner import plan_mesh_slice
-    from femto.planning.surface_trajectory import OPTIMIZED_SELECTION_ALGORITHM
+    from femto.planning.surface_trajectory import FACE_PORTAL_SELECTION_ALGORITHM
     from femto.planning.trajectory_export import export_trajectory, load_trajectory
     manifest = region_manifest(row)
     old = previous_trajectories(manifest)
-    # v4.1: work blocks remain the physician's selection components; each planned block is one chain.
+    # v4.2: work blocks remain the physician's selection components; each planned block is one chain.
     # Exports without selection intent are refused with an explicit message and keep old results.
     trajectory = plan_mesh_slice(manifest, connect_rows=True, block_planning=True, selection_blocks=True,
-                                 selection_algorithm=OPTIMIZED_SELECTION_ALGORITHM, check=control.check)
+                                 selection_algorithm=FACE_PORTAL_SELECTION_ALGORITHM, check=control.check)
     folder = export_trajectory(trajectory, manifest.parent, check=control.check, commit=control.publish)
     load_trajectory(folder, reproduce=False)
     summary = block_summary(trajectory)
@@ -125,7 +125,8 @@ def block_summary(trajectory):
                 + ('全部工作块已成为连续单链且覆盖完整。' if complete else
                    ('未完成块：' + '、'.join(
                        f"块 {b['block_index']+1}（{b['face_count']} 面，"
-                       + (f"{b['continuity']['chain_count']} 条断链：{b['link_failure_counts']}" if b['status'] == 'incomplete' else str(b.get('reason')))
+                       + (f"{b['continuity']['chain_count']} 段路线 / {b['continuity']['internal_gap_count']} 处断开：{b['link_failure_counts']}"
+                          if b['status'] == 'incomplete' else str(b.get('reason')))
                        + '）' for b in missing[:8]) + ('…' if len(missing) > 8 else '') + '；' if missing else '路线连续但覆盖未完整；')
                    + '旧轨迹已保留，未替换或删除。'))
         return dict(text=text, complete=complete, coverage_status=stats['coverage_status'],
