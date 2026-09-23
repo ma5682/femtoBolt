@@ -26,8 +26,10 @@ SELECTION_ALGORITHM = "mesh-slice-serpentine-v4"
 OPTIMIZED_SELECTION_ALGORITHM = "mesh-slice-serpentine-v4.1"
 FACE_PORTAL_SELECTION_ALGORITHM = "mesh-slice-serpentine-v4.2"
 BIDIRECTIONAL_SELECTION_ALGORITHM = "mesh-slice-serpentine-v4.3"
+ORDERED_SELECTION_ALGORITHM = "mesh-slice-serpentine-v4.4"
 SELECTION_ALGORITHMS = (SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM,
-                        FACE_PORTAL_SELECTION_ALGORITHM, BIDIRECTIONAL_SELECTION_ALGORITHM)
+                        FACE_PORTAL_SELECTION_ALGORITHM, BIDIRECTIONAL_SELECTION_ALGORITHM,
+                        ORDERED_SELECTION_ALGORITHM)
 ROW_TURN_FAILURE_REASONS = {
     "non_adjacent_slice", "endpoint_not_on_boundary", "forbidden_blocked",
     "ambiguous_boundary", "no_boundary_path_in_band",
@@ -450,7 +452,7 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
     if block_mode and parameters.get("block_planning") is not True:
         raise ValueError("Block trajectory requires block_planning=True")
     if selection_mode != (parameters.get("selection_blocks") is True):
-        raise ValueError("selection_blocks=True requires a mesh-slice-serpentine-v4/v4.1/v4.2/v4.3 contract")
+        raise ValueError("selection_blocks=True requires a mesh-slice-serpentine-v4/v4.1/v4.2/v4.3/v4.4 contract")
     if not block_mode and trajectory.blocks is not None:
         raise ValueError("Block records are only valid for block-mode algorithm versions")
     blocks = _validated_blocks(trajectory) if block_mode else None
@@ -475,7 +477,9 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
                     raise ValueError("Every trajectory point needs measured_mesh support")
                 xyz = _finite_xyz(point.get("xyz_m"))
                 point_row = point.get('row_index')
-                row_valid = (type(point_row) is int and point_row >= item.row_index) if connected_rows else point_row == item.row_index
+                row_valid = ((type(point_row) is int and point_row >= 0) if version == ORDERED_SELECTION_ALGORITHM
+                             else (type(point_row) is int and point_row >= item.row_index) if connected_rows
+                             else point_row == item.row_index)
                 if point.get("route_index") != expected_route or not row_valid:
                     raise ValueError("Invalid global route index or row binding")
                 triangle_index = point.get("triangle_index")
@@ -537,6 +541,9 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
         if gap.next_point != {"route_index": after["route_index"], "xyz_m": after["xyz_m"]}:
             raise ValueError("Gap next endpoint mismatch")
     if selection_mode:
+        if version == ORDERED_SELECTION_ALGORITHM:
+            from femto.planning.surface_visit_validation import validate_visit_rows
+            validate_visit_rows(blocks, segments, gaps, faces=faces)
         from femto.planning.selection_blocks import check_selection_blocks
         check_selection_blocks(trajectory, blocks, segments, gaps, vertices, faces, region)
     elif block_mode:
@@ -651,11 +658,15 @@ def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, 
                 "treatment_coverage_claim": "none_without_effective_head_width",
             }
     if model.planner.get("parameters", {}).get("row_spacing_mm") is not None:
+        spacing = model.spacing_report
+        if model.planner.get("algorithm_version") == ORDERED_SELECTION_ALGORITHM:
+            from femto.planning.surface_visit_validation import player_spacing_report
+            spacing = player_spacing_report(model.spacing_report, segments)
         result.update(spacing_mm=model.planner["parameters"]["row_spacing_mm"],
                       spacing_semantics="parallel_plane_spacing_not_uniform_surface_spacing",
                       surface_mode={"schema": "femto-surface-trajectory-player-view-v1",
                                     "algorithm": model.planner.get("algorithm_version")},
-                      spacing_report=model.spacing_report)
+                      spacing_report=spacing)
     return result
 
 

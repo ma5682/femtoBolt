@@ -66,14 +66,14 @@ def history_rows(reconstruction, check=lambda: None):
 
 def generate(row, control):
     from femto.planning.mesh_slice_planner import plan_mesh_slice
-    from femto.planning.surface_trajectory import BIDIRECTIONAL_SELECTION_ALGORITHM
+    from femto.planning.surface_trajectory import ORDERED_SELECTION_ALGORITHM
     from femto.planning.trajectory_export import export_trajectory, load_trajectory
     manifest = region_manifest(row)
     old = previous_trajectories(manifest)
-    # v4.3: work blocks remain the physician's selection components; each planned block is one chain.
+    # v4.4: work blocks remain selection components; optimize visits only within each measured fragment.
     # Exports without selection intent are refused with an explicit message and keep old results.
     trajectory = plan_mesh_slice(manifest, connect_rows=True, block_planning=True, selection_blocks=True,
-                                 selection_algorithm=BIDIRECTIONAL_SELECTION_ALGORITHM, check=control.check)
+                                 selection_algorithm=ORDERED_SELECTION_ALGORITHM, check=control.check)
     folder = export_trajectory(trajectory, manifest.parent, check=control.check, commit=control.publish)
     load_trajectory(folder, reproduce=False)
     summary = block_summary(trajectory)

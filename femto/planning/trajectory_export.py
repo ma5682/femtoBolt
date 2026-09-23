@@ -33,6 +33,8 @@ def _write_core(folder: Path, trajectory: SurfaceTrajectory, check: Callable[[],
     (folder / "trajectory.json").write_bytes(canonical_json_bytes(payload))
     blocks = trajectory.blocks
     selection = bool(blocks) and blocks.get("schema") == "femto-surface-trajectory-blocks-v2"
+    from femto.planning.surface_trajectory import ORDERED_SELECTION_ALGORITHM
+    ordered_visits = trajectory.planner.get("algorithm_version") == ORDERED_SELECTION_ALGORITHM
     point_rows = [["route_index", "segment_index", "row_index", "point_index",
                    "x_m", "y_m", "z_m", "triangle_index", "geometry_support"]
                   + (["block_index"] if blocks else []) + (["role", "revisit"] if selection else [])]
@@ -47,7 +49,8 @@ def _write_core(folder: Path, trajectory: SurfaceTrajectory, check: Callable[[],
         check()
         if isinstance(item, ScanSegment):
             for point_index, point in enumerate(item.points):
-                point_rows.append([point["route_index"], item.segment_index, item.row_index, point_index,
+                point_rows.append([point["route_index"], item.segment_index,
+                                   point["row_index"] if ordered_visits else item.row_index, point_index,
                                    *point["xyz_m"], point["triangle_index"], point["geometry_support"]]
                                   + ([item.block_index] if blocks else [])
                                   + ([point.get("role", "scan"), int(point.get("revisit") is True)] if selection else []))
@@ -173,9 +176,9 @@ def _verify_files(folder: Path, result_sha256: str) -> None:
 def current_algorithm_version(parameters: dict[str, Any]) -> str:
     """Current product version for these saved parameters (the API also retains v4)."""
     from femto.planning.mesh_slice_planner import ALGORITHM_VERSION
-    from femto.planning.surface_trajectory import BLOCK_ALGORITHM, CONNECTED_ALGORITHM, BIDIRECTIONAL_SELECTION_ALGORITHM
+    from femto.planning.surface_trajectory import BLOCK_ALGORITHM, CONNECTED_ALGORITHM, ORDERED_SELECTION_ALGORITHM
     if parameters.get("selection_blocks") is True:
-        return BIDIRECTIONAL_SELECTION_ALGORITHM
+        return ORDERED_SELECTION_ALGORITHM
     if parameters.get("block_planning") is True:
         return BLOCK_ALGORITHM
     return CONNECTED_ALGORITHM if parameters.get("connect_rows") is True else ALGORITHM_VERSION
@@ -183,16 +186,16 @@ def current_algorithm_version(parameters: dict[str, Any]) -> str:
 
 def product_algorithm_notice(parameters: dict[str, Any], saved_version: Any) -> str | None:
     """User-facing notice when a saved file is not the current selection-block product rule."""
-    from femto.planning.surface_trajectory import SELECTION_ALGORITHMS, BIDIRECTIONAL_SELECTION_ALGORITHM
+    from femto.planning.surface_trajectory import SELECTION_ALGORITHMS, ORDERED_SELECTION_ALGORITHM
     current = current_algorithm_version(parameters)
-    if (saved_version in SELECTION_ALGORITHMS and saved_version != BIDIRECTIONAL_SELECTION_ALGORITHM
+    if (saved_version in SELECTION_ALGORITHMS and saved_version != ORDERED_SELECTION_ALGORITHM
             and parameters.get("selection_blocks") is True):
-        return (f'旧算法版本 {saved_version}（当前 {BIDIRECTIONAL_SELECTION_ALGORITHM}）：'
+        return (f'旧算法版本 {saved_version}（当前 {ORDERED_SELECTION_ALGORITHM}）：'
                 '可回放已保存结果，也可按保存的旧版算法重算；要采用当前算法请重新生成，不会自动升级')
     if saved_version != current:
         return f'旧算法版本 {saved_version}（当前 {current}）：仅回放已保存结果，未重算；要采用当前算法请重新生成'
-    if saved_version != BIDIRECTIONAL_SELECTION_ALGORITHM:
-        return (f'此结果由算法 {saved_version} 生成；当前产品规则为 {BIDIRECTIONAL_SELECTION_ALGORITHM}'
+    if saved_version != ORDERED_SELECTION_ALGORITHM:
+        return (f'此结果由算法 {saved_version} 生成；当前产品规则为 {ORDERED_SELECTION_ALGORITHM}'
                 '（工作块按医师选择组件划分、块内单条连续链）。仅回放，未重算；要采用当前规则请重新选择并导出区域后重新生成')
     return None
 
@@ -201,7 +204,7 @@ def load_trajectory(path: str | Path, *, check: Callable[[], None] = lambda: Non
                     reproduce: bool = True, allow_older_versions: bool = False) -> SurfaceTrajectory:
     """Read, hash-check and validate a saved trajectory; by default also re-plan and compare.
 
-    Selection-block v4/v4.1/v4.2/v4.3 files reproduce using their saved version, never silently
+    Selection-block v4/v4.1/v4.2/v4.3/v4.4 files reproduce using their saved version, never silently
     upgrading. Other accepted older versions without a retained planner are validated
     and returned for viewing only with allow_older_versions=True; otherwise rejected."""
     path = Path(path).resolve()

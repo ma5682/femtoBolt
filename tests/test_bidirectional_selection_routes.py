@@ -115,11 +115,8 @@ class BidirectionalSelectionIntegrationTests(unittest.TestCase):
                             mock.patch('femto.planning.mesh_slice_planner.plan_mesh_slice', side_effect=AssertionError('replanned')):
                         returned, _, playback = prepare_playback({'source': folder / 'trajectory.json'}, Path(tmp), TaskControl())
                     self.assertIs(returned, model)
-                    if version == FACE_PORTAL_SELECTION_ALGORITHM:
-                        self.assertIn(version, playback['algorithm_notice'])
-                        self.assertIn('不会自动升级', playback['algorithm_notice'])
-                    else:
-                        self.assertNotIn('algorithm_notice', playback)
+                    self.assertIn(version, playback['algorithm_notice'])
+                    self.assertIn('不会自动升级', playback['algorithm_notice'])
                     self.assertFalse(playback['execution_ready'])
                     self.assertFalse(playback['physical_accuracy_verified'])
                     self.assertEqual(before, (folder / 'trajectory.json').read_bytes())

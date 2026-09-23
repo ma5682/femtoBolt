@@ -28,7 +28,7 @@ from femto.annotation.selection_intent import (
 )
 from femto.planning.surface_trajectory import (
     BIDIRECTIONAL_SELECTION_ALGORITHM, FACE_PORTAL_SELECTION_ALGORITHM, Gap, LINK_FAILURE_REASONS, ROW_TURN_FAILURE_REASONS,
-    SELECTION_ALGORITHM, SELECTION_BLOCKS_SCHEMA,
+    ORDERED_SELECTION_ALGORITHM, SELECTION_ALGORITHM, SELECTION_BLOCKS_SCHEMA,
     SELECTION_BLOCK_REASONS, ScanSegment, SurfaceTrajectory, _close, _length_split, face_components,
     face_list_sha256, validate_trajectory,
 )
@@ -148,24 +148,31 @@ def _plan_fragment(vertices: np.ndarray, faces: np.ndarray, ids: np.ndarray, mes
                    image_size: np.ndarray, check: Callable[[], None], budget: dict[str, int], row_offset: int,
                    block_index: int, labels: np.ndarray, classes: np.ndarray | None,
                    allowed: np.ndarray, algorithm_version: str = SELECTION_ALGORITHM) -> dict[str, Any]:
-    from femto.planning.mesh_slice_planner import _eligible_turns, _prepare_block
+    from femto.planning.mesh_slice_planner import _build_items, _eligible_turns, _prepare_block
     from femto.planning.surface_row_turns import SurfaceLinks, connect_links
     prepared = _prepare_block(vertices, faces, ids, mesh_component, components, params, region, intrinsic,
                               image_size, check, budget, row_offset, block_index, allowed)
     step_m = params["sample_step_mm"] / 1000
-    gaps = _refine_gap_causes(prepared["gaps"], prepared["segments"], labels, classes, intrinsic, image_size, step_m)
+    # Preserve canonical slices for row/spacing measurement. Only the connector
+    # traversal gets a reordered, independently copied set of scan records.
+    records, segments, gaps = prepared["ordered_records"], prepared["segments"], prepared["gaps"]
+    if algorithm_version == ORDERED_SELECTION_ALGORITHM:
+        from femto.planning.surface_scan_order import order_scan_records
+        records = order_scan_records(records, prepared["frame"], check)
+        segments, gaps = _build_items(records, region, intrinsic, image_size, step_m, *prepared["gap_context"])
+    gaps = _refine_gap_causes(gaps, segments, labels, classes, intrinsic, image_size, step_m)
     from femto.planning.surface_trajectory import OPTIMIZED_SELECTION_ALGORITHM
     from femto.planning.surface_link_optimization import OptimizedSurfaceLinks
     router_class = OptimizedSurfaceLinks if algorithm_version == OPTIMIZED_SELECTION_ALGORITHM else SurfaceLinks
     if algorithm_version == FACE_PORTAL_SELECTION_ALGORITHM:
         from femto.planning.surface_face_routing import FacePortalSurfaceLinks
         router_class = FacePortalSurfaceLinks
-    elif algorithm_version == BIDIRECTIONAL_SELECTION_ALGORITHM:
+    elif algorithm_version in (BIDIRECTIONAL_SELECTION_ALGORITHM, ORDERED_SELECTION_ALGORITHM):
         from femto.planning.surface_bidirectional_routing import BidirectionalFacePortalSurfaceLinks
         router_class = BidirectionalFacePortalSurfaceLinks
     router = router_class(SimpleNamespace(vertices=vertices, faces=faces), region, prepared["frame"], check, ids,
                           allowed=allowed)
-    linked = connect_links(prepared["segments"], gaps, _eligible_turns(prepared["ordered_records"]), router,
+    linked = connect_links(segments, gaps, _eligible_turns(records), router,
                            step_m, check, e2=prepared["e2"], used=budget["points"])
     budget["points"] += linked["added"]
     return dict(prepared, gaps=gaps, **linked)
@@ -226,14 +233,14 @@ def coverage_status(unplannable_blocks: int, uncovered_fragments: int, unconfirm
     return "complete" if unconfirmed == 0 else "complete_fragments_geometry_support_unknown"
 
 
-def _seam_gap(previous: list[dict[str, Any]], following: list[dict[str, Any]]) -> Gap:
+def _seam_gap(previous: list[dict[str, Any]], following: list[dict[str, Any]], *, ordered_rows: bool = False) -> Gap:
     from femto.planning.mesh_slice_planner import _direction, _gap_detail
     before, after = previous[-1], following[0]
     return Gap(0, "disconnected_surface",
                dict(_gap_detail("not_applicable"), link_failure_reason="disconnected_measured_surface"),
                {"route_index": before["route_index"], "xyz_m": before["xyz_m"]},
                {"route_index": after["route_index"], "xyz_m": after["xyz_m"]},
-               _direction(previous), previous[0]["row_index"], after["row_index"],
+               _direction(previous), before["row_index"] if ordered_rows else previous[0]["row_index"], after["row_index"],
                float(np.linalg.norm(np.asarray(after["xyz_m"]) - np.asarray(before["xyz_m"]))))
 
 
@@ -352,7 +359,8 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
                 fragment_records.append(fragment)
                 continue
             if block_chains:
-                block_kept.append(_seam_gap(block_chains[-1], planned["chains"][0]))
+                block_kept.append(_seam_gap(block_chains[-1], planned["chains"][0],
+                                            ordered_rows=algorithm_version == ORDERED_SELECTION_ALGORITHM))
                 link_failures["disconnected_measured_surface"] += 1
             block_chains.extend(planned["chains"])
             block_kept.extend(planned["kept"])
@@ -371,7 +379,8 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
             report = measure_spacing(spacing_mesh, {"triangle_indices": [int(v) for v in fragment_ids]},
                                      {"segments": _level_segments(planned["ordered_records"], planned["segments"])},
                                      params["row_spacing_mm"], params["row_spacing_mm"] * params["spacing_tolerance"],
-                                     check, budget=spacing_budget)
+                                     check, budget=spacing_budget,
+                                     target_limited=algorithm_version == ORDERED_SELECTION_ALGORITHM)
             report["measurements"] = [dict(row, chain_index=row["chain_index"] + offsets["pre_segment"],
                                            block_index=block_index, fragment_index=fragment_index)
                                       for row in report["measurements"]]
@@ -438,7 +447,9 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
             gap = Gap(inter_gap, "selection_break", _gap_detail("not_applicable"),
                       {"route_index": before["route_index"], "xyz_m": before["xyz_m"]},
                       {"route_index": after["route_index"], "xyz_m": after["xyz_m"]},
-                      _direction(previous.points), previous.row_index, first.row_index,
+                      _direction(previous.points),
+                      before["row_index"] if algorithm_version == ORDERED_SELECTION_ALGORITHM else previous.row_index,
+                      first.row_index,
                       float(np.linalg.norm(np.asarray(after["xyz_m"]) - before["xyz_m"])))
             items.append(gap)
             final_gaps.append(gap)
@@ -573,11 +584,16 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
         block_record["link_rule"]["then"] += ("; when the retained connector search fails, search supported face-interior "
             "paths through manifold shared-edge portals inside the same measured fragment and selected work block; "
             "recheck every complete edge, never bridge missing geometry or explicitly unselected pixels")
-    elif algorithm_version == BIDIRECTIONAL_SELECTION_ALGORITHM:
+    elif algorithm_version in (BIDIRECTIONAL_SELECTION_ALGORITHM, ORDERED_SELECTION_ALGORITHM):
         block_record["link_rule"]["then"] += ("; when the retained connector search fails, use balanced bidirectional "
             "search through the finite supported manifold shared-edge portal graph inside the same measured fragment "
             "and selected work block; preserve complete-edge selection and forbidden checks, never bridge missing "
             "geometry or explicitly unselected pixels; retained v4.2 reproduces with its own search")
+    if algorithm_version == ORDERED_SELECTION_ALGORITHM:
+        block_record["scan_rule"] += ("; preserve every original scan segment and its measured samples; visit unique "
+            "overlapping adjacent-slice strips serpentinely, then choose the next strip entry by deterministic "
+            "endpoint distance; this ordering heuristic does not certify any connection; retain the original first "
+            "scan and direction, and canonical physical row identities for spacing measurement")
     planner = {"kind": "mesh_slice", "algorithm_version": algorithm_version,
                "parameters": dict(params, connect_rows=True, block_planning=True, selection_blocks=True),
                "sweep_frame": display_frame}

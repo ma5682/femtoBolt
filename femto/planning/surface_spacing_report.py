@@ -10,8 +10,13 @@ def spacing_distribution(values,target_mm):
     return None if not len(values) else dict(min_mm=float(values.min()),p05_mm=float(np.percentile(values,5)),median_mm=float(np.median(values)),p95_mm=float(np.percentile(values,95)),max_mm=float(values.max()),mean_mm=float(values.mean()),signed_mean_deviation_mm=float(errors.mean()),rmse_mm=float(np.sqrt(np.mean(errors**2))),max_abs_deviation_mm=float(np.max(np.abs(errors))))
 
 
-def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None,budget=None):
-    """`budget` may be shared across calls so several surfaces consume one expansion budget."""
+def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None,budget=None, *, target_limited=False):
+    """Share expansion budgets; v4.4 may stop once every queried vertex is settled.
+
+    Target-limited Dijkstra preserves the exact measurements, source field,
+    sampling and all caps. Older algorithms retain full-field expansion and its
+    saved budget statistics for exact reproduction.
+    """
     vertices=np.asarray(mesh.vertices);faces=np.asarray(mesh.triangles);ids=region['triangle_indices']
     graph={int(v):{} for v in np.unique(faces[ids])}
     for ordinal,face in enumerate(faces[ids]):
@@ -36,6 +41,13 @@ def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None,bud
                 max_edge=max(max_edge,float(np.linalg.norm(pb-pa)));by_face.setdefault(tid,[]).append((pa,pb))
                 for v,d in zip(faces[tid],point_segment_distance(vertices[faces[tid]],pa,pb)):
                     distances[int(v)]=min(distances[int(v)],float(d))
+        pending=None
+        if target_limited:
+            pending=set()
+            for _,chain in targets:
+                check()
+                for index in np.unique(np.linspace(0,len(chain)-1,min(32,len(chain))).astype(int)):
+                    pending.update(int(v) for v in faces[chain[index]['triangle_index']])
         queue=[(d,v) for v,d in distances.items() if np.isfinite(d)];heapq.heapify(queue)
         while queue:
             d,v=heapq.heappop(queue)
@@ -43,6 +55,9 @@ def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None,bud
             state['expansions']+=1
             if state['expansions']%512==0:check()
             if state['expansions']>max_expanded:raise ValueError('表面间距测量超过200万节点展开预算')
+            if pending is not None:
+                pending.discard(v)
+                if not pending:break
             for other,w in graph[v].items():
                 if d+w<distances[other]:distances[other]=d+w;heapq.heappush(queue,(d+w,other))
         # A sample-to-node distance minus the longest source edge is a lower bound to all source segments.

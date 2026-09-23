@@ -403,9 +403,11 @@ def _selection_block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
     ]
     from femto.planning.surface_trajectory import (
         BIDIRECTIONAL_SELECTION_ALGORITHM, FACE_PORTAL_SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM,
+        ORDERED_SELECTION_ALGORITHM,
     )
     version = trajectory.planner['algorithm_version']
-    if version in (OPTIMIZED_SELECTION_ALGORITHM, FACE_PORTAL_SELECTION_ALGORITHM, BIDIRECTIONAL_SELECTION_ALGORITHM):
+    if version in (OPTIMIZED_SELECTION_ALGORITHM, FACE_PORTAL_SELECTION_ALGORITHM,
+                   BIDIRECTIONAL_SELECTION_ALGORITHM, ORDERED_SELECTION_ALGORITHM):
         shortened = sum(fragment.get('link_methods', {}).get('surface_corridor_shortened', 0)
                         for block in trajectory.blocks['items'] for fragment in block.get('fragments', []))
         lines.append(f"可信三角面内缩短连接 {shortened} 处：扫描行、连接端点和成功边界折返保持不变；"
@@ -416,12 +418,16 @@ def _selection_block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
         lines.append(f"面内共享边补充连接 {portals} 处：仅在旧方法失败时，经真实共边内部找路；"
                      "每段有单面支持且整边不穿未选区域/禁区。有限候选搜索不保证找到所有可行路线；"
                      "仍无法连接或缺少几何支持的位置继续待处理，不补面、不跨块。")
-    elif version == BIDIRECTIONAL_SELECTION_ALGORITHM:
+    elif version in (BIDIRECTIONAL_SELECTION_ALGORITHM, ORDERED_SELECTION_ALGORITHM):
         portals = sum(fragment.get('link_methods', {}).get('surface_face_portals_bidirectional', 0)
                       for block in trajectory.blocks['items'] for fragment in block.get('fragments', []))
         lines.append(f"双向面内共享边补充连接 {portals} 处：仅在旧方法失败时，在同一有限候选图上从两端搜索；"
                      "保持实测单面支持、整边选区/禁区检查和原计算预算，不补面、不跨块。"
                      "有限候选搜索不保证找到所有可行路线，也不代表运动平滑或执行安全。")
+    if version == ORDERED_SELECTION_ALGORITHM:
+        lines.append("块内访问顺序优化：仅重排/反向访问原扫描段，扫描点与行身份、选区和实测面支持不变；"
+                     "行号不再表示时间访问顺序，CSV逐点保留真实行号；行距报告仍按原扫描层测量。"
+                     "不保证全局最短、治疗覆盖或运动执行安全。")
     unconfirmed = report.get("geometry_unconfirmed")
     if unconfirmed:
         lines.append("几何待确认像素按原因：" + json.dumps(unconfirmed["by_reason"], ensure_ascii=False, sort_keys=True)

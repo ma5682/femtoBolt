@@ -335,7 +335,10 @@ def show_presentation(parent: Any,model: Any,region: Any,plan: Any,is_current: C
     if plan.get('spacing_report'):
         def locate_spacing(row):
             if not is_current():closed();return
-            ci=row['chain_index'];index=row['sample_index']
+            location=row.get('player_location')
+            if location is not None and location.get('status')!='unique':
+                notice[0]=location['explanation'];update_state();redraw();return
+            ci=(location or row)['chain_index'];index=(location or row)['sample_index']
             selection.set('全部路径段')
             seek(100*(player.offsets[ci]+player.distances[ci][index])/max(player.offsets[-1],1e-15))
         window.locate_spacing=locate_spacing
