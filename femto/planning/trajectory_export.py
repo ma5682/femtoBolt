@@ -32,14 +32,16 @@ def _write_core(folder: Path, trajectory: SurfaceTrajectory, check: Callable[[],
     payload = trajectory.to_dict()
     (folder / "trajectory.json").write_bytes(canonical_json_bytes(payload))
     blocks = trajectory.blocks
+    selection = bool(blocks) and blocks.get("schema") == "femto-surface-trajectory-blocks-v2"
     point_rows = [["route_index", "segment_index", "row_index", "point_index",
                    "x_m", "y_m", "z_m", "triangle_index", "geometry_support"]
-                  + (["block_index"] if blocks else [])]
+                  + (["block_index"] if blocks else []) + (["role", "revisit"] if selection else [])]
     gap_rows = [["gap_index", "reason", "inferred_cause", "row_index_from", "row_index_to",
                  "previous_route_index", "next_route_index", "prev_x_m", "prev_y_m", "prev_z_m",
                  "next_x_m", "next_y_m", "next_z_m", "chord_length_m",
                  "scan_dir_x", "scan_dir_y", "scan_dir_z"]
-                + (["block_from", "block_to", "row_turn_failure_reason"] if blocks else [])]
+                + (["block_from", "block_to", "row_turn_failure_reason"] if blocks else [])
+                + (["link_failure_reason"] if selection else [])]
     previous_block = None
     for item in trajectory.ordered_items:
         check()
@@ -47,7 +49,8 @@ def _write_core(folder: Path, trajectory: SurfaceTrajectory, check: Callable[[],
             for point_index, point in enumerate(item.points):
                 point_rows.append([point["route_index"], item.segment_index, item.row_index, point_index,
                                    *point["xyz_m"], point["triangle_index"], point["geometry_support"]]
-                                  + ([item.block_index] if blocks else []))
+                                  + ([item.block_index] if blocks else [])
+                                  + ([point.get("role", "scan"), int(point.get("revisit") is True)] if selection else []))
             previous_block = item.block_index
         else:
             gap_rows.append([item.gap_index, item.reason, item.detail["inferred_cause"],
@@ -58,16 +61,32 @@ def _write_core(folder: Path, trajectory: SurfaceTrajectory, check: Callable[[],
             if blocks:
                 gap_rows[-1].extend([previous_block, _next_block(trajectory, item.gap_index),
                                      item.detail.get("row_turn_failure_reason", "")])
+            if selection:
+                gap_rows[-1].append(item.detail.get("link_failure_reason", ""))
     _write_csv(folder / "trajectory.csv", point_rows)
     _write_csv(folder / "gaps.csv", gap_rows)
     if blocks:
-        # One row per mesh block in visit order; the same authority as trajectory.json.
+        # One row per block in visit order; the same authority as trajectory.json.
         block_rows = [["block_index", "component_id", "status", "reason", "face_count", "face_index_min",
                        "face_index_max", "face_indices_sha256", "area_m2", "segment_index_first",
                        "segment_count", "gap_count", "point_count", "row_index_first", "row_count",
-                       "scan_length_m", "connector_length_m", "connected_row_turns"]]
+                       "scan_length_m", "connector_length_m", "connected_row_turns"]
+                      + (["connected_detours", "mesh_fragment_count", "planned_fragment_count", "continuity_status",
+                          "coverage_status", "uncovered_face_count", "selected_pixels", "geometry_unconfirmed_pixels",
+                          "revisit_connector_samples", "link_failure_counts"] if selection else [])]
         for block in blocks["items"]:
-            block_rows.append([block.get(key) for key in block_rows[0]])
+            row = [block.get(key) for key in block_rows[0][:18]]
+            if selection:
+                selection_counts = block.get("selection") or {}
+                support = selection_counts.get("support") or {}
+                revisit = block.get("revisit") or {}
+                row.extend([block.get("connected_detours"), block.get("mesh_fragment_count"),
+                            block.get("planned_fragment_count"), (block.get("continuity") or {}).get("status"),
+                            (block.get("coverage") or {}).get("status"), (block.get("coverage") or {}).get("uncovered_face_count"),
+                            selection_counts.get("selected_pixels"), support.get("geometry_unconfirmed_pixels"),
+                            revisit.get("connector_sample_count"),
+                            json.dumps(block.get("link_failure_counts") or {}, sort_keys=True)])
+            block_rows.append(row)
         _write_csv(folder / "blocks.csv", block_rows)
 
 
@@ -154,10 +173,24 @@ def _verify_files(folder: Path, result_sha256: str) -> None:
 def current_algorithm_version(parameters: dict[str, Any]) -> str:
     """Version plan_mesh_slice would produce today for these saved parameters."""
     from femto.planning.mesh_slice_planner import ALGORITHM_VERSION
-    from femto.planning.surface_trajectory import BLOCK_ALGORITHM, CONNECTED_ALGORITHM
+    from femto.planning.surface_trajectory import BLOCK_ALGORITHM, CONNECTED_ALGORITHM, SELECTION_ALGORITHM
+    if parameters.get("selection_blocks") is True:
+        return SELECTION_ALGORITHM
     if parameters.get("block_planning") is True:
         return BLOCK_ALGORITHM
     return CONNECTED_ALGORITHM if parameters.get("connect_rows") is True else ALGORITHM_VERSION
+
+
+def product_algorithm_notice(parameters: dict[str, Any], saved_version: Any) -> str | None:
+    """User-facing notice when a saved file is not the current product rule (selection blocks, v4)."""
+    from femto.planning.surface_trajectory import SELECTION_ALGORITHM
+    current = current_algorithm_version(parameters)
+    if saved_version != current:
+        return f'旧算法版本 {saved_version}（当前 {current}）：仅回放已保存结果，未重算；要采用当前算法请重新生成'
+    if saved_version != SELECTION_ALGORITHM:
+        return (f'此结果由算法 {saved_version} 生成；当前产品规则为 {SELECTION_ALGORITHM}'
+                '（工作块按医师选择组件划分、块内单条连续链）。仅回放，未重算；要采用当前规则请重新选择并导出区域后重新生成')
+    return None
 
 
 def load_trajectory(path: str | Path, *, check: Callable[[], None] = lambda: None,
@@ -185,7 +218,9 @@ def load_trajectory(path: str | Path, *, check: Callable[[], None] = lambda: Non
     if _sha256(mesh_path) != source.get("mesh_file_sha256"):
         raise ValueError("Trajectory region mesh source mismatch")
     mesh = trimesh.load(mesh_path, force="mesh", process=False)
-    validate_trajectory(trajectory, mesh=mesh, expected_result_sha256=payload["result_sha256"])
+    # v4 files are also checked against the selection intent of their bound export.
+    validate_trajectory(trajectory, mesh=mesh, expected_result_sha256=payload["result_sha256"],
+                        region=manifest.get("region"))
     if reproduce and trajectory.planner.get("kind") == "mesh_slice":
         saved_version = trajectory.planner.get("algorithm_version")
         current = current_algorithm_version(trajectory.planner.get("parameters", {}))

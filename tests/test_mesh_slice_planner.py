@@ -42,20 +42,73 @@ def two_patches():
     return trimesh.util.concatenate([left, right])
 
 
-def make_export(root, mesh=None, *, forbidden=None):
+INTRINSIC = [[200.0, 0.0, 100.0], [0.0, 200.0, 100.0], [0.0, 0.0, 1.0]]
+IMAGE_SIZE = [200, 200]
+
+
+def project_uv(points):
+    """Reference-image pixel coordinates of W0 points for the synthetic 200×200 / f=200 camera."""
+    points = np.asarray(points, dtype=float)
+    return np.c_[200.0 * points[:, 0] / points[:, 2] + 100.0, 200.0 * points[:, 1] / points[:, 2] + 100.0]
+
+
+def pixel_mask(*boxes):
+    """Selection mask from (u0, v0, u1, v1) inclusive pixel boxes."""
+    mask = np.zeros((IMAGE_SIZE[1], IMAGE_SIZE[0]), bool)
+    for u0, v0, u1, v1 in boxes:
+        mask[v0:v1 + 1, u0:u1 + 1] = True
+    return mask
+
+
+def selected_faces(mesh, mask, depth=None):
+    """Whole triangles whose visible centroid pixel lies in `mask`, via the real FixedProjection gate."""
+    import open3d as o3d
+    from femto.annotation.fixed_rgb_geometry import FixedProjection
+    legacy = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(np.asarray(mesh.vertices, float)),
+                                       o3d.utility.Vector3iVector(np.asarray(mesh.faces, np.int32)))
+    depth = np.zeros((IMAGE_SIZE[1], IMAGE_SIZE[0]), np.uint16) if depth is None else np.asarray(depth, np.uint16)
+    projection = FixedProjection(legacy, np.asarray(INTRINSIC), depth)
+    return projection.region([], mask=mask), projection
+
+
+def make_export(root, mesh=None, *, forbidden=None, selection=None, depth=None):
+    """Synthetic femto-region-export-v1 manifest.
+
+    Without `selection` the whole mesh is the region (legacy polygon rule, no intent record).
+    With `selection` = dict(mask, forbidden_mask=None, method='work_only') the region PLY holds
+    only the faces the physician mask selects (same rule as the product page), and the manifest
+    carries `selection_intent` + `selection_support` exactly like a real v4-capable export."""
     root = Path(root)
     mesh = mesh or grid_mesh()
+    region_extra = {}
+    if selection is not None:
+        from femto.annotation.selection_intent import SELECTION_RULE, build_selection_intent, build_selection_support
+        mask = np.asarray(selection["mask"], bool)
+        ids, projection = selected_faces(mesh, mask, depth)
+        if not ids:
+            raise ValueError("selection mask selects no face of the fixture mesh")
+        subset = trimesh.Trimesh(vertices=np.asarray(mesh.vertices), faces=np.asarray(mesh.faces)[ids], process=False)
+        subset.remove_unreferenced_vertices()
+        region_extra = {"selection_intent": build_selection_intent(mask, forbidden_mask=selection.get("forbidden_mask"),
+                                                                   method=selection.get("method", "work_only")),
+                        "selection_support": build_selection_support(mask, projection),
+                        "selection_rule": SELECTION_RULE}
+        mesh = subset
+        triangle_indices = list(ids)
+    else:
+        triangle_indices = list(range(len(mesh.faces)))
     mesh_path = root / "region_1_mesh_m.ply"
     mesh_path.write_bytes(mesh.export(file_type="ply"))
     region = {
-        "annotation_id": "region-test", "triangle_indices": list(range(len(mesh.faces))),
+        "annotation_id": "region-test", "triangle_indices": triangle_indices,
         "screen_polygon": [[0, 0], [199, 0], [199, 199], [0, 199]],
         "work_screen_polygon": [[0, 0], [199, 0], [199, 199], [0, 199]],
         "forbidden_screen_polygon": forbidden or [], "exclusion_polygons": [],
         "selection_method": "work_minus_forbidden" if forbidden else "work_only",
-        "view_reference": {"undistorted_intrinsic": [[200.0, 0.0, 100.0], [0.0, 200.0, 100.0], [0.0, 0.0, 1.0]],
-                           "image_size": [200, 200], "rgb_sha256": "0" * 64,
+        "view_reference": {"undistorted_intrinsic": INTRINSIC,
+                           "image_size": IMAGE_SIZE, "rgb_sha256": "0" * 64,
                            "depth_sha256": "1" * 64, "reference_frame_id": 0},
+        **region_extra,
     }
     manifest = {
         "schema": "femto-region-export-v1", "region": region,

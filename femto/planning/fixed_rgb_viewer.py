@@ -832,6 +832,10 @@ class FixedRGBViewer:
                 'The forbidden area removes the entire selectable range; nothing remains to save.'));return
         try:polygon=mask_polygon(final_mask,MAX_POLYGON_CORNERS)
         except ValueError as error:self.status.set(str(error));return
+        # The painted pixel mask is the physician's authoritative intent (components, explicit
+        # unselected holes, painted forbidden). Triangle indices are only the derived geometry binding.
+        selection=dict(mask=final_mask.astype(bool),
+            forbidden_mask=None if forbidden_mask is None else forbidden_mask.astype(bool),method=method)
         name,note=self.name.get().strip(),self.note.get().strip()
         self.status.set(pick(self.language, '正在提取可见三维区域…','Extracting visible 3D region…'))
         def done(item):
@@ -849,11 +853,22 @@ class FixedRGBViewer:
                 self.status.set(pick(self.language, messages[method],{
                     'work_only':'Single result submitted: work area only. Pink shows the result to save and export.',
                     'full_minus_forbidden':'Single result submitted: forbidden area only. Pink shows all remaining content.',
-                    'work_minus_forbidden':'Single result submitted: work minus forbidden areas. Forbidden marks outside work are ignored.'}[method]))
+                    'work_minus_forbidden':'Single result submitted: work minus forbidden areas. Forbidden marks outside work are ignored.'}[method])
+                    +self.selection_summary(item))
             self.draw()
         self.operation='region'
         self.work(lambda:model.region(polygon,name,note,cancel=self.operation_cancel(),
-            replace_existing=PRODUCT_SINGLE_REGION),done)
+            replace_existing=PRODUCT_SINGLE_REGION,selection=selection),done)
+
+    def selection_summary(self,item: Any) -> str:
+        intent=item.get('selection_intent');support=item.get('selection_support')
+        if not intent:return ''
+        text=pick(self.language,f" 选择组件 {len(intent['components'])} 个、内部未选孔洞 {len(intent['explicit_unselected_holes'])} 个",
+            f" {len(intent['components'])} selected component(s), {len(intent['explicit_unselected_holes'])} explicit hole(s)")
+        if support:
+            text+=pick(self.language,f"；几何待确认像素 {support['geometry_unconfirmed_pixel_count']}（含参考帧有深度但缺面 {support['counts']['no_surface_reference_depth_present']}）。",
+                f"; {support['geometry_unconfirmed_pixel_count']} pixel(s) need geometry confirmation ({support['counts']['no_surface_reference_depth_present']} with reference depth but no mesh).")
+        return text
 
     def begin_exclusion(self) -> None:
         if self.busy or self.model is None:return

@@ -11,7 +11,7 @@ def path_tubes(plan, radius=.00015):
     for segment in plan['segments']:
         xyz=np.asarray([p['xyz_m'] for p in segment]);a,b=xyz[:-1],xyz[1:]
         delta=b-a;length=np.linalg.norm(delta,axis=1);keep=length>1e-12
-        edge_colors=np.asarray([[255,145,56,255] if sample.get('motion_kind')=='connector' else [255,215,30,255] for sample in segment[1:]],dtype=np.uint8)[keep]
+        edge_colors=np.asarray([[255,79,216,255] if sample.get('revisit') else [255,145,56,255] if sample.get('motion_kind')=='connector' else [255,215,30,255] for sample in segment[1:]],dtype=np.uint8)[keep]
         colors.append(np.repeat(edge_colors,8,axis=0))
         a,b,delta,length=a[keep],b[keep],delta[keep],length[keep]
         if not len(a):continue

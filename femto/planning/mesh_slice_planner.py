@@ -756,14 +756,11 @@ def _block_descriptors(vertices: np.ndarray, faces: np.ndarray, components: np.n
     return descriptors
 
 
-def _plan_block(vertices: np.ndarray, faces: np.ndarray, descriptor: dict[str, Any], components: np.ndarray,
-                params: dict[str, Any], region: dict[str, Any], intrinsic: np.ndarray, image_size: np.ndarray,
-                check: Callable[[], None], budget: dict[str, int], row_offset: int,
-                block_index: int) -> dict[str, Any]:
-    """Plan one block alone: its own sweep frame, rows, gaps and boundary row turns."""
-    from femto.planning.surface_row_turns import BoundaryTurns, connect_segments
-    ids = descriptor["face_ids"]
-    component = descriptor["component_id"]
+def _prepare_block(vertices: np.ndarray, faces: np.ndarray, ids: np.ndarray, component: int, components: np.ndarray,
+                   params: dict[str, Any], region: dict[str, Any], intrinsic: np.ndarray, image_size: np.ndarray,
+                   check: Callable[[], None], budget: dict[str, int], row_offset: int,
+                   block_index: int) -> dict[str, Any]:
+    """Frame, rows, ordered segments and raw gaps of one connected face set (shared by v3.1 and v4)."""
     spacing_m = params["row_spacing_mm"] / 1000
     step_m = params["sample_step_mm"] / 1000
     block_mesh = trimesh.Trimesh(vertices=vertices, faces=faces[ids], process=False)
@@ -781,6 +778,24 @@ def _plan_block(vertices: np.ndarray, faces: np.ndarray, descriptor: dict[str, A
     ordered_records = _order_rows_by_frame(records_by_slice, params, row_offset, origin, e1, e2,
                                            intrinsic, image_size)
     segments, gaps = _build_items(ordered_records, region, intrinsic, image_size, step_m, outer, origin, e1, e2)
+    return {"frame": frame, "e2": e2, "ordered_records": ordered_records, "segments": segments, "gaps": gaps,
+            "dropped_fragments": dropped_fragments, "lengths": _segment_lengths(segments)}
+
+
+def _plan_block(vertices: np.ndarray, faces: np.ndarray, descriptor: dict[str, Any], components: np.ndarray,
+                params: dict[str, Any], region: dict[str, Any], intrinsic: np.ndarray, image_size: np.ndarray,
+                check: Callable[[], None], budget: dict[str, int], row_offset: int,
+                block_index: int) -> dict[str, Any]:
+    """Plan one block alone: its own sweep frame, rows, gaps and boundary row turns."""
+    from femto.planning.surface_row_turns import BoundaryTurns, connect_segments
+    ids = descriptor["face_ids"]
+    component = descriptor["component_id"]
+    step_m = params["sample_step_mm"] / 1000
+    prepared = _prepare_block(vertices, faces, ids, component, components, params, region, intrinsic, image_size,
+                              check, budget, row_offset, block_index)
+    frame, e2 = prepared["frame"], prepared["e2"]
+    ordered_records, segments, gaps = prepared["ordered_records"], prepared["segments"], prepared["gaps"]
+    dropped_fragments = prepared["dropped_fragments"]
     # The boundary graph is built from this block's faces only, indexed in the whole PLY.
     # Same router and same frozen snap tolerance as v2; nothing is relaxed per block.
     router = BoundaryTurns(SimpleNamespace(vertices=vertices, faces=faces), region, frame, check, face_ids=ids)
@@ -805,7 +820,7 @@ def _plan_block(vertices: np.ndarray, faces: np.ndarray, descriptor: dict[str, A
     return {"frame": frame, "ordered_records": ordered_records, "segments": segments, "chains": chains,
             "kept": diagnosed, "connected": connected, "connector_length_m": connector_length,
             "row_turn_failure_counts": dict(sorted(failure_counts.items())),
-            "dropped_fragments": dropped_fragments, "lengths": _segment_lengths(segments)}
+            "dropped_fragments": dropped_fragments, "lengths": prepared["lengths"]}
 
 
 def _merge_spacing(reports: list[dict[str, Any]], params: dict[str, Any], budget: dict[str, int],
@@ -836,7 +851,8 @@ def _merge_spacing(reports: list[dict[str, Any]], params: dict[str, Any], budget
                 warning_threshold_mm=target * (1 + params["spacing_tolerance"]),
                 scan_segment_rows=scan_rows,
                 blocks=[dict(block_index=report["block_index"], sample_count=report["sample_count"],
-                             counts=report["counts"], status=report["status"], distribution=report["distribution"])
+                             counts=report["counts"], status=report["status"], distribution=report["distribution"],
+                             **({"fragment_index": report["fragment_index"]} if "fragment_index" in report else {}))
                         for report in reports])
 
 
@@ -1001,17 +1017,29 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
                     adaptive_rows: bool = False,
                     connect_rows: bool = False,
                     block_planning: bool = False,
+                    selection_blocks: bool = False,
                     check: Callable[[], None] = lambda: None) -> SurfaceTrajectory:
-    """Generate only measured-mesh scan samples; no gap interpolation or motion."""
+    """Generate only measured-mesh scan samples; no gap interpolation or motion.
+
+    `selection_blocks=True` (v4) needs a region export that carries the physician's selection
+    intent: blocks are selection components, each planned block is one continuous chain.
+    Without it, `block_planning=True` keeps the v3.1 mesh-connectivity blocks."""
     params = _parameters(locals())
     if type(connect_rows) is not bool:
         raise ValueError('connect_rows must be boolean')
     if type(block_planning) is not bool:
         raise ValueError('block_planning must be boolean')
+    if type(selection_blocks) is not bool:
+        raise ValueError('selection_blocks must be boolean')
     if block_planning and not connect_rows:
         raise ValueError('block_planning requires connect_rows=True')
+    if selection_blocks and not block_planning:
+        raise ValueError('selection_blocks requires block_planning=True')
     check()
     manifest_path, manifest, mesh = _load_input(export_dir_or_manifest)
+    if selection_blocks:
+        from femto.planning.selection_blocks import plan_selection_blocks
+        return plan_selection_blocks(manifest_path, manifest, mesh, params, check)
     if block_planning:
         return _plan_blocks(manifest_path, manifest, mesh, params, check)
     trajectory, ordered_records = _plan_single_surface(manifest_path, manifest, mesh, params, check)
@@ -1030,6 +1058,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--direction", default="auto")
     parser.add_argument("--start-corner", default="top_left",
                         choices=("top_left", "top_right", "bottom_left", "bottom_right"))
+    parser.add_argument("--mesh-blocks-v3", action="store_true",
+                        help="Explicit legacy rule: blocks by mesh connectivity (v3.1) instead of selection components (v4)")
     args = parser.parse_args(argv)
     direction: Any = args.direction
     if direction not in ("auto", "w0_x", "w0_y"):
@@ -1041,7 +1071,7 @@ def main(argv: list[str] | None = None) -> int:
         trajectory = plan_mesh_slice(args.source, row_spacing_mm=args.row_mm,
                                      sample_step_mm=args.step_mm, row_direction=direction,
                                      start_corner=args.start_corner, connect_rows=True,
-                                     block_planning=True)
+                                     block_planning=True, selection_blocks=not args.mesh_blocks_v3)
         folder = export_trajectory(trajectory, output)
     except (OSError, ValueError, TypeError, KeyError, IndexError) as error:
         folder = export_blocked(output, args.source, error, details=getattr(error, "details", None))

@@ -131,6 +131,23 @@ def _item_metadata(item):
                 created_at=created, updated_at=updated)
 
 
+def _selection_records(region: dict[str, Any]) -> dict[str, Any]:
+    """Validate physician intent and its geometry-support diagnosis, both kept apart from triangles."""
+    from femto.annotation.selection_intent import (
+        intent_mask, validate_selection_intent, validate_selection_support)
+    if region.get('selection_intent') is None:
+        if region.get('selection_support') is not None:
+            raise ValueError('Selection support without selection intent')
+        return {}
+    view = region.get('view_reference')
+    size = view.get('image_size') if isinstance(view, dict) else None
+    intent = validate_selection_intent(region['selection_intent'], size)
+    result = dict(selection_intent=intent)
+    if region.get('selection_support') is not None:
+        result['selection_support'] = validate_selection_support(region['selection_support'], intent_mask(intent))
+    return result
+
+
 class AnnotationStore:
     def __init__(self, mesh, source):
         self.mesh = mesh
@@ -296,6 +313,7 @@ class AnnotationStore:
         if region.get('source_mesh') and Path(region['source_mesh']).resolve() != Path(self.source):
             raise ValueError('Region source model mismatch')
         ids = sorted(ids)
+        selection = _selection_records(region)
         corners = np.asarray(self.mesh.vertices)[np.asarray(self.mesh.triangles)[ids]]
         if (not np.isfinite(corners).all()
                 or np.any(np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0],
@@ -306,8 +324,9 @@ class AnnotationStore:
             if boundary.size and (boundary.ndim != 3 or boundary.shape[1:] != (2, 3)
                                   or not np.isfinite(boundary).all()):
                 raise ValueError('Invalid region boundary coordinates')
-        # Saved boundaries are derived. Triangle IDs in the bound mesh are authoritative.
-        return dict(region, **_item_metadata(region), triangle_indices=ids,
+        # Saved boundaries are derived. Triangle IDs in the bound mesh are authoritative for
+        # geometry; the selection intent mask (when present) is authoritative for what was asked.
+        return dict(region, **_item_metadata(region), **selection, triangle_indices=ids,
                     boundary_world_m=region_boundary(self.mesh, ids),
                     source_mesh=self.source, coordinate_frame='world_rdf', unit='metre',
                     scale_validation=STATUS)
@@ -320,8 +339,16 @@ class AnnotationStore:
 
     def set_exclusions(self,index: int,polygons: Any) -> Any:
         import copy
-        region=self.normalized_region(dict(self.regions[index],exclusion_polygons=copy.deepcopy(polygons),
-            updated_at=datetime.now().astimezone().isoformat(timespec='microseconds')))
+        current=self.regions[index]
+        updated=dict(current,exclusion_polygons=copy.deepcopy(polygons),
+            updated_at=datetime.now().astimezone().isoformat(timespec='microseconds'))
+        if current.get('selection_intent') is not None:
+            # A later exclusion is more unselected intent: subtract it from the authoritative mask.
+            from femto.annotation.selection_intent import restrict_selection
+            from femto.annotation.square_brush import polygon_mask
+            size=current['selection_intent']['image_size']
+            updated=restrict_selection(updated,[polygon_mask(polygon,size).astype(bool) for polygon in validate_exclusions(polygons)])
+        region=self.normalized_region(updated)
         regions=self.regions[:];regions[index]=region
         self._commit(self.points,regions,('region',region['annotation_id']))
         return region

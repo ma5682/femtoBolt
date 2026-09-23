@@ -21,7 +21,9 @@ GAP_COLORS = {
     "surface_gap": [80, 145, 230, 255],
     "unsupported_geometry": [245, 145, 45, 255],
     "row_turn": [135, 145, 155, 255],
+    "selection_break": [60, 210, 200, 255],
 }
+REVISIT_COLOR = "#ff4fd8"
 
 
 def _font(size: int = 16):
@@ -33,6 +35,48 @@ def _manifest(trajectory: SurfaceTrajectory) -> tuple[Path, dict[str, Any]]:
     path = Path(trajectory.source["region_manifest"]).resolve()
     data = json.loads(path.read_text(encoding="utf-8-sig"))
     return path, data
+
+
+def _region(trajectory: SurfaceTrajectory) -> dict[str, Any] | None:
+    try:
+        return _manifest(trajectory)[1].get("region")
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+
+
+def draw_selection_layers(draw: Any, rgb: np.ndarray, region: Any, scale: float, header: int,
+                          font: Any) -> tuple[np.ndarray, list[str]]:
+    """Tint explicit-unselected / geometry-unconfirmed pixels and outline selection components.
+
+    Returns the tinted image (to paste before drawing paths) and legend lines. Display only."""
+    from femto.annotation.selection_intent import selection_contours, selection_layers, tint_selection
+    layers = selection_layers(region)
+    if layers is None or tuple(layers["mask"].shape) != tuple(np.asarray(rgb).shape[:2]):
+        return np.asarray(rgb), []
+    tinted = tint_selection(rgb, layers)
+    contours = selection_contours(layers)
+    lines = ["青色轮廓：医师选择组件（工作块边界）；红色：明确未选（孔洞/禁止）"]
+    if layers["classes"] is not None:
+        lines[0] += "；紫色：有参考深度但缺面（待确认）；橙色：无可靠几何（需要补采）"
+    return tinted, lines
+
+
+def _draw_selection_outlines(draw: Any, region: Any, rgb_shape: tuple[int, int], scale: float, header: int,
+                             font: Any) -> None:
+    from femto.annotation.selection_intent import selection_contours, selection_layers
+    layers = selection_layers(region)
+    if layers is None or tuple(layers["mask"].shape) != tuple(rgb_shape):
+        return
+    contours = selection_contours(layers)
+    for component_id, polyline in contours["components"]:
+        points = polyline * scale + [0, header]
+        draw.line([tuple(p) for p in np.vstack([points, points[:1]])], fill="#38e6d8", width=2)
+    for _, polyline in contours["holes"]:
+        points = polyline * scale + [0, header]
+        draw.line([tuple(p) for p in np.vstack([points, points[:1]])], fill="#ff5a6e", width=2)
+    for component in layers["components"]:
+        x0, y0, _, _ = component["bbox"]
+        draw.text((x0 * scale + 4, y0 * scale + header + 4), f"选区 {component['component_id'] + 1}", font=font, fill="#38e6d8")
 
 
 def reference_rgb(trajectory: SurfaceTrajectory) -> tuple[np.ndarray | None, dict[str, Any]]:
@@ -83,10 +127,27 @@ def _block_header(trajectory: SurfaceTrajectory) -> str | None:
     stats = trajectory.statistics
     if trajectory.blocks is None or "block_count" not in stats:
         return None
+    if trajectory.blocks.get("schema") == "femto-surface-trajectory-blocks-v2":
+        return (f"工作块（按医师选择组件）：{stats['block_count']} 块 | 单链完成 {stats['planned_block_count']} | 未完成 "
+                f"{stats['incomplete_block_count']} | 无法规划 {stats['unplannable_block_count']} | 覆盖 "
+                + ("完整" if stats["coverage_status"] == "complete" else f"部分（未覆盖碎片 {stats['uncovered_fragment_count']}）")
+                + (f" | 几何待确认像素 {stats['geometry_unconfirmed_pixel_count']}" if stats.get("geometry_unconfirmed_pixel_count") else "")
+                + "；块间只停不连线")
     return (f"分块：{stats['block_count']} 块 | 可规划 {stats['plannable_block_count']} | 未规划 "
             f"{stats['unplannable_block_count']}（{stats['unplannable_face_count']} 面） | "
             + ("全部块已规划" if stats["coverage_status"] == "complete" else "部分覆盖，未规划块见报告")
             + "；块间只标 gap，不画跨块连线")
+
+
+def _revisit_line(trajectory: SurfaceTrajectory) -> str | None:
+    stats = trajectory.statistics
+    if trajectory.blocks is None or trajectory.blocks.get("schema") != "femto-surface-trajectory-blocks-v2":
+        return None
+    count = stats.get("revisit_connector_sample_count", 0)
+    if not count:
+        return "洋红：无重复经过已扫描行的连接段；连接段不推定治疗能量开启"
+    return (f"洋红连接段：{count} 个采样（{stats['revisit_connector_length_m']*1000:.1f} mm）重复经过其他已扫描行"
+            "（按名义行距一半判定，非治疗头宽度）；不得据此推定治疗能量持续开启")
 
 
 def _skipped_label_line(skipped: list[str]) -> str | None:
@@ -96,7 +157,7 @@ def _skipped_label_line(skipped: list[str]) -> str | None:
     return f"{len(skipped)} 个块编号标签因重叠未显示（{shown}）；编号与状态见 blocks.csv 和报告"
 
 
-def render_route_diagram(rgb: np.ndarray, trajectory: SurfaceTrajectory) -> Image.Image:
+def render_route_diagram(rgb: np.ndarray, trajectory: SurfaceTrajectory, region: Any = None) -> Image.Image:
     from femto.planning.surface_trajectory import non_overlapping_labels
     height, width = rgb.shape[:2]
     scale = min(1.0, 1400 / width, 850 / height)
@@ -109,24 +170,36 @@ def render_route_diagram(rgb: np.ndarray, trajectory: SurfaceTrajectory) -> Imag
     kept_labels, skipped = non_overlapping_labels(boxes)
     block_line = _block_header(trajectory)
     skipped_line = _skipped_label_line([label for _, label in skipped])
-    header = 112 + (28 if block_line else 0) + (28 if skipped_line else 0)
+    revisit_line = _revisit_line(trajectory)
+    if region is None and trajectory.blocks is not None and trajectory.blocks.get("schema") == "femto-surface-trajectory-blocks-v2":
+        region = _region(trajectory)
+    base, selection_lines = draw_selection_layers(None, rgb, region, scale, 0, None)
+    header = 112 + (28 if block_line else 0) + (28 if skipped_line else 0) + (28 if revisit_line else 0) + 28 * len(selection_lines)
     image = Image.new("RGB", (display_size[0], display_size[1] + header), (18, 28, 38))
-    image.paste(Image.fromarray(rgb).resize(display_size, Image.Resampling.LANCZOS), (0, header))
+    image.paste(Image.fromarray(base).resize(display_size, Image.Resampling.LANCZOS), (0, header))
     draw = ImageDraw.Draw(image)
     font = _font(16)
     stats = trajectory.statistics
     lines = ["三维表面蛇形扫描轨迹 · 固定初始 RGB 视角",
              f"{stats['row_count']} 行 | {stats['segment_count']} 段 | {stats['point_count']} 点 | 段内长度 {stats['scan_length_m']*1000:.1f} mm",
-             "黄色：有 Mesh 支持的扫描段；gap 不连线。研发预览，非设备执行轨迹。"]
+             "黄色：有 Mesh 支持的扫描段；橙色：贴面连接；gap 不连线。研发预览，非设备执行轨迹。"]
     if block_line:
         lines.append(block_line)
     if skipped_line:
         lines.append(skipped_line)
+    if revisit_line:
+        lines.append(revisit_line)
+    lines.extend(selection_lines)
     for index, line in enumerate(lines):
         draw.text((12, 8 + index * 28), line, font=font, fill="#e4edf4")
+    _draw_selection_outlines(draw, region, rgb.shape[:2], scale, header, _font(14))
     for segment in segments:
         points = np.asarray([point["pixel"] for point in segment.points], dtype=float) * scale + [0, header]
         draw.line([tuple(point) for point in points], fill="#ffd52b", width=2)
+        for index, point in enumerate(segment.points[1:], start=1):
+            if point.get("role") == "connector":
+                draw.line([tuple(points[index - 1]), tuple(points[index])],
+                          fill=REVISIT_COLOR if point.get("revisit") else "#ff9138", width=2)
         for point, color in ((points[0], "#35ea87"), (points[-1], "#ff5765")):
             draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=color)
     for chain_index, label in kept_labels:
@@ -175,7 +248,8 @@ def render_depth_diagram(trajectory: SurfaceTrajectory) -> Image.Image:
     kept_labels, skipped = non_overlapping_labels(boxes)
     block_line = _block_header(trajectory)
     skipped_line = _skipped_label_line([label for _, label in skipped])
-    header = 110 + (28 if skipped_line else 0)
+    revisit_line = _revisit_line(trajectory)
+    header = 110 + (28 if skipped_line else 0) + (28 if revisit_line else 0)
     image = Image.new("RGB", (int(canvas[0]), int(canvas[1] + header)), (18, 28, 38))
     draw = ImageDraw.Draw(image)
     font = _font(16)
@@ -199,7 +273,9 @@ def render_depth_diagram(trajectory: SurfaceTrajectory) -> Image.Image:
             highlight=(segment.points[index]['row_index'] in outside_rows if scan_rows is not None
                        else segment.segment_index in outside)
             width = 4 if highlight else 2
-            if highlight:
+            if segment.points[index + 1].get("revisit"):
+                draw.line([tuple(points2[index]), tuple(points2[index + 1])], fill=REVISIT_COLOR, width=3)
+            elif highlight:
                 draw.line([tuple(points2[index]), tuple(points2[index + 1])], fill="#ffe34d", width=width)
             else:
                 draw.line([tuple(points2[index]), tuple(points2[index + 1])], fill=color, width=width)
@@ -218,6 +294,8 @@ def render_depth_diagram(trajectory: SurfaceTrajectory) -> Image.Image:
         draw.text((15, header - 22), block_line, font=_font(14), fill="#7fd8ff")
     if skipped_line:
         draw.text((15, header - 50), skipped_line, font=_font(14), fill="#7fd8ff")
+    if revisit_line:
+        draw.text((15, header - (78 if skipped_line else 50)), revisit_line, font=_font(14), fill=REVISIT_COLOR)
     bar_x = int(canvas[0] - 45)
     for y in range(120, int(canvas[1] + header - 50)):
         ratio = (y - 120) / max(1, canvas[1] + header - 170)
@@ -277,10 +355,18 @@ def export_glb(path: str | Path, trajectory: SurfaceTrajectory) -> None:
                           glb_scene_from_W0=transform.tolist())
     if blocks:
         scene.metadata.update(blocks={"summary": blocks["summary"], "order_rule": blocks["order_rule"],
-                                      "items": [{key: item[key] for key in ("block_index", "component_id", "status",
-                                                                            "reason", "face_count", "chain_indices")}
+                                      "items": [{key: item.get(key) for key in ("block_index", "component_id", "status",
+                                                                                "reason", "face_count", "chain_indices")}
                                                 for item in blocks["items"]],
                                       "display": "one_tube_node_per_planned_block_no_inter_block_tubes"})
+        if blocks.get("selection_blocks"):
+            scene.metadata.update(selection_blocks={
+                "block_definition": blocks.get("block_definition"),
+                "revisit_display": "magenta_connector_tubes_energy_not_assumed_on",
+                "selection_break_display": "cyan_endpoint_markers_no_tube",
+                "items": [{key: item.get(key) for key in ("block_index", "status", "continuity", "coverage",
+                                                          "mesh_fragment_count", "planned_fragment_count")}
+                          for item in blocks["items"]]})
     Path(path).write_bytes(scene.export(file_type="glb"))
 
 
@@ -296,10 +382,65 @@ def _spacing_outlier_lines(trajectory: SurfaceTrajectory) -> list[str]:
             "异常样本是图最短路上界，通常跨越孔洞或缺失表面，不代表真实排行间距；上一行为含异常值的原始分布。"]
 
 
+def _selection_block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
+    stats = trajectory.statistics
+    report = trajectory.gap_report
+    unconfirmed_count = stats.get("geometry_unconfirmed_pixel_count")
+    unconfirmed_text = "未知（导出无逐像素支持记录）" if unconfirmed_count is None else str(unconfirmed_count)
+    lines = [
+        f"工作块规划（v4，块 = 医师选择组件；网格连通性只作碎片诊断）：{stats['block_count']} 块，单链完成 {stats['planned_block_count']}，"
+        f"未完成 {stats['incomplete_block_count']}，无法规划 {stats['unplannable_block_count']}；"
+        f"路线连续状态：{'全部块为连续单链' if stats['continuity_status']=='complete' else '存在未完成块（旧结果保留，不自动替换）'}",
+        f"覆盖状态（与连续性分开检查）：{ {'complete': '完整', 'partial': '部分'}.get(stats['coverage_status'], '碎片完整但几何支持未知') }；"
+        f"未覆盖网格碎片 {stats['uncovered_fragment_count']} 个 / {stats['uncovered_face_count']} 面 / {stats['unplannable_area_m2']*1e6:.1f} mm²；"
+        f"几何待确认像素 {unconfirmed_text}（无治疗头有效宽度依据，不宣称完整治疗覆盖）",
+        f"块间断开（选择分离）：{stats['inter_block_gap_count']} 处 selection_break；块内换行折返 {stats['connected_row_turns']} 处，"
+        f"同行绕行 {stats['connected_detours']} 处；块内未连接 gap 原因（仅诊断）："
+        + json.dumps(report.get("link_failure_counts", {}), ensure_ascii=False, sort_keys=True),
+        f"重复经过：{stats['revisit_connector_sample_count']} 个连接采样 / {stats['revisit_connector_length_m']*1000:.3f} mm "
+        "落在其他已扫描行的名义半行距内（非治疗头宽度）；连接段不得推定治疗能量持续开启",
+        "gap 原因×推断：" + json.dumps(report.get("gap_cause_counts", {}), ensure_ascii=False, sort_keys=True),
+    ]
+    unconfirmed = report.get("geometry_unconfirmed")
+    if unconfirmed:
+        lines.append("几何待确认像素按原因：" + json.dumps(unconfirmed["by_reason"], ensure_ascii=False, sort_keys=True)
+                     + f"；派生表面状态 {unconfirmed['derived_surface']['status']}（{unconfirmed['derived_surface']['reason']}），"
+                     "未生成任何伪实测 XYZ")
+    else:
+        lines.append("区域导出没有逐像素几何支持记录；几何待确认像素未知（请重新选择并导出以获得记录）")
+    for block in trajectory.blocks["items"]:
+        selection = block.get("selection") or {}
+        support = selection.get("support") or {}
+        head = (f"  块 {block['block_index']+1}（选择组件 {block['component_id']+1}，选中像素 {selection.get('selected_pixels')}，"
+                f"内部未选孔洞 {selection.get('hole_count')}，几何待确认像素 {support.get('geometry_unconfirmed_pixels')}，"
+                f"网格碎片 {block['mesh_fragment_count']}）：")
+        if block["status"] == "planned":
+            lines.append(head + f"已完成单链，{block['face_count']} 面，{block['row_count']} 行 / {block['point_count']} 点，扫描 "
+                         f"{block['scan_length_m']*1000:.3f} mm，折返 {block['connected_row_turns']} 处 / 绕行 {block['connected_detours']} 处 / "
+                         f"连接 {block['connector_length_m']*1000:.3f} mm，重复经过 {block['revisit']['connector_sample_count']} 采样，"
+                         f"覆盖 {block['coverage']['status']}（未覆盖碎片 {block['coverage']['uncovered_fragment_count']}）")
+        elif block["status"] == "incomplete":
+            lines.append(head + f"未完成：{block['continuity']['chain_count']} 条断链 / {block['gap_count']} 个块内 gap，原因 "
+                         + json.dumps(block["link_failure_counts"], ensure_ascii=False, sort_keys=True)
+                         + f"；{block['face_count']} 面，扫描 {block['scan_length_m']*1000:.3f} mm，覆盖 {block['coverage']['status']}")
+        else:
+            lines.append(head + f"无法规划，原因 {block['reason']}：{block['message']}")
+        for fragment in block.get("fragments", []):
+            if fragment["status"] == "planned":
+                lines.append(f"    碎片 {fragment['fragment_index']+1}：{fragment['face_count']} 面，{fragment['row_count']} 行，"
+                             f"{fragment['chain_count']} 链，块内 gap {fragment['internal_gap_count']}，连接方式 "
+                             + json.dumps(fragment['link_methods'], ensure_ascii=False, sort_keys=True))
+            else:
+                lines.append(f"    碎片 {fragment['fragment_index']+1}：{fragment['face_count']} 面，未规划（{fragment['reason']}）→ 覆盖缺口，选中表面未被轨迹到达")
+    return lines
+
+
 def _block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
     stats = trajectory.statistics
     if trajectory.blocks is None or "block_count" not in stats:
         return []
+    if trajectory.blocks.get("schema") == "femto-surface-trajectory-blocks-v2":
+        return _selection_block_report_lines(trajectory)
     lines = [
         f"分块规划：{stats['block_count']} 块（按网格面连通关系，不按外观或距离合并）；可规划 {stats['plannable_block_count']} 块，"
         f"未规划 {stats['unplannable_block_count']} 块（{stats['unplannable_face_count']} 面 / {stats['unplannable_area_m2']*1e6:.1f} mm²）；"
@@ -337,7 +478,8 @@ def report_text(trajectory: SurfaceTrajectory) -> str:
         f"贴面折返连接：{stats.get('connected_row_turns',0)} 处 / {stats.get('connector_length_m',0)*1000:.3f} mm",
         f"W0 深度范围：{stats['depth_min_m']*1000:.3f}–{stats['depth_max_m']*1000:.3f} mm",
         "gap 分类：" + json.dumps(stats["gap_counts"], ensure_ascii=False, sort_keys=True),
-        f"扫描方向来源：{frame['direction_source']}；法线来源：{frame['normal_source']}；特征值比：{frame['ratios']}",
+        f"扫描方向来源：{frame['direction_source']}；法线来源：{frame['normal_source']}；特征值比："
+        + json.dumps(frame['ratios'], ensure_ascii=False, sort_keys=True),
         "实际网格间距分布（mm）：" + (json.dumps(spacing, ensure_ascii=False, sort_keys=True) if spacing else "无可测样本"),
         *_spacing_outlier_lines(trajectory),
         "参考 RGB 路线图：" + json.dumps(route_status, ensure_ascii=False, sort_keys=True),
@@ -360,6 +502,6 @@ def write_visual_outputs(folder: Path, trajectory: SurfaceTrajectory,
         raise ValueError("Reference RGB availability changed during trajectory export")
     if rgb is not None:
         check()
-        render_route_diagram(rgb, trajectory).save(folder / "route_diagram.png")
+        render_route_diagram(rgb, trajectory, _region(trajectory)).save(folder / "route_diagram.png")
     check()
     (folder / "trajectory_report.txt").write_text(report_text(trajectory), encoding="utf-8-sig")

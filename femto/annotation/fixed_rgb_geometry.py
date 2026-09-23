@@ -228,7 +228,11 @@ class FixedProjection:
                              &(~measured | (np.abs(z-raw)<=.01)))
         return valid
 
-    def region(self,polygon: Any,*,check: Any=None) -> Any:
+    def region(self,polygon: Any,*,check: Any=None,mask: Any=None) -> Any:
+        """Selected whole triangles: visible centroid inside the polygon, or inside `mask` when given.
+
+        The mask is the physician's authoritative pixel selection; the polygon path is the
+        legacy rule kept for older records. Both apply the same occlusion and depth gates."""
         check = _check_function(check)
         check()
         centers=np.asarray(self.mesh.vertices)[np.asarray(self.mesh.triangles)].mean(axis=1)
@@ -236,7 +240,13 @@ class FixedProjection:
         good=(centers[:,2]>0)&np.isfinite(uv).all(axis=1)
         good &= (uv[:,0]>=0)&(uv[:,0]<self.width-1)&(uv[:,1]>=0)&(uv[:,1]<self.height-1)
         ids=np.flatnonzero(good)
-        ids=ids[polygon_contains(uv[ids],polygon)]
+        if mask is not None:
+            mask=np.asarray(mask,bool)
+            if mask.shape!=(self.height,self.width):raise ValueError('Selection mask does not match the reference image')
+            centre_pixels=np.floor(uv[ids]+.5).astype(int)
+            ids=ids[mask[centre_pixels[:,1],centre_pixels[:,0]]]
+        else:
+            ids=ids[polygon_contains(uv[ids],polygon)]
         if not len(ids):return []
         # Exact centroid rays avoid assigning background triangles at an edge pixel.
         rays=np.c_[np.zeros((len(ids),3)), centers[ids]/centers[ids,2:3]].astype(np.float32)
@@ -253,15 +263,20 @@ class FixedProjection:
         if hasattr(self,'image_valid'):valid &= self.image_valid[pix[:,1],pix[:,0]]
         return ids[valid].tolist()
 
-    def region_support(self,polygon: Any,*,check: Any=None) -> dict[str, Any]:
+    def region_support(self,polygon: Any,*,check: Any=None,mask: Any=None) -> dict[str, Any]:
         """Count integer reference-image pixels. This is not a surface area."""
         check = _check_function(check)
-        polygon_contains(np.empty((0,2)),polygon)
+        if mask is not None:
+            mask=np.asarray(mask,bool)
+            if mask.shape!=(self.height,self.width):raise ValueError('Selection mask does not match the reference image')
+        else:
+            polygon_contains(np.empty((0,2)),polygon)
         requested=source=supported=missing_depth=0
         for top in range(0,self.height,64):
             check()
             yy,xx=np.mgrid[top:min(top+64,self.height),:self.width]
-            inside=polygon_contains(np.c_[xx.ravel(),yy.ravel()],polygon).reshape(xx.shape)
+            inside=(mask[top:top+len(yy)] if mask is not None else
+                    polygon_contains(np.c_[xx.ravel(),yy.ravel()],polygon).reshape(xx.shape))
             image_valid=getattr(self,'image_valid',None)
             src=np.ones_like(inside) if image_valid is None else image_valid[top:top+len(inside)]
             good=inside&src&self.valid[top:top+len(inside)]
@@ -271,6 +286,7 @@ class FixedProjection:
                     coordinate_frame='undistorted_reference_rgb',
                     source='bound_mesh_first_hit_and_reference_raw_depth',
                     interpretation='image_pixel_support_not_surface_area',
+                    selection_geometry=('selection_mask' if mask is not None else 'screen_polygon'),
                     requested_pixels=requested,source_pixels=source,
                     geometry_supported_pixels=supported,unsupported_pixels=requested-supported,
                     reference_depth_missing_supported_pixels=missing_depth,
@@ -413,21 +429,37 @@ class FixedRGBModel:
         cache[('point',item['annotation_id'])]=overlay;self._overlay_cache=cache
         return item
 
-    def region(self,polygon: Any,name: str,note: str,*,cancel: Any=None,replace_existing: bool=False) -> Any:
+    def region(self,polygon: Any,name: str,note: str,*,cancel: Any=None,replace_existing: bool=False,
+               selection: Any=None) -> Any:
+        """Create a region; `selection` = dict(mask, forbidden_mask, method) records physician intent.
+
+        With a selection mask the triangles are chosen by centroid pixel inside that mask and the
+        record carries the authoritative intent plus a per-pixel geometry-support diagnosis.
+        Without it the legacy polygon rule applies and no intent is claimed."""
         budget=GeometryBudget(cancel)
         if len(self.store.points)+len(self.store.regions)>=MAX_ANNOTATIONS:
             raise ValueError('Annotation count exceeds the 2000 item memory budget')
-        ids=self.projection.region(polygon,check=budget.check)
+        mask=None
+        if selection is not None:
+            from femto.annotation.selection_intent import build_selection_intent,build_selection_support,SELECTION_RULE
+            mask=np.asarray(selection['mask'],bool)
+            intent=build_selection_intent(mask,forbidden_mask=selection.get('forbidden_mask'),method=selection['method'])
+            budget.check()
+            support_record=build_selection_support(mask,self.projection)
+        ids=self.projection.region(polygon,check=budget.check,mask=mask)
         if not ids:return None
-        support=self.projection.region_support(polygon,check=budget.check)
+        support=self.projection.region_support(polygon,check=budget.check,mask=mask)
         overlay=self.projection.visible_boundary(region_boundary(self.store.mesh,ids),check=budget.check)
         cache=self._current_cache();self._check_overlay_budget(cache,overlay)
         budget.check()
-        item=self.store.add_region(dict(triangle_indices=ids,name=name,note=note,
+        record=dict(triangle_indices=ids,name=name,note=note,
             screen_polygon=polygon,view_reference=self.view_reference,
             screen_polygon_unit='pixel',screen_polygon_frame='undistorted_reference_rgb',
             geometry_support=support,
-            selection_rule='visible_triangle_centroid_in_fixed_reference_polygon'),replace_existing=replace_existing)
+            selection_rule='visible_triangle_centroid_in_fixed_reference_polygon')
+        if selection is not None:
+            record.update(selection_rule=SELECTION_RULE,selection_intent=intent,selection_support=support_record)
+        item=self.store.add_region(record,replace_existing=replace_existing)
         cache[('region',item['annotation_id'])]=overlay;self._overlay_cache=cache
         return item
 
@@ -451,13 +483,21 @@ class FixedRGBModel:
             for item in items:
                 budget.check()
                 if kind=='region':
+                    from femto.annotation.selection_intent import SELECTION_RULE,build_selection_support,intent_mask
                     if (item.get('view_reference')==self.view_reference and 'screen_polygon' in item
-                            and item.get('selection_rule')=='visible_triangle_centroid_in_fixed_reference_polygon'
+                            and item.get('selection_rule') in ('visible_triangle_centroid_in_fixed_reference_polygon',SELECTION_RULE)
                             and hasattr(self,'projection')):
                         if (item.get('screen_polygon_unit','pixel')!='pixel' or
                                 item.get('screen_polygon_frame','undistorted_reference_rgb')!='undistorted_reference_rgb'):
                             raise ValueError('Region image coordinates / units mismatch')
-                        item['geometry_support']=self.projection.region_support(item['screen_polygon'],check=budget.check)
+                        if item.get('selection_rule')==SELECTION_RULE:
+                            if item.get('selection_intent') is None:raise ValueError('Mask-selected region lost its selection intent')
+                            # Derived diagnosis is recomputed from the bound evidence; the intent mask is not.
+                            mask=intent_mask(item['selection_intent'])
+                            item['geometry_support']=self.projection.region_support(item['screen_polygon'],check=budget.check,mask=mask)
+                            item['selection_support']=build_selection_support(mask,self.projection)
+                        else:
+                            item['geometry_support']=self.projection.region_support(item['screen_polygon'],check=budget.check)
                     else:
                         item.pop('geometry_support',None)
                 if hasattr(self,'projection'):

@@ -286,7 +286,7 @@ class BlockStatusTests(unittest.TestCase):
                     generate(row, TaskControl())
             self.assertEqual((old / "trajectory.json").read_bytes(), before)
             self.assertEqual(previous_trajectories(good), [old])
-            code = main([str(bad), "--output", str(Path(tmp) / "cli")])
+            code = main([str(bad), "--output", str(Path(tmp) / "cli"), "--mesh-blocks-v3"])
             self.assertEqual(code, 2)
             blocked = json.loads(next((Path(tmp) / "cli").glob("trajectory_*/trajectory_blocked.json")).read_text(encoding="utf-8"))
             self.assertEqual(len(blocked["details"]["blocks"]), 3)
@@ -296,17 +296,22 @@ class BlockStatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             from femto.planning.trajectory_history import generate, history_rows
             from femto.planning.planning_io import TaskControl
-            manifest = make_export(tmp, two_patches())
+            from tests.test_mesh_slice_planner import pixel_mask
+            # Two separately painted areas (v4 selection components), one per patch.
+            manifest = make_export(tmp, two_patches(),
+                                   selection=dict(mask=pixel_mask((80, 80, 98, 120), (102, 80, 120, 120))))
             data = json.loads(manifest.read_text())
             annotations = Path(tmp) / "annotations.json"
             annotations.write_text(json.dumps({"regions": [dict(data["region"], region_manifest_file=manifest.name)]}))
             row = dict(kind="区域", source=annotations, region_index=0)
             result = generate(row, TaskControl())
-            self.assertEqual(result["blocks"]["coverage_status"], "complete")
-            self.assertIn("共 2 块", result["blocks"]["text"])
+            self.assertTrue(result["blocks"]["complete"])
+            self.assertEqual(result["cleanup"], "done")
+            self.assertIn("共 2 个工作块", result["blocks"]["text"])
             self.assertTrue((result["folder"] / "blocks.csv").is_file())
             loaded = load_trajectory(result["folder"])
             self.assertEqual(loaded.statistics["block_count"], 2)
+            self.assertEqual(loaded.planner["algorithm_version"], "mesh-slice-serpentine-v4")
 
 
 class BlockBudgetTests(unittest.TestCase):

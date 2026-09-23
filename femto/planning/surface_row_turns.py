@@ -197,3 +197,164 @@ def connect_row_turns(trajectory, mesh, region, eligible, check):
                    spacing_report=spacing)
     validate_trajectory(result,mesh=mesh)
     return result
+
+
+class SurfaceLinks:
+    """v4 on-surface connectors inside one mesh fragment of a selection block.
+
+    Adjacent rows first try the frozen v2/v3.1 boundary-band turn (identical output where it
+    succeeds). Every other link, and every failed boundary turn, is routed as the shortest path
+    along the fragment's own mesh edges: each connector edge lies on one selected triangle, no
+    edge crosses a painted forbidden polygon, no edge leaves the reference image. No edge is
+    ever invented across a mesh gap, so links between mesh fragments never exist here."""
+
+    def __init__(self, mesh, region, frame, check, face_ids):
+        from femto.planning.mesh_slice_planner import _forbidden_polygons
+        self.vertices=np.asarray(mesh.vertices,float);self.faces=np.asarray(mesh.faces)
+        self.check=check;self.frame=frame
+        view=region['view_reference']
+        self.k=np.asarray(view['undistorted_intrinsic']);self.size=np.asarray(view['image_size'])
+        self.polygons=_forbidden_polygons(region)
+        self.face_ids=[int(v) for v in face_ids];self.member=set(self.face_ids)
+        self.boundary=BoundaryTurns(mesh,region,frame,check,face_ids=self.face_ids)
+        edges={}
+        for ordinal,index in enumerate(self.face_ids):
+            if ordinal%1024==0:check()
+            face=self.faces[index]
+            for a,b in zip(face,np.roll(face,-1)):
+                key=tuple(sorted((int(a),int(b))))
+                if key not in edges or index<edges[key]:edges[key]=index
+        self.edges=[(a,b,face) for (a,b),face in sorted(edges.items())]
+        # Forbidden / image checks depend only on the edge, so they are evaluated once.
+        self.edge_state={}
+        for index,(a,b,face) in enumerate(self.edges):
+            if index%256==0:check()
+            self.edge_state[(a,b)]=self._state(self.vertices[a],self.vertices[b])
+        self.adjacency=defaultdict(list)
+        for a,b,face in self.edges:
+            length=float(np.linalg.norm(self.vertices[b]-self.vertices[a]))
+            self.adjacency[a].append((b,length,face));self.adjacency[b].append((a,length,face))
+        for node in self.adjacency:self.adjacency[node].sort()
+
+    def _state(self, p, q):
+        """0 allowed, 1 outside the reference image, 2 crosses or touches a forbidden polygon."""
+        from femto.planning.mesh_slice_planner import _project, _point_in_polygon
+        uv=[_project(v,self.k,self.size) for v in (p,q)]
+        if any(v is None for v in uv):return 1
+        u,v=map(np.asarray,uv)
+        for polygon in self.polygons:
+            if _point_in_polygon(u,polygon) or _point_in_polygon(v,polygon):return 2
+            if any(_intersects(u,v,c,d) for c,d in zip(polygon,np.roll(polygon,-1,axis=0))):return 2
+        return 0
+
+    def _allowed(self, state, *, ignore_forbidden, ignore_image):
+        return state==0 or (state==1 and ignore_image) or (state==2 and ignore_forbidden)
+
+    def _endpoint_links(self, node, point, face, *, ignore_forbidden, ignore_image):
+        links=[]
+        for vertex in self.faces[face]:
+            vertex=int(vertex);q=self.vertices[vertex]
+            state=self._state(point,q)
+            if self._allowed(state,ignore_forbidden=ignore_forbidden,ignore_image=ignore_image):
+                links.append((vertex,float(np.linalg.norm(q-point)),int(face)))
+        return sorted(links)
+
+    def _search(self, left, right, *, ignore_forbidden=False, ignore_image=False):
+        a=np.asarray(left['xyz_m'],float);b=np.asarray(right['xyz_m'],float)
+        fa,fb=int(left['triangle_index']),int(right['triangle_index'])
+        if fa not in self.member or fb not in self.member:return None
+        if fa==fb:
+            state=self._state(a,b)
+            if self._allowed(state,ignore_forbidden=ignore_forbidden,ignore_image=ignore_image):
+                return [(-2,-1,fa)]
+        start=self._endpoint_links(-2,a,fa,ignore_forbidden=ignore_forbidden,ignore_image=ignore_image)
+        finish={vertex:(length,face) for vertex,length,face in
+                self._endpoint_links(-1,b,fb,ignore_forbidden=ignore_forbidden,ignore_image=ignore_image)}
+        # A* with the straight-line distance to the target: admissible for Euclidean edge lengths,
+        # so the result is the same shortest edge path Dijkstra would return, found much faster.
+        def remaining(node):return 0. if node==-1 else float(np.linalg.norm(self.vertices[node]-b))
+        distances={-2:0.};previous={};queue=[]
+        for vertex,length,face in start:
+            if length<distances.get(vertex,float('inf')):
+                distances[vertex]=length;previous[vertex]=(-2,face);heapq.heappush(queue,(length+remaining(vertex),length,vertex))
+        while queue:
+            self.check();_,distance,node=heapq.heappop(queue)
+            if distance!=distances.get(node):continue
+            if node==-1:break
+            candidates=[(other,length,face) for other,length,face in self.adjacency[node]
+                        if self._allowed(self.edge_state[tuple(sorted((node,other)))],
+                                         ignore_forbidden=ignore_forbidden,ignore_image=ignore_image)]
+            if node in finish:candidates.append((-1,finish[node][0],finish[node][1]))
+            for nxt,length,face in candidates:
+                cost=distance+length
+                if cost<distances.get(nxt,float('inf')):
+                    distances[nxt]=cost;previous[nxt]=(node,face);heapq.heappush(queue,(cost+remaining(nxt),cost,nxt))
+        if -1 not in previous:return None
+        path=[];node=-1
+        while node!=-2:
+            prev,face=previous[node];path.append((prev,node,face));node=prev
+        return list(reversed(path))
+
+    def _samples(self, path, left, right, step):
+        from femto.planning.mesh_slice_planner import _project
+        a=np.asarray(left['xyz_m'],float);b=np.asarray(right['xyz_m'],float)
+        points={-2:a,-1:b};samples=[]
+        for i,j,face in path:
+            self.check()
+            p=points[i] if i<0 else self.vertices[i];q=points[j] if j<0 else self.vertices[j]
+            length=float(np.linalg.norm(q-p))
+            if length<=1e-12:continue
+            count=max(1,math.ceil(length/step))
+            if len(samples)+count>POINT_BUDGET:raise ValueError(f'Surface link exceeds {POINT_BUDGET} samples')
+            for t in np.linspace(0,1,count+1)[1:]:
+                xyz=p*(1-t)+q*t
+                samples.append(dict(xyz_m=xyz.tolist(),pixel=_project(xyz,self.k,self.size),
+                    triangle_index=int(face),geometry_support='measured_mesh',role='connector',
+                    row_index=right['row_index']))
+        if samples and np.linalg.norm(np.asarray(samples[-1]['xyz_m'])-b)>1e-12:
+            return None
+        return samples or None
+
+    def route(self, left, right, step, e2, *, adjacent_rows):
+        """(samples, method) or (None, None); boundary band first for adjacent rows."""
+        if adjacent_rows:
+            samples=self.boundary.route(left,right,step,e2)
+            if samples:return samples,'boundary_band'
+        path=self._search(left,right)
+        if path is None:return None,None
+        samples=self._samples(path,left,right,step)
+        return (samples,'surface_edges') if samples else (None,None)
+
+    def diagnose(self, left, right):
+        """Why no on-surface link exists; diagnostic only, never a decision."""
+        if self._search(left,right,ignore_forbidden=True):return 'forbidden_blocked'
+        if self._search(left,right,ignore_forbidden=True,ignore_image=True):return 'outside_reference_image'
+        return 'no_surface_path'
+
+
+def connect_links(segments, gaps, eligible, router, step, check, *, e2, used=0):
+    """Try every gap inside one mesh fragment; kept gaps carry link (and row-turn) diagnostics."""
+    chains=[[dict(p) for p in segments[0].points]];kept=[];length=0.;added=0
+    connected=Counter();methods=Counter();failures=Counter()
+    for index,gap in enumerate(gaps):
+        check();following=segments[index+1]
+        left=chains[-1][-1];right=following.points[0]
+        adjacent=index in eligible
+        route,method=router.route(left,right,step,e2,adjacent_rows=adjacent)
+        if route:
+            xyz=np.asarray([left['xyz_m']]+[p['xyz_m'] for p in route])
+            length+=float(np.linalg.norm(np.diff(xyz,axis=0),axis=1).sum())
+            chains[-1].extend(route);chains[-1].extend(dict(p) for p in following.points[1:])
+            connected['row_turn' if left['row_index']!=right['row_index'] else 'detour']+=1
+            methods[method]+=1;added+=len(route)-1
+        else:
+            detail=dict(gap.detail)
+            if gap.reason=='row_turn':
+                detail['row_turn_failure_reason']=('non_adjacent_slice' if not adjacent else
+                    router.boundary.diagnose(left,right,step,e2))
+            why=router.diagnose(left,right);detail['link_failure_reason']=why;failures[why]+=1
+            kept.append(replace(gap,detail=detail));chains.append([dict(p) for p in following.points])
+        if used+added>POINT_BUDGET:
+            raise ValueError(f'Trajectory including surface links exceeds {POINT_BUDGET} samples')
+    return dict(chains=chains,kept=kept,connected=connected,methods=methods,failures=failures,
+                length=length,added=added)

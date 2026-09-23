@@ -36,6 +36,14 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
     if plan.get('surface_mode'):header=237
     blocks=plan.get('blocks')
     if blocks:header+=28
+    selection_blocks=bool(blocks and blocks.get('selection_blocks'))
+    selection_lines=[]
+    if selection_blocks:
+        from femto.planning.trajectory_diagram import draw_selection_layers
+        tinted,selection_lines=draw_selection_layers(None,base,region,scale,0,None)
+        if selection_lines:
+            base=tinted;picture=Image.fromarray(base).resize(size,Image.Resampling.LANCZOS)
+        header+=28*(1+len(selection_lines))
     kept_block_labels={};skipped_block_labels=[]
     if blocks:
         # Display only: labels sit at the first displayed chain of each planned block; a label
@@ -98,13 +106,23 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
     if blocks:
         summary=blocks['summary'];shown=('' if chain_indices is None or segment_index is not None else
             ' | 当前仅显示 '+'、'.join(item['label'] for item in blocks['items'] if item['chain_indices'] and set(item['chain_indices'])<=set(chain_indices)))
-        lines.append(f"分块：{summary['block_count']} 块 | 可规划 {summary['plannable_block_count']} | 未规划 {summary['unplannable_block_count']}"
-                     f"（{summary['unplannable_face_count']} 面） | {'全部块已规划' if summary['coverage_status']=='complete' else '部分覆盖'} | 块间只停不连线"+shown)
+        if selection_blocks:
+            lines.append(f"工作块（医师选择组件）：{summary['block_count']} 块 | 单链完成 {summary['block_count']-summary['incomplete_block_count']-summary['unplannable_block_count']} | 未完成 {summary['incomplete_block_count']} | 无法规划 {summary['unplannable_block_count']}"
+                         f" | 覆盖 {'完整' if summary['coverage_status']=='complete' else '部分（未覆盖碎片 '+str(summary['uncovered_fragment_count'])+'）'} | 块间只停不连线"+shown)
+            revisit=summary.get('revisit_connector_length_m') or 0
+            lines.append('洋红：重复经过其他已扫描行的连接段（按名义半行距判定，非治疗头宽度）'+(f'，共 {revisit*1000:.1f} mm' if revisit else '：无')+'；连接段不推定治疗能量开启')
+            lines.extend(selection_lines)
+        else:
+            lines.append(f"分块：{summary['block_count']} 块 | 可规划 {summary['plannable_block_count']} | 未规划 {summary['unplannable_block_count']}"
+                         f"（{summary['unplannable_face_count']} 面） | {'全部块已规划' if summary['coverage_status']=='complete' else '部分覆盖'} | 块间只停不连线"+shown)
         if skipped_block_labels:
             lines.append(f"{len(skipped_block_labels)} 个块编号标签因重叠未显示（"+'、'.join(skipped_block_labels[:12])
                          +('…' if len(skipped_block_labels)>12 else '')+'）；用“块”下拉逐块查看')
     if plan.get('algorithm_notice'):lines.append(plan['algorithm_notice'])
     for i,line in enumerate(lines):draw.text((12,8+28*i),line,font=font,fill='#e4edf4')
+    if selection_blocks:
+        from femto.planning.trajectory_diagram import _draw_selection_outlines
+        _draw_selection_outlines(draw,region,rgb.shape[:2],scale,header,font)
     polygon=region.get('screen_polygon')
     if polygon:
         outline=np.asarray(polygon)*scale+[0,header]
@@ -123,7 +141,7 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
             draw.line([tuple(p) for p in points],fill='#ffd52b',width=2)
             for j in range(1,len(segment)):
                 if segment[j].get('motion_kind')=='connector':
-                    draw.line([tuple(points[j-1]),tuple(points[j])],fill='#ff9138',width=2)
+                    draw.line([tuple(points[j-1]),tuple(points[j])],fill='#ff4fd8' if segment[j].get('revisit') else '#ff9138',width=2)
             # Regular direction markers along continuous chains.
             lengths=np.linalg.norm(np.diff(points,axis=0),axis=1)
             valid=np.flatnonzero(lengths>1e-8)
@@ -198,8 +216,11 @@ def show_presentation(parent: Any,model: Any,region: Any,plan: Any,is_current: C
     show_turns=tk.BooleanVar(value=bool(plan.get('route_quality')))
     selection=tk.StringVar(value='全部路径段')
     blocks=plan.get('blocks');block_selection=tk.StringVar(value='全部块')
-    block_labels=[f"{item['label']}（{'已规划' if item['status']=='planned' else '未规划：'+str(item.get('reason'))}）"
-                  for item in blocks['items']] if blocks else []
+    def block_state(item):
+        if item['status']=='planned':return '已规划' if not blocks.get('selection_blocks') else '单链完成'
+        if item['status']=='incomplete':return '未完成：'+str((item.get('continuity') or {}).get('chain_count'))+' 条断链'
+        return '未规划：'+str(item.get('reason'))
+    block_labels=[f"{item['label']}（{block_state(item)}）" for item in blocks['items']] if blocks else []
     def chosen_block():
         if not blocks or block_selection.get()=='全部块':return None
         return blocks['items'][block_labels.index(block_selection.get())]
@@ -226,7 +247,7 @@ def show_presentation(parent: Any,model: Any,region: Any,plan: Any,is_current: C
             breaks=plan.get('chain_breaks',[])
             reason=breaks[player.chain]['explanation'] if player.chain<len(breaks) else '不同链之间没有已规划连接'
             if player.chain<len(breaks) and breaks[player.chain].get('inter_block'):
-                gap='块间停止：'+reason+'；点击继续仅定位下一块起点，不播放跨块运动。'
+                gap=('块间停止（选择分离）：' if breaks[player.chain].get('reason')=='selection_break' else '块间停止：')+reason+'；点击继续仅定位下一块起点，不播放跨块运动。'
             else:gap='断点停止：'+reason+'；点击继续仅定位下一链起点。'
         state.set(f"{'播放结束' if player.finished else '播放中' if player.running else '已暂停'} · 链 {player.chain+1}/{len(player.xyz)}{block_info} · {'连接' if pos['motion_kind']=='connector' else '扫描'} · W0/RDF XYZ（米）({xyz}) · 方向单位向量 ({direction})\n"
             f"进度 {pos['progress']*100:.1f}% / 对应恒速时间 {pos['known_time_s']:.1f} s；扫描 {info['scan_length_m']*1000:.1f} / 连接 {info['connector_length_m']*1000:.1f} / 总长 {info['total_length_m']*1000:.1f} mm；{player.speed:g} mm/s 已规划运动 {info['known_motion_time_s']:.1f} s（仅链内，不含暂停、加减速或未知跨链移动）。\n"+gap+notice[0])

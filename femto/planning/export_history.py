@@ -437,8 +437,11 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
         from femto.planning.trajectory_history import generate
         row=selected()
         def done(result):
-            notice=f"新轨迹已生成；已删除 {len(result['removed'])} 个旧轨迹目录（不进入回收站）。"
             blocks=result.get('blocks')
+            if result.get('cleanup')=='skipped_incomplete_result':
+                notice=f"新轨迹已生成但存在未完成工作块：旧轨迹保留（{len(result['kept_previous'])} 个目录未替换、未删除）。"
+            else:
+                notice=f"新轨迹已生成；已删除 {len(result['removed'])} 个旧轨迹目录（不进入回收站）。"
             if blocks:notice+=' '+blocks['text']
             if result['warnings']:notice+=' 部分旧文件保留：'+'；'.join(result['warnings'])
             refresh(result['folder'],notice)

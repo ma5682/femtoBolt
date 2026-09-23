@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from tests.test_mesh_slice_planner import make_export
+from tests.test_mesh_slice_planner import make_export, pixel_mask
 from femto.planning.mesh_slice_planner import plan_mesh_slice
 from femto.planning.trajectory_export import export_trajectory
 from femto.planning.trajectory_history import generate, previous_trajectories, remove_previous
@@ -13,7 +13,8 @@ from femto.planning.planning_io import TaskControl
 
 class TrajectoryHistoryTests(unittest.TestCase):
     def setup_export(self, folder):
-        manifest=make_export(folder)
+        # The product export carries the physician's selection intent (one component over the mesh).
+        manifest=make_export(folder,selection=dict(mask=pixel_mask((0,0,199,199))))
         data=json.loads(manifest.read_text())
         annotations=Path(folder)/'annotations.json'
         annotations.write_text(json.dumps({'regions':[dict(data['region'],region_manifest_file=manifest.name)]}))

@@ -36,22 +36,32 @@ def history_rows(reconstruction, check=lambda: None):
                 payload = json.loads(Path(row.get('target', row['source'])).read_text(encoding='utf-8-sig'))
                 row['parent_manifest'] = Path(payload['source']['region_manifest']).resolve()
                 row['block_status'] = saved_block_status(payload)
+                row['result_complete'] = saved_result_complete(payload)
                 if row['block_status']:
                     row['status'] = row.get('status', '') + '；' + row['block_status']
         except (OSError, ValueError, KeyError, TypeError, IndexError):
             pass
-    # The product history presents one current result per saved region. Older
-    # complete directories remain untouched and accessible on disk.
+    # The product history presents one current result per saved region: the newest complete
+    # result. A newer result with unfinished blocks is listed next to it instead of replacing it.
     latest = {}
+    latest_partial = {}
     for row in rows:
         parent = row.get('parent_manifest')
-        if parent is not None:
-            previous = latest.get(parent)
-            rank = (row.get('stamp', 0), str(row['source']))
-            if previous is None or rank > (previous.get('stamp', 0), str(previous['source'])):
-                latest[parent] = row
-    return [row for row in rows if row.get('parent_manifest') is None or
-            latest[row['parent_manifest']] is row]
+        if parent is None:
+            continue
+        rank = (row.get('stamp', 0), str(row['source']))
+        bucket = latest if row.get('result_complete', True) else latest_partial
+        previous = bucket.get(parent)
+        if previous is None or rank > (previous.get('stamp', 0), str(previous['source'])):
+            bucket[parent] = row
+    keep = set()
+    for parent, row in latest.items():
+        keep.add(id(row))
+    for parent, row in latest_partial.items():
+        complete = latest.get(parent)
+        if complete is None or (row.get('stamp', 0), str(row['source'])) > (complete.get('stamp', 0), str(complete['source'])):
+            keep.add(id(row))
+    return [row for row in rows if row.get('parent_manifest') is None or id(row) in keep]
 
 
 def generate(row, control):
@@ -59,12 +69,21 @@ def generate(row, control):
     from femto.planning.trajectory_export import export_trajectory, load_trajectory
     manifest = region_manifest(row)
     old = previous_trajectories(manifest)
-    # Block planning: each connected mesh surface is scanned completely before the next one.
-    trajectory = plan_mesh_slice(manifest, connect_rows=True, block_planning=True, check=control.check)
+    # v4: work blocks are the physician's selection components; each planned block is one chain.
+    # Exports without selection intent are refused with an explicit message and keep old results.
+    trajectory = plan_mesh_slice(manifest, connect_rows=True, block_planning=True, selection_blocks=True,
+                                 check=control.check)
     folder = export_trajectory(trajectory, manifest.parent, check=control.check, commit=control.publish)
     load_trajectory(folder, reproduce=False)
+    summary = block_summary(trajectory)
+    if summary is not None and not summary['complete']:
+        # Unfinished blocks: the new partial result is published for preview, but the old valid
+        # trajectory is neither replaced in the history nor deleted (user decision pending).
+        return dict(folder=folder, removed=[], warnings=[], blocks=summary, kept_previous=[str(p) for p in old],
+                    cleanup='skipped_incomplete_result')
     removed, warnings = remove_previous(manifest, old, folder)
-    return dict(folder=folder, removed=removed, warnings=warnings, blocks=block_summary(trajectory))
+    return dict(folder=folder, removed=removed, warnings=warnings, blocks=summary, kept_previous=[],
+                cleanup='done')
 
 
 def block_summary(trajectory):
@@ -72,16 +91,44 @@ def block_summary(trajectory):
     stats = trajectory.statistics if isinstance(trajectory.statistics, dict) else {}
     if trajectory.blocks is None or 'block_count' not in stats:
         return None
+    selection = trajectory.blocks.get('schema') == 'femto-surface-trajectory-blocks-v2'
     missing = [b for b in trajectory.blocks['items'] if b.get('status') != 'planned']
+    if selection:
+        incomplete = [b for b in missing if b.get('status') == 'incomplete']
+        unplannable = [b for b in missing if b.get('status') == 'unplannable']
+        complete = not missing
+        text = (f"共 {stats['block_count']} 个工作块（按医师选择组件），单链完成 {stats['planned_block_count']} 块，"
+                f"未完成 {len(incomplete)} 块，无法规划 {len(unplannable)} 块；"
+                f"覆盖状态 {'完整' if stats['coverage_status'] == 'complete' else '部分'}（未覆盖网格碎片 {stats['uncovered_fragment_count']} 个 / {stats['uncovered_face_count']} 面）；"
+                + ('几何待确认像素 ' + str(stats['geometry_unconfirmed_pixel_count']) + '；' if stats.get('geometry_unconfirmed_pixel_count') else '')
+                + ('全部工作块已成为连续单链。' if complete else
+                   '未完成块：' + '、'.join(
+                       f"块 {b['block_index']+1}（{b['face_count']} 面，"
+                       + (f"{b['continuity']['chain_count']} 条断链：{b['link_failure_counts']}" if b['status'] == 'incomplete' else str(b.get('reason')))
+                       + '）' for b in missing[:8]) + ('…' if len(missing) > 8 else '') + '；旧轨迹已保留，未替换或删除。'))
+        return dict(text=text, complete=complete, coverage_status=stats['coverage_status'],
+                    continuity_status=stats['continuity_status'], block_count=stats['block_count'],
+                    plannable_block_count=stats['plannable_block_count'],
+                    unplannable=[dict(block_index=b['block_index'], face_count=b['face_count'], reason=b.get('reason'),
+                                      status=b['status']) for b in missing])
     text = (f"共 {stats['block_count']} 块，可规划 {stats['plannable_block_count']} 块，"
             f"未规划 {stats['unplannable_block_count']} 块（{stats['unplannable_face_count']} 面）；"
             + ('全部块已规划。' if stats['coverage_status'] == 'complete' else
                '部分覆盖：未规划块 ' + '、'.join(f"块 {b['block_index']+1}（{b['face_count']} 面，{b['reason']}）"
                                                    for b in missing[:8]) + ('…' if len(missing) > 8 else '') + '。'))
-    return dict(text=text, coverage_status=stats['coverage_status'], block_count=stats['block_count'],
+    return dict(text=text, complete=True, coverage_status=stats['coverage_status'], block_count=stats['block_count'],
                 plannable_block_count=stats['plannable_block_count'],
                 unplannable=[dict(block_index=b['block_index'], face_count=b['face_count'], reason=b.get('reason'))
                              for b in missing])
+
+
+def saved_result_complete(payload):
+    """True unless a v4 file reports unfinished (incomplete or unplannable) work blocks."""
+    stats = payload.get('statistics') if isinstance(payload, dict) else None
+    blocks = payload.get('blocks') if isinstance(payload, dict) else None
+    if not isinstance(stats, dict) or not isinstance(blocks, dict) or blocks.get('schema') != 'femto-surface-trajectory-blocks-v2':
+        return True
+    return all(b.get('status') == 'planned' for b in blocks.get('items', []))
 
 
 def saved_block_status(payload):
@@ -89,6 +136,9 @@ def saved_block_status(payload):
     stats = payload.get('statistics') if isinstance(payload, dict) else None
     if not isinstance(stats, dict) or 'block_count' not in stats or not isinstance(payload.get('blocks'), dict):
         return None
+    if payload['blocks'].get('schema') == 'femto-surface-trajectory-blocks-v2':
+        return (f"{stats['block_count']} 个工作块 / 单链完成 {stats.get('planned_block_count')} / 未完成 {stats.get('incomplete_block_count')} / 无法规划 {stats['unplannable_block_count']}"
+                + ('；全部完成' if stats.get('continuity_status') == 'complete' else '；未完成结果，旧轨迹保留'))
     return (f"{stats['block_count']} 块 / 可规划 {stats['plannable_block_count']} / "
             + ('全部块已规划' if stats.get('coverage_status') == 'complete'
                else f"部分覆盖（{stats['unplannable_block_count']} 块未规划）"))
@@ -139,7 +189,7 @@ def remove_previous(manifest, candidates, current):
 
 
 def prepare_playback(row, reconstruction, control):
-    from femto.planning.trajectory_export import current_algorithm_version, load_trajectory
+    from femto.planning.trajectory_export import load_trajectory, product_algorithm_notice
     from femto.annotation.fixed_rgb_geometry import FixedRGBModel
     from femto.planning.surface_trajectory import to_player_plan
     # Playback is viewing only: an accepted older-version file is hash-checked and mesh-validated
@@ -156,8 +206,7 @@ def prepare_playback(row, reconstruction, control):
             raise ValueError('历史轨迹参考图像或标定不一致：'+key)
     control.check()
     plan = to_player_plan(trajectory)
-    saved = trajectory.planner.get('algorithm_version')
-    current = current_algorithm_version(trajectory.planner.get('parameters', {}))
-    if saved != current:
-        plan['algorithm_notice'] = f'旧算法版本 {saved}（当前 {current}）：仅回放已保存结果，未重算；要采用当前算法请重新生成'
+    notice = product_algorithm_notice(trajectory.planner.get('parameters', {}), trajectory.planner.get('algorithm_version'))
+    if notice:
+        plan['algorithm_notice'] = notice
     return model, manifest['region'], plan

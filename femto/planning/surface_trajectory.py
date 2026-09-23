@@ -16,21 +16,29 @@ SCHEMA = "femto-surface-trajectory-v1"
 AXES = {"x": "right", "y": "down", "z": "forward"}
 GAP_REASONS = {
     "forbidden_region", "disconnected_surface", "surface_gap",
-    "unsupported_geometry", "row_turn",
+    "unsupported_geometry", "row_turn", "selection_break",
 }
 CONNECTED_ALGORITHM = "mesh-slice-serpentine-v2"
 BLOCK_ALGORITHM = "mesh-slice-serpentine-v3.1"
 BLOCK_ALGORITHMS = ("mesh-slice-serpentine-v3", BLOCK_ALGORITHM)
+# v4: work blocks are the physician's selection components; every planned block is one chain.
+SELECTION_ALGORITHM = "mesh-slice-serpentine-v4"
 ROW_TURN_FAILURE_REASONS = {
     "non_adjacent_slice", "endpoint_not_on_boundary", "forbidden_blocked",
     "ambiguous_boundary", "no_boundary_path_in_band",
 }
+LINK_FAILURE_REASONS = {
+    "disconnected_measured_surface", "forbidden_blocked", "outside_reference_image",
+    "no_surface_path", "budget_exceeded",
+}
 BLOCKS_SCHEMA = "femto-surface-trajectory-blocks-v1"
+SELECTION_BLOCKS_SCHEMA = "femto-surface-trajectory-blocks-v2"
 POINT_BUDGET = 200_000
 BLOCK_REASONS = {
     "insufficient_extent", "no_positive_area", "axis_perpendicular",
     "narrower_than_row_spacing", "no_supported_segment",
 }
+SELECTION_BLOCK_REASONS = BLOCK_REASONS | {"no_supported_geometry", "all_fragments_unplannable"}
 BLOCK_STATISTIC_KEYS = ("segment_count", "gap_count", "point_count", "row_count",
                         "scan_length_m", "connector_length_m", "connected_row_turns")
 
@@ -239,9 +247,11 @@ def face_list_sha256(face_indices: Any) -> str:
 
 def _validated_blocks(trajectory: SurfaceTrajectory) -> list[dict[str, Any]]:
     blocks = trajectory.blocks
-    if (not isinstance(blocks, dict) or blocks.get("schema") != BLOCKS_SCHEMA or
+    selection = trajectory.planner.get("algorithm_version") == SELECTION_ALGORITHM
+    expected_schema = SELECTION_BLOCKS_SCHEMA if selection else BLOCKS_SCHEMA
+    if (not isinstance(blocks, dict) or blocks.get("schema") != expected_schema or
             not isinstance(blocks.get("items"), list) or not blocks["items"]):
-        raise ValueError("Block trajectory requires a femto-surface-trajectory-blocks-v1 record")
+        raise ValueError(f"Block trajectory requires a {expected_schema} record")
     for position, item in enumerate(blocks["items"]):
         if not isinstance(item, dict) or item.get("block_index") != position:
             raise ValueError("Block items must be numbered by visit order")
@@ -251,14 +261,16 @@ def _validated_blocks(trajectory: SurfaceTrajectory) -> list[dict[str, Any]]:
         digest = item.get("face_indices_sha256")
         if not isinstance(digest, str) or len(digest) != 64:
             raise ValueError("Invalid block face list digest")
-        if item.get("status") == "planned":
+        if item.get("status") == "planned" or (selection and item.get("status") == "incomplete"):
             for key in ("segment_index_first", "segment_count", "point_count", "row_index_first", "row_count"):
                 if type(item.get(key)) is not int or item[key] < 0:
                     raise ValueError(f"Invalid planned block {key}")
             if item["segment_count"] < 1:
                 raise ValueError("A planned block needs at least one scan segment")
+            if selection and (item["status"] == "planned") != (item["segment_count"] == 1):
+                raise ValueError("A planned selection block is exactly one continuous chain")
         elif item.get("status") == "unplannable":
-            if item.get("reason") not in BLOCK_REASONS:
+            if item.get("reason") not in (SELECTION_BLOCK_REASONS if selection else BLOCK_REASONS):
                 raise ValueError("Invalid unplannable block reason")
         else:
             raise ValueError("Invalid block status")
@@ -320,6 +332,12 @@ def _check_block_statistics(trajectory: SurfaceTrajectory, blocks: list[dict[str
         totals["connector"] += connector
         totals["turns"] += turns
         totals["rows"] += item["row_count"]
+    _check_global_block_statistics(trajectory, blocks, segments, gaps, totals, failures, strict)
+
+
+def _check_global_block_statistics(trajectory: SurfaceTrajectory, blocks: list[dict[str, Any]],
+                                   segments: list[ScanSegment], gaps: list[Gap], totals: dict[str, Any],
+                                   failures: Counter, strict: bool) -> None:
     stats = trajectory.statistics
     unplannable = [item for item in blocks if item["status"] != "planned"]
     gap_counts = dict(sorted(Counter(gap.reason for gap in gaps).items()))
@@ -402,7 +420,7 @@ def _check_block_consistency(trajectory: SurfaceTrajectory, blocks: list[dict[st
 
 
 def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
-                        expected_result_sha256: Any = None) -> None:
+                        expected_result_sha256: Any = None, region: Any = None) -> None:
     if not isinstance(trajectory.origin_reference, dict) or trajectory.origin_reference.get("kind") != "initial_color_camera":
         raise ValueError("Surface trajectory requires an initial_color_camera origin")
     if not isinstance(trajectory.planner, dict) or not isinstance(trajectory.source, dict):
@@ -419,12 +437,15 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
     parameters = trajectory.planner.get("parameters", {})
     sample_step_m = float(parameters.get("sample_step_mm", 1.0)) / 1000
     version = trajectory.planner.get("algorithm_version")
-    block_mode = version in BLOCK_ALGORITHMS
+    selection_mode = version == SELECTION_ALGORITHM
+    block_mode = version in BLOCK_ALGORITHMS or selection_mode
     connected_rows = version == CONNECTED_ALGORITHM or block_mode
     if connected_rows and parameters.get("connect_rows") is not True:
         raise ValueError("Connected row trajectory requires connect_rows=True")
     if block_mode and parameters.get("block_planning") is not True:
         raise ValueError("Block trajectory requires block_planning=True")
+    if selection_mode != (parameters.get("selection_blocks") is True):
+        raise ValueError("selection_blocks=True is exactly the mesh-slice-serpentine-v4 contract")
     if not block_mode and trajectory.blocks is not None:
         raise ValueError("Block records are only valid for block-mode algorithm versions")
     blocks = _validated_blocks(trajectory) if block_mode else None
@@ -463,6 +484,8 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
                 role = point.get("role")
                 if role is not None and role not in ("scan", "connector"):
                     raise ValueError("Invalid trajectory point role")
+                if "revisit" in point and (not selection_mode or role != "connector" or point["revisit"] is not True):
+                    raise ValueError("revisit is only a v4 flag on connector samples")
                 if previous is not None and np.linalg.norm(np.asarray(xyz) - previous) > sample_step_m + 1e-9:
                     raise ValueError("Adjacent scan samples exceed sample_step_mm")
                 if faces is not None:
@@ -477,6 +500,8 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
         else:
             if type(item.gap_index) is not int or item.gap_index != len(gaps) or item.reason not in GAP_REASONS:
                 raise ValueError("Invalid gap index/reason")
+            if item.reason == "selection_break" and not selection_mode:
+                raise ValueError("selection_break gaps only exist in selection-block trajectories")
             expected_detail = {"inferred_cause": item.detail.get("inferred_cause"),
                                "method": "sweep_plane_outer_loop_containment",
                                "confidence": "heuristic", "decision_use": "none"}
@@ -485,6 +510,11 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
                 if not block_mode or item.reason != "row_turn" or failure not in ROW_TURN_FAILURE_REASONS:
                     raise ValueError("row_turn_failure_reason is only a diagnostic on block-mode row_turn gaps")
                 expected_detail["row_turn_failure_reason"] = failure
+            link_failure = item.detail.get("link_failure_reason") if isinstance(item.detail, dict) else None
+            if link_failure is not None:
+                if not selection_mode or item.reason == "selection_break" or link_failure not in LINK_FAILURE_REASONS:
+                    raise ValueError("link_failure_reason is only a diagnostic on v4 intra-block gaps")
+                expected_detail["link_failure_reason"] = link_failure
             if item.detail != expected_detail:
                 raise ValueError("Invalid informational gap detail")
             _finite_xyz(item.previous_point.get("xyz_m"), "gap previous xyz_m")
@@ -501,7 +531,10 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
             raise ValueError("Gap previous endpoint mismatch")
         if gap.next_point != {"route_index": after["route_index"], "xyz_m": after["xyz_m"]}:
             raise ValueError("Gap next endpoint mismatch")
-    if block_mode:
+    if selection_mode:
+        from femto.planning.selection_blocks import check_selection_blocks
+        check_selection_blocks(trajectory, blocks, segments, gaps, vertices, faces, region)
+    elif block_mode:
         _check_block_consistency(trajectory, blocks, segments, gaps, vertices, faces)
     payload = trajectory.to_dict()
     _forbidden_orientation_keys(payload)
@@ -531,21 +564,30 @@ def block_view(trajectory: SurfaceTrajectory) -> dict[str, Any] | None:
     """Display-only block summary; never changes ordered_items."""
     if trajectory.blocks is None:
         return None
+    selection = trajectory.blocks.get("schema") == SELECTION_BLOCKS_SCHEMA
     chain_blocks = [item.block_index for item in trajectory.ordered_items if isinstance(item, ScanSegment)]
     items = []
     for block in trajectory.blocks["items"]:
         chains = [index for index, value in enumerate(chain_blocks) if value == block["block_index"]]
-        items.append({key: block.get(key) for key in
-                      ("block_index", "component_id", "status", "reason", "message", "face_count",
-                       "area_m2", "segment_count", "gap_count", "point_count", "row_count",
-                       "scan_length_m", "connector_length_m", "connected_row_turns")}
+        keys = ("block_index", "component_id", "status", "reason", "message", "face_count",
+                "area_m2", "segment_count", "gap_count", "point_count", "row_count",
+                "scan_length_m", "connector_length_m", "connected_row_turns")
+        if selection:
+            keys += ("connected_detours", "mesh_fragment_count", "planned_fragment_count", "continuity",
+                     "coverage", "selection", "revisit", "link_failure_counts")
+        items.append({key: block.get(key) for key in keys}
                      | {"chain_indices": chains, "label": f"块 {block['block_index'] + 1}"})
     stats = trajectory.statistics
-    summary = {key: stats.get(key) for key in
-               ("block_count", "plannable_block_count", "unplannable_block_count", "coverage_status",
-                "inter_block_gap_count", "unplannable_face_count", "unplannable_area_m2")}
+    summary_keys = ("block_count", "plannable_block_count", "unplannable_block_count", "coverage_status",
+                    "inter_block_gap_count", "unplannable_face_count", "unplannable_area_m2")
+    if selection:
+        summary_keys += ("incomplete_block_count", "continuity_status", "uncovered_fragment_count",
+                         "uncovered_face_count", "geometry_unconfirmed_pixel_count", "revisit_connector_length_m")
+    summary = {key: stats.get(key) for key in summary_keys}
     return {"chain_blocks": chain_blocks, "items": items, "summary": summary,
-            "order_rule": trajectory.blocks.get("order_rule")}
+            "order_rule": trajectory.blocks.get("order_rule"),
+            "block_definition": trajectory.blocks.get("block_definition"),
+            "selection_blocks": selection}
 
 
 def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, Any]:
@@ -559,8 +601,14 @@ def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, 
 
     def explanation(index: int, gap: Gap) -> str:
         if chain_blocks and chain_blocks[index] != chain_blocks[index + 1]:
+            if gap.reason == "selection_break":
+                return (f"{gap.reason}：块 {chain_blocks[index] + 1} 与块 {chain_blocks[index + 1] + 1} 是医师分别选择的区域（选择分离），"
+                        "块间没有已规划运动；继续仅定位下一块起点")
             return (f"{gap.reason}：块 {chain_blocks[index] + 1} 与块 {chain_blocks[index + 1] + 1} 是拓扑分离的网格表面，"
                     "块间没有已规划运动；继续仅定位下一块起点")
+        link = gap.detail.get("link_failure_reason") if isinstance(gap.detail, dict) else None
+        if link is not None:
+            return f"{gap.reason}：块 {chain_blocks[index] + 1} 内部未能沿可信表面连接（{link}），该块未完成；继续只定位下一段起点"
         return f"{gap.reason}：段间没有已规划运动；继续只定位下一段起点"
 
     result = {
@@ -589,6 +637,14 @@ def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, 
     }
     if blocks is not None:
         result["blocks"] = blocks
+        if blocks.get("selection_blocks"):
+            result["selection_semantics"] = {
+                "work_blocks": "one_block_per_physician_selection_component",
+                "inter_block_gap": "selection_break_no_planned_motion",
+                "intra_block_gap": "block_incomplete_link_failure_reason_recorded",
+                "revisit": "connector_samples_within_half_row_spacing_of_other_scanned_rows_flagged_energy_not_assumed_on",
+                "treatment_coverage_claim": "none_without_effective_head_width",
+            }
     if model.planner.get("parameters", {}).get("row_spacing_mm") is not None:
         result.update(spacing_mm=model.planner["parameters"]["row_spacing_mm"],
                       spacing_semantics="parallel_plane_spacing_not_uniform_surface_spacing",
