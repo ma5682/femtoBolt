@@ -15,7 +15,8 @@ import numpy as np
 import trimesh
 
 from femto.planning.surface_trajectory import (
-    BLOCK_ALGORITHM, BLOCKS_SCHEMA, Gap, POINT_BUDGET, ScanSegment, SurfaceTrajectory,
+    BLOCK_ALGORITHM, BLOCKS_SCHEMA, Gap, OPTIMIZED_SELECTION_ALGORITHM, POINT_BUDGET,
+    SELECTION_ALGORITHM, SELECTION_ALGORITHMS, ScanSegment, SurfaceTrajectory,
     face_components, face_list_sha256, validate_trajectory,
 )
 
@@ -1044,12 +1045,14 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
                     connect_rows: bool = False,
                     block_planning: bool = False,
                     selection_blocks: bool = False,
+                    selection_algorithm: str = SELECTION_ALGORITHM,
                     check: Callable[[], None] = lambda: None) -> SurfaceTrajectory:
     """Generate only measured-mesh scan samples; no gap interpolation or motion.
 
-    `selection_blocks=True` (v4) needs a region export that carries the physician's selection
+    `selection_blocks=True` (v4/v4.1) needs a region export that carries the physician's selection
     intent: blocks are selection components, each planned block is one continuous chain.
-    Without it, `block_planning=True` keeps the v3.1 mesh-connectivity blocks."""
+    The API defaults to frozen v4; product entry points explicitly select v4.1.
+    Without selection blocks, `block_planning=True` keeps the v3.1 mesh-connectivity blocks."""
     params = _parameters(locals())
     if type(connect_rows) is not bool:
         raise ValueError('connect_rows must be boolean')
@@ -1057,6 +1060,10 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
         raise ValueError('block_planning must be boolean')
     if type(selection_blocks) is not bool:
         raise ValueError('selection_blocks must be boolean')
+    if selection_algorithm not in SELECTION_ALGORITHMS:
+        raise ValueError('Unsupported selection_algorithm')
+    if not selection_blocks and selection_algorithm != SELECTION_ALGORITHM:
+        raise ValueError('selection_algorithm v4.1 requires selection_blocks=True')
     if block_planning and not connect_rows:
         raise ValueError('block_planning requires connect_rows=True')
     if selection_blocks and not block_planning:
@@ -1065,7 +1072,8 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
     manifest_path, manifest, mesh = _load_input(export_dir_or_manifest)
     if selection_blocks:
         from femto.planning.selection_blocks import plan_selection_blocks
-        return plan_selection_blocks(manifest_path, manifest, mesh, params, check)
+        return plan_selection_blocks(manifest_path, manifest, mesh, params, check,
+                                     algorithm_version=selection_algorithm)
     if block_planning:
         return _plan_blocks(manifest_path, manifest, mesh, params, check)
     trajectory, ordered_records = _plan_single_surface(manifest_path, manifest, mesh, params, check)
@@ -1084,8 +1092,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--direction", default="auto")
     parser.add_argument("--start-corner", default="top_left",
                         choices=("top_left", "top_right", "bottom_left", "bottom_right"))
-    parser.add_argument("--mesh-blocks-v3", action="store_true",
-                        help="Explicit legacy rule: blocks by mesh connectivity (v3.1) instead of selection components (v4)")
+    legacy = parser.add_mutually_exclusive_group()
+    legacy.add_argument("--mesh-blocks-v3", action="store_true",
+                        help="Explicit legacy rule: blocks by mesh connectivity (v3.1) instead of selection components (v4.1)")
+    legacy.add_argument("--selection-v4", action="store_true",
+                        help="Explicit frozen selection-block planner (v4); default is v4.1")
     args = parser.parse_args(argv)
     direction: Any = args.direction
     if direction not in ("auto", "w0_x", "w0_y"):
@@ -1097,7 +1108,9 @@ def main(argv: list[str] | None = None) -> int:
         trajectory = plan_mesh_slice(args.source, row_spacing_mm=args.row_mm,
                                      sample_step_mm=args.step_mm, row_direction=direction,
                                      start_corner=args.start_corner, connect_rows=True,
-                                     block_planning=True, selection_blocks=not args.mesh_blocks_v3)
+                                     block_planning=True, selection_blocks=not args.mesh_blocks_v3,
+                                     selection_algorithm=(SELECTION_ALGORITHM if args.mesh_blocks_v3 or args.selection_v4
+                                                          else OPTIMIZED_SELECTION_ALGORITHM))
         folder = export_trajectory(trajectory, output)
     except (OSError, ValueError, TypeError, KeyError, IndexError) as error:
         folder = export_blocked(output, args.source, error, details=getattr(error, "details", None))

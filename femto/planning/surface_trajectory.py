@@ -23,6 +23,8 @@ BLOCK_ALGORITHM = "mesh-slice-serpentine-v3.1"
 BLOCK_ALGORITHMS = ("mesh-slice-serpentine-v3", BLOCK_ALGORITHM)
 # v4: work blocks are the physician's selection components; every planned block is one chain.
 SELECTION_ALGORITHM = "mesh-slice-serpentine-v4"
+OPTIMIZED_SELECTION_ALGORITHM = "mesh-slice-serpentine-v4.1"
+SELECTION_ALGORITHMS = (SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM)
 ROW_TURN_FAILURE_REASONS = {
     "non_adjacent_slice", "endpoint_not_on_boundary", "forbidden_blocked",
     "ambiguous_boundary", "no_boundary_path_in_band",
@@ -247,7 +249,7 @@ def face_list_sha256(face_indices: Any) -> str:
 
 def _validated_blocks(trajectory: SurfaceTrajectory) -> list[dict[str, Any]]:
     blocks = trajectory.blocks
-    selection = trajectory.planner.get("algorithm_version") == SELECTION_ALGORITHM
+    selection = trajectory.planner.get("algorithm_version") in SELECTION_ALGORITHMS
     expected_schema = SELECTION_BLOCKS_SCHEMA if selection else BLOCKS_SCHEMA
     if (not isinstance(blocks, dict) or blocks.get("schema") != expected_schema or
             not isinstance(blocks.get("items"), list) or not blocks["items"]):
@@ -437,7 +439,7 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
     parameters = trajectory.planner.get("parameters", {})
     sample_step_m = float(parameters.get("sample_step_mm", 1.0)) / 1000
     version = trajectory.planner.get("algorithm_version")
-    selection_mode = version == SELECTION_ALGORITHM
+    selection_mode = version in SELECTION_ALGORITHMS
     block_mode = version in BLOCK_ALGORITHMS or selection_mode
     connected_rows = version == CONNECTED_ALGORITHM or block_mode
     if connected_rows and parameters.get("connect_rows") is not True:
@@ -445,7 +447,7 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
     if block_mode and parameters.get("block_planning") is not True:
         raise ValueError("Block trajectory requires block_planning=True")
     if selection_mode != (parameters.get("selection_blocks") is True):
-        raise ValueError("selection_blocks=True is exactly the mesh-slice-serpentine-v4 contract")
+        raise ValueError("selection_blocks=True requires a mesh-slice-serpentine-v4/v4.1 contract")
     if not block_mode and trajectory.blocks is not None:
         raise ValueError("Block records are only valid for block-mode algorithm versions")
     blocks = _validated_blocks(trajectory) if block_mode else None

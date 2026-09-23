@@ -66,13 +66,14 @@ def history_rows(reconstruction, check=lambda: None):
 
 def generate(row, control):
     from femto.planning.mesh_slice_planner import plan_mesh_slice
+    from femto.planning.surface_trajectory import OPTIMIZED_SELECTION_ALGORITHM
     from femto.planning.trajectory_export import export_trajectory, load_trajectory
     manifest = region_manifest(row)
     old = previous_trajectories(manifest)
-    # v4: work blocks are the physician's selection components; each planned block is one chain.
+    # v4.1: work blocks remain the physician's selection components; each planned block is one chain.
     # Exports without selection intent are refused with an explicit message and keep old results.
     trajectory = plan_mesh_slice(manifest, connect_rows=True, block_planning=True, selection_blocks=True,
-                                 check=control.check)
+                                 selection_algorithm=OPTIMIZED_SELECTION_ALGORITHM, check=control.check)
     folder = export_trajectory(trajectory, manifest.parent, check=control.check, commit=control.publish)
     load_trajectory(folder, reproduce=False)
     summary = block_summary(trajectory)
@@ -230,7 +231,8 @@ def prepare_playback(row, reconstruction, control):
     from femto.planning.surface_trajectory import to_player_plan
     # Playback is viewing only: an accepted older-version file is hash-checked and mesh-validated
     # but not re-planned; regeneration stays an explicit user action.
-    trajectory = load_trajectory(row.get('target', row['source']), check=control.check, allow_older_versions=True)
+    trajectory = load_trajectory(row.get('target', row['source']), check=control.check,
+                                 reproduce=False, allow_older_versions=True)
     manifest = json.loads(Path(trajectory.source['region_manifest']).read_text(encoding='utf-8-sig'))
     model = FixedRGBModel(reconstruction, cancel=control)
     if (model.store.digest != trajectory.source['geometry_sha256'] or

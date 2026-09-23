@@ -388,7 +388,7 @@ def _selection_block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
     unconfirmed_count = stats.get("geometry_unconfirmed_pixel_count")
     unconfirmed_text = "未知（导出无逐像素支持记录）" if unconfirmed_count is None else str(unconfirmed_count)
     lines = [
-        f"工作块规划（v4，块 = 医师选择组件；网格连通性只作碎片诊断）：{stats['block_count']} 块，单链完成 {stats['planned_block_count']}，"
+        f"工作块规划（{trajectory.planner['algorithm_version'].rsplit('-', 1)[-1]}，块 = 医师选择组件；网格连通性只作碎片诊断）：{stats['block_count']} 块，单链完成 {stats['planned_block_count']}，"
         f"未完成 {stats['incomplete_block_count']}，无法规划 {stats['unplannable_block_count']}；"
         f"路线连续状态：{'全部块为连续单链' if stats['continuity_status']=='complete' else '存在未完成块（旧结果保留，不自动替换）'}",
         f"覆盖状态（与连续性分开检查）：{ {'complete': '完整', 'partial': '部分'}.get(stats['coverage_status'], '碎片完整但几何支持未知') }；"
@@ -401,6 +401,12 @@ def _selection_block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
         "落在其他已扫描行的名义半行距内（非治疗头宽度）；连接段不得推定治疗能量持续开启",
         "gap 原因×推断：" + json.dumps(report.get("gap_cause_counts", {}), ensure_ascii=False, sort_keys=True),
     ]
+    from femto.planning.surface_trajectory import OPTIMIZED_SELECTION_ALGORITHM
+    if trajectory.planner['algorithm_version'] == OPTIMIZED_SELECTION_ALGORITHM:
+        shortened = sum(fragment.get('link_methods', {}).get('surface_corridor_shortened', 0)
+                        for block in trajectory.blocks['items'] for fragment in block.get('fragments', []))
+        lines.append(f"可信三角面内缩短连接 {shortened} 处：扫描行、连接端点和成功边界折返保持不变；"
+                     "不是全局最短路或运动平滑，不补面、不消除缺失几何的覆盖需求。")
     unconfirmed = report.get("geometry_unconfirmed")
     if unconfirmed:
         lines.append("几何待确认像素按原因：" + json.dumps(unconfirmed["by_reason"], ensure_ascii=False, sort_keys=True)
@@ -474,6 +480,7 @@ def report_text(trajectory: SurfaceTrajectory) -> str:
     route_status = trajectory.route_diagram_status or {"status": "unknown"}
     return "\n".join([
         "三维表面蛇形扫描轨迹报告（研发）",
+        "算法版本：" + trajectory.planner['algorithm_version'],
         f"行 / 扫描段 / gap / 点：{stats['row_count']} / {stats['segment_count']} / {stats['gap_count']} / {stats['point_count']}",
         f"段内扫描长度：{stats['scan_length_m']*1000:.3f} mm（不含任何 gap 弦长）",
         f"贴面折返连接：{stats.get('connected_row_turns',0)} 处 / {stats.get('connector_length_m',0)*1000:.3f} mm",
@@ -487,7 +494,7 @@ def report_text(trajectory: SurfaceTrajectory) -> str:
         *_block_report_lines(trajectory),
         *quality_report_lines(trajectory),
         "平面等距不等于曲面等距；黄色行表示采样间距报告超出容差。",
-        "所有点仅证明受当前 TSDF Mesh 支持；gap 处没有规划运动。块内连接沿已验证的网格边界或网格边，单链不代表平滑。",
+        "所有点仅证明受当前 TSDF Mesh 支持；gap 处没有规划运动。块内连接保持已有三角面支持并避让未选区域，单链不代表平滑。",
         "没有姿态、速度、避障、自由空间过渡或机械臂接口。",
         "execution_ready=false；physical_accuracy_verified=false；不得用于临床精度、接触安全或设备执行声明。",
     ]) + "\n"

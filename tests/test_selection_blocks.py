@@ -18,7 +18,7 @@ from femto.annotation.selection_intent import build_selection_intent
 from femto.planning.mesh_slice_planner import Unplannable, main, plan_mesh_slice
 from femto.planning.route_motion import MotionPlayer
 from femto.planning.surface_trajectory import (
-    SELECTION_ALGORITHM, Gap, ScanSegment, SurfaceTrajectory, _point_on_triangle, face_components, to_player_plan,
+    OPTIMIZED_SELECTION_ALGORITHM, SELECTION_ALGORITHM, Gap, ScanSegment, SurfaceTrajectory, _point_on_triangle, face_components, to_player_plan,
     validate_trajectory,
 )
 from femto.planning.trajectory_export import current_algorithm_version, export_trajectory, load_trajectory
@@ -405,9 +405,11 @@ class SelectionBlockAcceptanceTests(unittest.TestCase):
             notice = product_algorithm_notice(played.planner["parameters"], played.planner["algorithm_version"])
             self.assertIn(SELECTION_ALGORITHM, notice)
             self.assertIn("重新选择并导出", notice)
-            self.assertIsNone(product_algorithm_notice({"connect_rows": True, "block_planning": True, "selection_blocks": True}, SELECTION_ALGORITHM))
+            parameters = {"connect_rows": True, "block_planning": True, "selection_blocks": True}
+            self.assertIn("不会自动升级", product_algorithm_notice(parameters, SELECTION_ALGORITHM))
+            self.assertIsNone(product_algorithm_notice(parameters, OPTIMIZED_SELECTION_ALGORITHM))
             self.assertEqual(current_algorithm_version({"connect_rows": True, "block_planning": True}), "mesh-slice-serpentine-v3.1")
-            self.assertEqual(current_algorithm_version({"connect_rows": True, "block_planning": True, "selection_blocks": True}), SELECTION_ALGORITHM)
+            self.assertEqual(current_algorithm_version(parameters), OPTIMIZED_SELECTION_ALGORITHM)
             # History regeneration on the old export refuses and keeps the old result untouched.
             row = history_row(tmp, legacy)
             before = (folder / "trajectory.json").read_bytes()
@@ -415,7 +417,7 @@ class SelectionBlockAcceptanceTests(unittest.TestCase):
                 generate(row, TaskControl())
             self.assertEqual((folder / "trajectory.json").read_bytes(), before)
             self.assertEqual(previous_trajectories(legacy), [folder])
-            # CLI: v4 by default writes an explicit blocked record; the legacy rule needs an explicit flag.
+            # CLI: v4.1 by default writes an explicit blocked record; the legacy rule needs an explicit flag.
             code = main([str(legacy), "--output", str(Path(tmp) / "cli")])
             self.assertEqual(code, 2)
             blocked = json.loads(next((Path(tmp) / "cli").glob("trajectory_*/trajectory_blocked.json")).read_text(encoding="utf-8"))

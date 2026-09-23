@@ -146,14 +146,17 @@ def _plan_fragment(vertices: np.ndarray, faces: np.ndarray, ids: np.ndarray, mes
                    components: np.ndarray, params: dict[str, Any], region: dict[str, Any], intrinsic: np.ndarray,
                    image_size: np.ndarray, check: Callable[[], None], budget: dict[str, int], row_offset: int,
                    block_index: int, labels: np.ndarray, classes: np.ndarray | None,
-                   allowed: np.ndarray) -> dict[str, Any]:
+                   allowed: np.ndarray, algorithm_version: str = SELECTION_ALGORITHM) -> dict[str, Any]:
     from femto.planning.mesh_slice_planner import _eligible_turns, _prepare_block
     from femto.planning.surface_row_turns import SurfaceLinks, connect_links
     prepared = _prepare_block(vertices, faces, ids, mesh_component, components, params, region, intrinsic,
                               image_size, check, budget, row_offset, block_index, allowed)
     step_m = params["sample_step_mm"] / 1000
     gaps = _refine_gap_causes(prepared["gaps"], prepared["segments"], labels, classes, intrinsic, image_size, step_m)
-    router = SurfaceLinks(SimpleNamespace(vertices=vertices, faces=faces), region, prepared["frame"], check, ids,
+    from femto.planning.surface_trajectory import OPTIMIZED_SELECTION_ALGORITHM
+    from femto.planning.surface_link_optimization import OptimizedSurfaceLinks
+    router_class = OptimizedSurfaceLinks if algorithm_version == OPTIMIZED_SELECTION_ALGORITHM else SurfaceLinks
+    router = router_class(SimpleNamespace(vertices=vertices, faces=faces), region, prepared["frame"], check, ids,
                           allowed=allowed)
     linked = connect_links(prepared["segments"], gaps, _eligible_turns(prepared["ordered_records"]), router,
                            step_m, check, e2=prepared["e2"], used=budget["points"])
@@ -262,7 +265,8 @@ def _depth(points: np.ndarray) -> dict[str, float]:
 
 
 def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: trimesh.Trimesh,
-                          params: dict[str, Any], check: Callable[[], None]) -> SurfaceTrajectory:
+                          params: dict[str, Any], check: Callable[[], None], *,
+                          algorithm_version: str = SELECTION_ALGORITHM) -> SurfaceTrajectory:
     from femto.planning.mesh_slice_planner import (
         Unplannable, _depth_statistics, _direction, _gap_detail, _level_segments, _merge_spacing, _pca_frame,
         _row_report, _source_record)
@@ -330,7 +334,7 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
             try:
                 planned = _plan_fragment(vertices, faces, fragment_ids, descriptor["mesh_component_id"], components,
                                          params, region, intrinsic, image_size, check, budget, offsets["row"],
-                                         block_index, labels, classes, allowed)
+                                         block_index, labels, classes, allowed, algorithm_version)
             except Unplannable as error:
                 fragment.update(status="unplannable", reason=error.reason, message=str(error))
                 if error.details:
@@ -554,7 +558,11 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
             "meaning": "selected pixels without measured mesh keep their coverage requirement; no XYZ was invented"},
         "missing_geometry_policy": intent["missing_geometry_policy"],
     }
-    planner = {"kind": "mesh_slice", "algorithm_version": SELECTION_ALGORITHM,
+    if algorithm_version != SELECTION_ALGORITHM:
+        block_record["link_rule"]["then"] += ("; locally shorten inside that existing triangle corridor using same-face "
+            "chords and manifold shared-edge crossings; preserve endpoints, check every edge against the selection "
+            "and forbidden polygons; never increase connector length; not global geodesic or smoothing")
+    planner = {"kind": "mesh_slice", "algorithm_version": algorithm_version,
                "parameters": dict(params, connect_rows=True, block_planning=True, selection_blocks=True),
                "sweep_frame": display_frame}
     source = dict(_source_record(manifest_path, manifest), selection_intent_sha256=intent["selected_mask_sha256"])
