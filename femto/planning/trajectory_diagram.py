@@ -467,6 +467,7 @@ def _block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
 
 
 def report_text(trajectory: SurfaceTrajectory) -> str:
+    from femto.planning.trajectory_quality import quality_report_lines
     stats = trajectory.statistics
     frame = trajectory.planner["sweep_frame"]
     spacing = trajectory.spacing_report.get("distribution")
@@ -484,8 +485,9 @@ def report_text(trajectory: SurfaceTrajectory) -> str:
         *_spacing_outlier_lines(trajectory),
         "参考 RGB 路线图：" + json.dumps(route_status, ensure_ascii=False, sort_keys=True),
         *_block_report_lines(trajectory),
+        *quality_report_lines(trajectory),
         "平面等距不等于曲面等距；黄色行表示采样间距报告超出容差。",
-        "所有点仅证明受当前 TSDF Mesh 支持；gap 处没有规划运动。贴面折返仅连接已验证连续网格边界。",
+        "所有点仅证明受当前 TSDF Mesh 支持；gap 处没有规划运动。块内连接沿已验证的网格边界或网格边，单链不代表平滑。",
         "没有姿态、速度、避障、自由空间过渡或机械臂接口。",
         "execution_ready=false；physical_accuracy_verified=false；不得用于临床精度、接触安全或设备执行声明。",
     ]) + "\n"

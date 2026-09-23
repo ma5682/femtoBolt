@@ -60,6 +60,8 @@ class TrajectoryVisualTests(unittest.TestCase):
             self.assertIn("surface_trajectory", names)
             report = (folder / "trajectory_report.txt").read_text(encoding="utf-8-sig")
             self.assertIn("execution_ready=false", report)
+            self.assertIn("路线规划检查", report)
+            self.assertIn("离散转角", report)
             files = json.loads((folder / "trajectory_files.json").read_text(encoding="utf-8"))
             self.assertNotIn("trajectory_files.json", files["files"])
             self.assertEqual(set(files["files"]), expected - {"trajectory_files.json"})

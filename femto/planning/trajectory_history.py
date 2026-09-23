@@ -208,6 +208,22 @@ def remove_previous(manifest, candidates, current):
     return removed, warnings
 
 
+def prepare_report(row, control):
+    """Verify an existing trajectory and calculate a current report without regenerating it."""
+    from femto.planning.trajectory_export import load_trajectory, product_algorithm_notice
+    from femto.planning.trajectory_diagram import report_text
+    if row.get('kind') != '三维表面轨迹':
+        raise ValueError('请先选择一条三维表面轨迹记录')
+    control.check()
+    trajectory = load_trajectory(row.get('target') or row['source'], check=control.check,
+                                 reproduce=False, allow_older_versions=True)
+    control.check()
+    text = report_text(trajectory)
+    notice = product_algorithm_notice(trajectory.planner.get('parameters', {}), trajectory.planner.get('algorithm_version'))
+    control.check()
+    return (notice + '\n\n' if notice else '') + text
+
+
 def prepare_playback(row, reconstruction, control):
     from femto.planning.trajectory_export import load_trajectory, product_algorithm_notice
     from femto.annotation.fixed_rgb_geometry import FixedRGBModel

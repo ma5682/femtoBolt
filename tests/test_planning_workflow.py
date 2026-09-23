@@ -90,6 +90,8 @@ class PlanningWorkflowTests(unittest.TestCase):
         with mock.patch('femto.planning.trajectory_history.history_rows',return_value=[track,region]), \
              mock.patch('femto.planning.trajectory_history.generate',return_value=dict(folder=self.folder,removed=[],warnings=[])) as generate, \
              mock.patch('femto.planning.trajectory_history.prepare_playback',return_value=('model','saved-region','plan')) as prepare, \
+             mock.patch('femto.planning.trajectory_history.prepare_report',return_value='verified report') as inspect, \
+             mock.patch('femto.planning.export_history._show_planning_report') as report_window, \
              mock.patch('femto.planning.path_presentation.show_presentation') as present:
             window=show_history(self.root,self.folder);pump()
             widgets=children(window);tree=next(w for w in widgets if w.winfo_class()=='Treeview')
@@ -100,6 +102,7 @@ class PlanningWorkflowTests(unittest.TestCase):
             self.assertEqual(str(generate_button['state']),'normal')
             self.assertEqual(str(generate_button['text']),'重新生成三维扫描轨迹')
             self.assertEqual(str(buttons['播放三维轨迹']['state']),'disabled')
+            self.assertEqual(str(buttons['查看规划检查']['state']),'disabled')
             generate_button.invoke();pump()
             self.assertEqual(generate.call_args.args[0]['source'],region['source'])
             tree.selection_set('0');tree.event_generate('<<TreeviewSelect>>');pump()
@@ -108,6 +111,10 @@ class PlanningWorkflowTests(unittest.TestCase):
             buttons['播放三维轨迹'].invoke();pump()
             self.assertEqual(prepare.call_args.args[0]['source'],track['source'])
             present.assert_called_once_with(window,'model','saved-region','plan')
+            self.assertEqual(str(buttons['查看规划检查']['state']),'normal')
+            buttons['查看规划检查'].invoke();pump()
+            self.assertEqual(inspect.call_args.args[0]['source'],track['source'])
+            report_window.assert_called_once_with(window,'verified report')
 
 
 if __name__=='__main__':unittest.main()

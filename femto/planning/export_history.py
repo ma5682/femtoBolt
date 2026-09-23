@@ -315,6 +315,20 @@ def show_region_library(parent: Any,reconstruction: Any) -> Any:
     return window
 
 
+def _show_planning_report(parent: Any, text: str) -> Any:
+    import tkinter as tk
+    from tkinter import ttk
+    window=tk.Toplevel(parent);window.title('路线规划检查');window.geometry('1000x720')
+    window.minsize(640,420)
+    frame=ttk.Frame(window);frame.pack(fill='both',expand=True,padx=12,pady=12)
+    content=tk.Text(frame,wrap='word');scroll=ttk.Scrollbar(frame,command=content.yview)
+    content.configure(yscrollcommand=scroll.set)
+    scroll.pack(side='right',fill='y');content.pack(fill='both',expand=True)
+    content.insert('1.0',text);content.configure(state='disabled')
+    ttk.Button(window,text='关闭',command=window.destroy).pack(pady=(0,12))
+    return window
+
+
 def show_history(parent: Any,reconstruction: Any) -> Any:
     """Product view: browse exported regions and their surface trajectories."""
     import os
@@ -351,6 +365,7 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
     generate_button=ttk.Button(trajectory_actions,text='生成三维扫描轨迹',state='disabled');generate_button.pack(side='left')
     diagram_button=ttk.Button(trajectory_actions,text='查看路线图',state='disabled');diagram_button.pack(side='left',padx=6)
     play_button=ttk.Button(trajectory_actions,text='播放三维轨迹',state='disabled');play_button.pack(side='left')
+    report_button=ttk.Button(trajectory_actions,text='查看规划检查',state='disabled');report_button.pack(side='left',padx=6)
     cancel_button=ttk.Button(trajectory_actions,text='取消任务',state='disabled');cancel_button.pack(side='right')
     from femto.planning.planning_io import TaskControl
     rows=[];mailbox=queue.Queue(maxsize=1);busy=False;control=TaskControl('读取历史区域导出');completion=None
@@ -373,6 +388,7 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
         preview.configure(text='预览轨迹' if row and row['kind']=='三维表面轨迹' else '预览区域模型')
         diagram_button.configure(state='normal' if valid and row.get('diagram') else 'disabled')
         play_button.configure(state='normal' if valid and row['kind']=='三维表面轨迹' else 'disabled')
+        report_button.configure(state='normal' if valid and row['kind']=='三维表面轨迹' else 'disabled')
         cancel_button.configure(state='normal' if busy and not control.committed else 'disabled')
         if row:
             files=('轨迹模型：' if row.get('kind')=='三维表面轨迹' else '区域模型：')+(asset.name if asset else '文件缺失')
@@ -458,6 +474,12 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
         if row and row.get('diagram'):
             try:os.startfile(str(row['diagram']))
             except OSError as error:messagebox.showerror('打开失败',str(error),parent=window)
+    def inspect_selected():
+        from femto.planning.trajectory_history import prepare_report
+        row=selected()
+        if row and row['kind']=='三维表面轨迹':
+            start('核验并检查历史轨迹',lambda c:prepare_report(row,c),
+                  lambda text:_show_planning_report(window,text))
     def poll():
         nonlocal busy,rows
         if not window.winfo_exists():return
@@ -473,6 +495,7 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
     preview.configure(command=open_preview);folder_button.configure(command=open_folder);refresh_button.configure(command=refresh)
     generate_button.configure(command=generate_selected);diagram_button.configure(command=open_diagram)
     play_button.configure(command=play_selected)
+    report_button.configure(command=inspect_selected)
     cancel_button.configure(command=lambda:control.set())
     tree.bind('<<TreeviewSelect>>',update);tree.bind('<Double-1>',open_preview)
     refresh();return window
