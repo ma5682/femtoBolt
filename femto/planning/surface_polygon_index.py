@@ -66,3 +66,18 @@ invocation, and no geometric acceptance result is reused across different edges.
         a, b = np.asarray(a), np.asarray(b)
         return any(polygon.contains(a) or polygon.contains(b) or polygon.intersects(a, b)
                    for polygon in self._polygons)
+
+    def boundary_outside_box(self, minimum: np.ndarray, maximum: np.ndarray) -> bool:
+        """Prove every boundary edge is rejected by the frozen segment-box test.
+
+        This does not prove that the box is outside a polygon: callers must have
+        separately established that the endpoints being connected are not inside.
+        Failure to prove separation says nothing about actual intersections.
+        """
+        minimum, maximum = np.asarray(minimum), np.asarray(maximum)
+        if (not np.isfinite([minimum, maximum]).all()
+                or np.any(minimum > maximum)):
+            return False
+        return all(np.all(np.any(np.maximum(minimum, polygon.minimum) >
+                                 np.minimum(maximum, polygon.maximum) + 1e-9, axis=1))
+                   for polygon in self._polygons)

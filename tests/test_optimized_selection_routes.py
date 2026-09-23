@@ -19,7 +19,8 @@ from femto.planning.mesh_slice_planner import main, plan_mesh_slice
 from femto.planning.planning_io import TaskControl
 from femto.planning.surface_row_turns import edge_pixels_allowed
 from femto.planning.surface_trajectory import (
-    FACE_PORTAL_SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM, SELECTION_ALGORITHM, Gap, ScanSegment,
+    BIDIRECTIONAL_SELECTION_ALGORITHM, FACE_PORTAL_SELECTION_ALGORITHM,
+    OPTIMIZED_SELECTION_ALGORITHM, SELECTION_ALGORITHM, Gap, ScanSegment,
     _length_split, _point_on_triangle, validate_trajectory,
 )
 from femto.planning.trajectory_export import export_trajectory, load_trajectory
@@ -186,7 +187,8 @@ class OptimizedSelectionRouteTests(unittest.TestCase):
     def test_cli_default_and_explicit_legacy_flags_dispatch_without_extra_parameters(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = make_export(tmp, selection=dict(mask=FULL))
-            for flag, version in (([], FACE_PORTAL_SELECTION_ALGORITHM),
+            for flag, version in (([], BIDIRECTIONAL_SELECTION_ALGORITHM),
+                                  (["--selection-v4-2"], FACE_PORTAL_SELECTION_ALGORITHM),
                                   (["--selection-v4-1"], OPTIMIZED_SELECTION_ALGORITHM),
                                   (["--selection-v4"], SELECTION_ALGORITHM),
                                   (["--mesh-blocks-v3"], "mesh-slice-serpentine-v3.1")):

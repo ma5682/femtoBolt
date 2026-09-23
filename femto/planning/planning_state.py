@@ -14,7 +14,8 @@ ALGORITHMS = {'raster': 'raster-v1', 'metric': 'mesh-contours-v1',
               'mesh_slice':'mesh-slice-serpentine-v1', 'mesh_slice_connected':'mesh-slice-serpentine-v2',
               'mesh_slice_blocks':'mesh-slice-serpentine-v3.1', 'mesh_slice_selection_blocks':'mesh-slice-serpentine-v4',
               'mesh_slice_selection_blocks_optimized':'mesh-slice-serpentine-v4.1',
-              'mesh_slice_selection_blocks_face_portals':'mesh-slice-serpentine-v4.2'}
+              'mesh_slice_selection_blocks_face_portals':'mesh-slice-serpentine-v4.2',
+              'mesh_slice_selection_blocks_bidirectional':'mesh-slice-serpentine-v4.3'}
 
 
 def trajectory_binding(trajectory: Any) -> dict[str, Any]:

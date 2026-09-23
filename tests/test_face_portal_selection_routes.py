@@ -18,7 +18,7 @@ from femto.annotation.selection_intent import component_labels
 from femto.planning.mesh_slice_planner import main, plan_mesh_slice
 from femto.planning.surface_row_turns import edge_pixels_allowed
 from femto.planning.surface_trajectory import (
-    FACE_PORTAL_SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM, SELECTION_ALGORITHM,
+    BIDIRECTIONAL_SELECTION_ALGORITHM, FACE_PORTAL_SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM, SELECTION_ALGORITHM,
     SELECTION_ALGORITHMS, Gap, ScanSegment, _point_on_triangle, validate_trajectory,
 )
 from femto.planning.trajectory_export import (
@@ -122,18 +122,18 @@ class FacePortalSelectionIntegrationTests(unittest.TestCase):
 
     def test_current_notice_distinguishes_retained_old_planners_from_missing_intent(self):
         parameters = dict(connect_rows=True, block_planning=True, selection_blocks=True)
-        self.assertEqual(current_algorithm_version(parameters), FACE_PORTAL_SELECTION_ALGORITHM)
-        self.assertIsNone(product_algorithm_notice(parameters, FACE_PORTAL_SELECTION_ALGORITHM))
-        for version in (SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM):
+        self.assertEqual(current_algorithm_version(parameters), BIDIRECTIONAL_SELECTION_ALGORITHM)
+        self.assertIsNone(product_algorithm_notice(parameters, BIDIRECTIONAL_SELECTION_ALGORITHM))
+        for version in (SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM, FACE_PORTAL_SELECTION_ALGORITHM):
             notice = product_algorithm_notice(parameters, version)
             self.assertIn(version, notice)
-            self.assertIn(FACE_PORTAL_SELECTION_ALGORITHM, notice)
+            self.assertIn(BIDIRECTIONAL_SELECTION_ALGORITHM, notice)
             self.assertIn('旧版算法重算', notice)
             self.assertIn('不会自动升级', notice)
             self.assertNotIn('重新选择', notice)
 
     def test_cli_legacy_switches_are_pairwise_exclusive(self):
-        for switches in combinations(('--selection-v4', '--selection-v4-1', '--mesh-blocks-v3'), 2):
+        for switches in combinations(('--selection-v4', '--selection-v4-1', '--selection-v4-2', '--mesh-blocks-v3'), 2):
             with self.subTest(switches=switches), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
                 main(['unused', *switches])
             self.assertEqual(error.exception.code, 2)

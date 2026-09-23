@@ -417,6 +417,8 @@ def connect_links(segments, gaps, eligible, router, step, check, *, e2, used=0):
             why=router.diagnose(left,right);detail['link_failure_reason']=why;failures[why]+=1
             kept.append(replace(gap,detail=detail));chains.append([dict(p) for p in following.points])
         if used+added>POINT_BUDGET:
-            raise ValueError(f'Trajectory including surface links exceeds {POINT_BUDGET} samples')
+            raise ValueError(f'Trajectory including surface links exceeds {POINT_BUDGET} samples '
+                             f'({used+added}; scan/existing {used}, added links {added}); '
+                             '总轨迹点数超限（不是搜索超限），未发布结果；请拆分工作区域后重新导出')
     return dict(chains=chains,kept=kept,connected=connected,methods=methods,failures=failures,
                 length=length,added=added)

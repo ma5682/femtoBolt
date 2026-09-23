@@ -18,7 +18,8 @@ from femto.annotation.selection_intent import build_selection_intent
 from femto.planning.mesh_slice_planner import Unplannable, main, plan_mesh_slice
 from femto.planning.route_motion import MotionPlayer
 from femto.planning.surface_trajectory import (
-    FACE_PORTAL_SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM, SELECTION_ALGORITHM,
+    BIDIRECTIONAL_SELECTION_ALGORITHM, FACE_PORTAL_SELECTION_ALGORITHM,
+    OPTIMIZED_SELECTION_ALGORITHM, SELECTION_ALGORITHM,
     Gap, ScanSegment, SurfaceTrajectory, _point_on_triangle, face_components, to_player_plan,
     validate_trajectory,
 )
@@ -412,9 +413,10 @@ class SelectionBlockAcceptanceTests(unittest.TestCase):
             parameters = {"connect_rows": True, "block_planning": True, "selection_blocks": True}
             self.assertIn("不会自动升级", product_algorithm_notice(parameters, SELECTION_ALGORITHM))
             self.assertIn("不会自动升级", product_algorithm_notice(parameters, OPTIMIZED_SELECTION_ALGORITHM))
-            self.assertIsNone(product_algorithm_notice(parameters, FACE_PORTAL_SELECTION_ALGORITHM))
+            self.assertIn("不会自动升级", product_algorithm_notice(parameters, FACE_PORTAL_SELECTION_ALGORITHM))
+            self.assertIsNone(product_algorithm_notice(parameters, BIDIRECTIONAL_SELECTION_ALGORITHM))
             self.assertEqual(current_algorithm_version({"connect_rows": True, "block_planning": True}), "mesh-slice-serpentine-v3.1")
-            self.assertEqual(current_algorithm_version(parameters), FACE_PORTAL_SELECTION_ALGORITHM)
+            self.assertEqual(current_algorithm_version(parameters), BIDIRECTIONAL_SELECTION_ALGORITHM)
             # History regeneration on the old export refuses and keeps the old result untouched.
             row = history_row(tmp, legacy)
             before = (folder / "trajectory.json").read_bytes()

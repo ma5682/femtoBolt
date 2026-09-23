@@ -15,7 +15,8 @@ import numpy as np
 import trimesh
 
 from femto.planning.surface_trajectory import (
-    BLOCK_ALGORITHM, BLOCKS_SCHEMA, FACE_PORTAL_SELECTION_ALGORITHM, Gap, OPTIMIZED_SELECTION_ALGORITHM, POINT_BUDGET,
+    BIDIRECTIONAL_SELECTION_ALGORITHM, BLOCK_ALGORITHM, BLOCKS_SCHEMA, FACE_PORTAL_SELECTION_ALGORITHM,
+    Gap, OPTIMIZED_SELECTION_ALGORITHM, POINT_BUDGET,
     SELECTION_ALGORITHM, SELECTION_ALGORITHMS, ScanSegment, SurfaceTrajectory,
     face_components, face_list_sha256, validate_trajectory,
 )
@@ -1049,9 +1050,9 @@ def plan_mesh_slice(export_dir_or_manifest: str | Path, *, row_spacing_mm: float
                     check: Callable[[], None] = lambda: None) -> SurfaceTrajectory:
     """Generate only measured-mesh scan samples; no gap interpolation or motion.
 
-    `selection_blocks=True` (v4/v4.1/v4.2) needs a region export that carries the physician's selection
+    `selection_blocks=True` (v4/v4.1/v4.2/v4.3) needs a region export that carries the physician's selection
     intent: blocks are selection components, each planned block is one continuous chain.
-    The API defaults to frozen v4; product entry points explicitly select v4.2.
+    The API defaults to frozen v4; product entry points explicitly select v4.3.
     Without selection blocks, `block_planning=True` keeps the v3.1 mesh-connectivity blocks."""
     params = _parameters(locals())
     if type(connect_rows) is not bool:
@@ -1094,11 +1095,13 @@ def main(argv: list[str] | None = None) -> int:
                         choices=("top_left", "top_right", "bottom_left", "bottom_right"))
     legacy = parser.add_mutually_exclusive_group()
     legacy.add_argument("--mesh-blocks-v3", action="store_true",
-                        help="Explicit legacy rule: blocks by mesh connectivity (v3.1) instead of selection components (v4.2)")
+                        help="Explicit legacy rule: blocks by mesh connectivity (v3.1) instead of selection components (v4.3)")
     legacy.add_argument("--selection-v4", action="store_true",
-                        help="Explicit frozen selection-block planner (v4); default is v4.2")
+                        help="Explicit frozen selection-block planner (v4); default is v4.3")
     legacy.add_argument("--selection-v4-1", action="store_true",
-                        help="Explicit frozen corridor-shortening planner (v4.1); default is v4.2")
+                        help="Explicit frozen corridor-shortening planner (v4.1); default is v4.3")
+    legacy.add_argument("--selection-v4-2", action="store_true",
+                        help="Explicit retained unidirectional face-portal planner (v4.2); default is v4.3")
     args = parser.parse_args(argv)
     direction: Any = args.direction
     if direction not in ("auto", "w0_x", "w0_y"):
@@ -1113,7 +1116,8 @@ def main(argv: list[str] | None = None) -> int:
                                      block_planning=True, selection_blocks=not args.mesh_blocks_v3,
                                      selection_algorithm=(SELECTION_ALGORITHM if args.mesh_blocks_v3 or args.selection_v4
                                                           else OPTIMIZED_SELECTION_ALGORITHM if args.selection_v4_1
-                                                          else FACE_PORTAL_SELECTION_ALGORITHM))
+                                                          else FACE_PORTAL_SELECTION_ALGORITHM if args.selection_v4_2
+                                                          else BIDIRECTIONAL_SELECTION_ALGORITHM))
         folder = export_trajectory(trajectory, output)
     except (OSError, ValueError, TypeError, KeyError, IndexError) as error:
         folder = export_blocked(output, args.source, error, details=getattr(error, "details", None))
