@@ -13,8 +13,9 @@ from femto.planning.planning_io import TaskControl
 
 class TrajectoryHistoryTests(unittest.TestCase):
     def setup_export(self, folder):
-        # The product export carries the physician's selection intent (one component over the mesh).
-        manifest=make_export(folder,selection=dict(mask=pixel_mask((0,0,199,199))))
+        # The product export carries the physician's selection intent (one component painted exactly
+        # over the measured surface, so the result is complete and may replace the old one).
+        manifest=make_export(folder,selection=dict(mask=pixel_mask((0,0,199,199)),trim_to_support=True))
         data=json.loads(manifest.read_text())
         annotations=Path(folder)/'annotations.json'
         annotations.write_text(json.dumps({'regions':[dict(data['region'],region_manifest_file=manifest.name)]}))

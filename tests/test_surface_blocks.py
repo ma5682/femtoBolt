@@ -299,7 +299,7 @@ class BlockStatusTests(unittest.TestCase):
             from tests.test_mesh_slice_planner import pixel_mask
             # Two separately painted areas (v4 selection components), one per patch.
             manifest = make_export(tmp, two_patches(),
-                                   selection=dict(mask=pixel_mask((80, 80, 98, 120), (102, 80, 120, 120))))
+                                   selection=dict(mask=pixel_mask((80, 80, 98, 120), (102, 80, 120, 120)), trim_to_support=True))
             data = json.loads(manifest.read_text())
             annotations = Path(tmp) / "annotations.json"
             annotations.write_text(json.dumps({"regions": [dict(data["region"], region_manifest_file=manifest.name)]}))

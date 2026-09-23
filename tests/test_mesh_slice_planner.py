@@ -62,29 +62,38 @@ def pixel_mask(*boxes):
 
 def selected_faces(mesh, mask, depth=None):
     """Whole triangles whose visible centroid pixel lies in `mask`, via the real FixedProjection gate."""
+    projection = fixture_projection(mesh, depth)
+    return projection.region([], mask=mask), projection
+
+
+def fixture_projection(mesh, depth=None):
     import open3d as o3d
     from femto.annotation.fixed_rgb_geometry import FixedProjection
     legacy = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(np.asarray(mesh.vertices, float)),
                                        o3d.utility.Vector3iVector(np.asarray(mesh.faces, np.int32)))
     depth = np.zeros((IMAGE_SIZE[1], IMAGE_SIZE[0]), np.uint16) if depth is None else np.asarray(depth, np.uint16)
-    projection = FixedProjection(legacy, np.asarray(INTRINSIC), depth)
-    return projection.region([], mask=mask), projection
+    return FixedProjection(legacy, np.asarray(INTRINSIC), depth)
 
 
 def make_export(root, mesh=None, *, forbidden=None, selection=None, depth=None):
     """Synthetic femto-region-export-v1 manifest.
 
     Without `selection` the whole mesh is the region (legacy polygon rule, no intent record).
-    With `selection` = dict(mask, forbidden_mask=None, method='work_only') the region PLY holds
-    only the faces the physician mask selects (same rule as the product page), and the manifest
-    carries `selection_intent` + `selection_support` exactly like a real v4-capable export."""
+    With `selection` = dict(mask, forbidden_mask=None, method='work_only', trim_to_support=False)
+    the region PLY holds only the faces the physician mask selects (same rule as the product
+    page), and the manifest carries `selection_intent` + `selection_support` exactly like a real
+    v4-capable export. `trim_to_support=True` keeps only mask pixels the mesh supports, i.e. a
+    physician painting exactly the measured surface (no geometry-unconfirmed pixels)."""
     root = Path(root)
     mesh = mesh or grid_mesh()
     region_extra = {}
     if selection is not None:
         from femto.annotation.selection_intent import SELECTION_RULE, build_selection_intent, build_selection_support
         mask = np.asarray(selection["mask"], bool)
-        ids, projection = selected_faces(mesh, mask, depth)
+        projection = fixture_projection(mesh, depth)
+        if selection.get("trim_to_support"):
+            mask = mask & projection.valid
+        ids = projection.region([], mask=mask)
         if not ids:
             raise ValueError("selection mask selects no face of the fixture mesh")
         subset = trimesh.Trimesh(vertices=np.asarray(mesh.vertices), faces=np.asarray(mesh.faces)[ids], process=False)

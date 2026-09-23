@@ -145,14 +145,16 @@ def _refine_gap_causes(gaps: list[Gap], segments: list[ScanSegment], labels: np.
 def _plan_fragment(vertices: np.ndarray, faces: np.ndarray, ids: np.ndarray, mesh_component: int,
                    components: np.ndarray, params: dict[str, Any], region: dict[str, Any], intrinsic: np.ndarray,
                    image_size: np.ndarray, check: Callable[[], None], budget: dict[str, int], row_offset: int,
-                   block_index: int, labels: np.ndarray, classes: np.ndarray | None) -> dict[str, Any]:
+                   block_index: int, labels: np.ndarray, classes: np.ndarray | None,
+                   allowed: np.ndarray) -> dict[str, Any]:
     from femto.planning.mesh_slice_planner import _eligible_turns, _prepare_block
     from femto.planning.surface_row_turns import SurfaceLinks, connect_links
     prepared = _prepare_block(vertices, faces, ids, mesh_component, components, params, region, intrinsic,
-                              image_size, check, budget, row_offset, block_index)
+                              image_size, check, budget, row_offset, block_index, allowed)
     step_m = params["sample_step_mm"] / 1000
     gaps = _refine_gap_causes(prepared["gaps"], prepared["segments"], labels, classes, intrinsic, image_size, step_m)
-    router = SurfaceLinks(SimpleNamespace(vertices=vertices, faces=faces), region, prepared["frame"], check, ids)
+    router = SurfaceLinks(SimpleNamespace(vertices=vertices, faces=faces), region, prepared["frame"], check, ids,
+                          allowed=allowed)
     linked = connect_links(prepared["segments"], gaps, _eligible_turns(prepared["ordered_records"]), router,
                            step_m, check, e2=prepared["e2"], used=budget["points"])
     budget["points"] += linked["added"]
@@ -304,6 +306,7 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
         fragments = (_fragment_descriptors(vertices, faces, ids, components, intrinsic, image_size, corner)
                      if len(ids) else [])
         fragment_records: list[dict[str, Any]] = []
+        allowed = labels == cid + 1  # every sample and every edge must project onto this block's own pixels
         block_chains: list[list[dict[str, Any]]] = []
         block_kept: list[Gap] = []
         totals = Counter()
@@ -327,7 +330,7 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
             try:
                 planned = _plan_fragment(vertices, faces, fragment_ids, descriptor["mesh_component_id"], components,
                                          params, region, intrinsic, image_size, check, budget, offsets["row"],
-                                         block_index, labels, classes)
+                                         block_index, labels, classes, allowed)
             except Unplannable as error:
                 fragment.update(status="unplannable", reason=error.reason, message=str(error))
                 if error.details:
@@ -516,10 +519,13 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
                        "tie_break": "selection component id ascending (raster order of first selected pixel)"},
         "fragment_rule": "mesh fragments of one block are visited in reference-image reading order; the seam "
                          "between two measured fragments is a disconnected_surface gap, never bridged",
-        "link_rule": {"first": "frozen v2/v3.1 boundary-band turn for adjacent rows",
+        "link_rule": {"first": "frozen v2/v3.1 boundary-band turn for adjacent rows, accepted only if every edge stays on the block's selected pixels",
                       "then": "shortest path along the fragment's own mesh edges; every edge lies on one selected "
-                              "triangle, stays inside the reference image and never touches a painted forbidden polygon",
+                              "triangle, stays inside the reference image, never touches a painted forbidden polygon and "
+                              "projects only onto this block's selected pixels (sampled at least once per pixel)",
                       "never": "across mesh gaps, explicit unselected pixels, other fragments or other blocks"},
+        "scan_rule": "scan samples projecting onto pixels outside the block's selection component are dropped; "
+                     "no scan or connector edge enters explicitly unselected pixels",
         "selection_binding": {"intent_sha256": intent["selected_mask_sha256"],
                               "support_sha256": None if support is None else support["class_sha256"],
                               "component_count": len(intent["components"]),
@@ -734,6 +740,27 @@ def check_selection_blocks(trajectory: SurfaceTrajectory, blocks: list[dict[str,
     _check_selection_binding(trajectory, blocks, segments, vertices, faces, region, binding)
 
 
+def check_projection_inside_selection(segments: list[ScanSegment], blocks: list[dict[str, Any]], labels: np.ndarray,
+                                      intrinsic: np.ndarray, image_size: np.ndarray) -> None:
+    """Every scan/connector point and every edge between consecutive points must project onto the
+    pixels of its own selection component: never onto unselected pixels or another block."""
+    from femto.planning.surface_row_turns import edge_pixels_allowed
+    from femto.planning.mesh_slice_planner import _project
+    for segment in segments:
+        allowed = labels == blocks[segment.block_index]["component_id"] + 1
+        previous = None
+        for point in segment.points:
+            pixel = _project(np.asarray(point["xyz_m"], dtype=np.float64), intrinsic, image_size)
+            if pixel is None:
+                raise ValueError("Trajectory point projects outside the reference image")
+            u, v = int(np.floor(pixel[0] + .5)), int(np.floor(pixel[1] + .5))
+            if not (0 <= u < allowed.shape[1] and 0 <= v < allowed.shape[0] and allowed[v, u]):
+                raise ValueError("Trajectory point projects onto an explicitly unselected pixel or another block")
+            if previous is not None and not edge_pixels_allowed(previous, point["xyz_m"], intrinsic, image_size, allowed):
+                raise ValueError("Trajectory edge crosses explicitly unselected pixels or another block")
+            previous = point["xyz_m"]
+
+
 def _check_selection_binding(trajectory: SurfaceTrajectory, blocks: list[dict[str, Any]], segments: list[ScanSegment],
                              vertices: np.ndarray, faces: np.ndarray, region: dict[str, Any], binding: dict[str, Any]) -> None:
     from femto.planning.mesh_slice_planner import Unplannable, _forbidden_polygons
@@ -788,3 +815,4 @@ def _check_selection_binding(trajectory: SurfaceTrajectory, blocks: list[dict[st
                 if state == 1:
                     raise ValueError("Connector edge leaves the reference image")
             previous = point["xyz_m"]
+    check_projection_inside_selection(segments, blocks, labels, intrinsic, image_size)

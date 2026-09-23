@@ -335,21 +335,42 @@ def _pixel_extent(points: np.ndarray, intrinsic: np.ndarray,
             [float(u[ok].mean()), float(v[ok].mean())])
 
 
+def _pixel_allowed(pixel: list[float] | None, allowed: np.ndarray | None) -> bool:
+    """True when the sample projects inside the image and (if given) onto an allowed pixel."""
+    if pixel is None:
+        return False
+    if allowed is None:
+        return True
+    height, width = allowed.shape
+    u, v = int(np.floor(pixel[0] + .5)), int(np.floor(pixel[1] + .5))
+    return 0 <= u < width and 0 <= v < height and bool(allowed[v, u])
+
+
 def _split_supported(samples: list[tuple[np.ndarray, int]], intrinsic: np.ndarray,
-                     image_size: np.ndarray, min_length_m: float) -> tuple[list[list[dict[str, Any]]], int]:
+                     image_size: np.ndarray, min_length_m: float,
+                     allowed: np.ndarray | None = None) -> tuple[list[list[dict[str, Any]]], int]:
+    """Runs of samples inside the image and, when `allowed` is given, on allowed (selected) pixels.
+
+    With `allowed`, the edge between two consecutive samples is also checked at pixel resolution,
+    so a run never steps across a one-pixel unselected strip or a jagged mask border."""
+    from femto.planning.surface_row_turns import edge_pixels_allowed
     runs: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     dropped = 0
     for point, face in samples:
         pixel = _project(point, intrinsic, image_size)
-        if pixel is None:
+        if not _pixel_allowed(pixel, allowed):
             if current:
                 runs.append(current)
             current = []
             dropped += 1
-        else:
-            current.append({"xyz_m": [float(v) for v in point], "triangle_index": int(face),
-                            "geometry_support": "measured_mesh", "pixel": pixel})
+            continue
+        if current and allowed is not None and not edge_pixels_allowed(current[-1]["xyz_m"], point, intrinsic, image_size, allowed):
+            runs.append(current)
+            current = []
+            dropped += 1
+        current.append({"xyz_m": [float(v) for v in point], "triangle_index": int(face),
+                        "geometry_support": "measured_mesh", "pixel": pixel})
     if current:
         runs.append(current)
     retained = []
@@ -474,9 +495,13 @@ def _gap_detail(inferred: str) -> dict[str, Any]:
 def _slice_rows(sliced: trimesh.Trimesh, face_lookup: np.ndarray | None, components: np.ndarray,
                 origin: np.ndarray, e2: np.ndarray, positions: np.ndarray, params: dict[str, Any],
                 intrinsic: np.ndarray, image_size: np.ndarray, check: Callable[[], None],
-                budget: dict[str, int], block_index: int | None = None
+                budget: dict[str, int], block_index: int | None = None,
+                allowed: np.ndarray | None = None
                 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Slice one surface at every row position; the shared budget counts every retained sample."""
+    """Slice one surface at every row position; the shared budget counts every retained sample.
+
+    `allowed` (v4) is the pixel mask of this block's selection component: samples projecting
+    onto any other pixel are dropped, so no scan segment enters explicitly unselected pixels."""
     spacing_m = params["row_spacing_mm"] / 1000
     step_m = params["sample_step_mm"] / 1000
     records_by_slice: list[dict[str, Any]] = []
@@ -506,9 +531,10 @@ def _slice_rows(sliced: trimesh.Trimesh, face_lookup: np.ndarray | None, compone
                 continue
             samples = _resample(polyline, edge_faces, step_m)
             runs, unsupported = _split_supported(samples, intrinsic, image_size,
-                                                  params["min_segment_mm"] / 1000)
+                                                  params["min_segment_mm"] / 1000, allowed)
             row_dropped += unsupported
-            dropped_fragments.extend(dropped(slice_index, None, "outside_reference_image_or_short_supported_run")
+            dropped_fragments.extend(dropped(slice_index, None, "outside_reference_image_or_selection_or_short_supported_run" if allowed is not None
+                                             else "outside_reference_image_or_short_supported_run")
                                      for _ in range(unsupported))
             if branched:
                 dropped_fragments.append(dropped(slice_index, None, "branched_slice_split"))
@@ -759,7 +785,7 @@ def _block_descriptors(vertices: np.ndarray, faces: np.ndarray, components: np.n
 def _prepare_block(vertices: np.ndarray, faces: np.ndarray, ids: np.ndarray, component: int, components: np.ndarray,
                    params: dict[str, Any], region: dict[str, Any], intrinsic: np.ndarray, image_size: np.ndarray,
                    check: Callable[[], None], budget: dict[str, int], row_offset: int,
-                   block_index: int) -> dict[str, Any]:
+                   block_index: int, allowed: np.ndarray | None = None) -> dict[str, Any]:
     """Frame, rows, ordered segments and raw gaps of one connected face set (shared by v3.1 and v4)."""
     spacing_m = params["row_spacing_mm"] / 1000
     step_m = params["sample_step_mm"] / 1000
@@ -771,7 +797,7 @@ def _prepare_block(vertices: np.ndarray, faces: np.ndarray, ids: np.ndarray, com
     if not len(positions):
         raise Unplannable("narrower_than_row_spacing", "Block is narrower than one row spacing")
     records_by_slice, dropped_fragments = _slice_rows(block_mesh, ids, components, origin, e2, positions, params,
-                                                      intrinsic, image_size, check, budget, block_index)
+                                                      intrinsic, image_size, check, budget, block_index, allowed)
     if not records_by_slice:
         raise Unplannable("no_supported_segment", "No supported scan segment was produced",
                           details={"dropped_fragments": dropped_fragments})

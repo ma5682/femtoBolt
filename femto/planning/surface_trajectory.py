@@ -29,7 +29,7 @@ ROW_TURN_FAILURE_REASONS = {
 }
 LINK_FAILURE_REASONS = {
     "disconnected_measured_surface", "forbidden_blocked", "outside_reference_image",
-    "no_surface_path", "budget_exceeded",
+    "explicit_unselected_blocked", "no_surface_path", "budget_exceeded",
 }
 BLOCKS_SCHEMA = "femto-surface-trajectory-blocks-v1"
 SELECTION_BLOCKS_SCHEMA = "femto-surface-trajectory-blocks-v2"

@@ -199,19 +199,60 @@ def connect_row_turns(trajectory, mesh, region, eligible, check):
     return result
 
 
+def segment_pixels(a, b, limit=100000):
+    """Exact set of reference pixels a projected straight segment passes through (supercover walk).
+
+    Pixel (u, v) owns the cell [u-0.5, u+0.5) × [v-0.5, v+0.5), the same rounding every
+    sample uses. A sub-segment's pixels are always a subset of the full segment's pixels, so
+    planner, scan splitting and validator agree no matter how an edge is subdivided."""
+    x0,y0=float(a[0]),float(a[1]);x1,y1=float(b[0]),float(b[1])
+    cx,cy=int(math.floor(x0+.5)),int(math.floor(y0+.5));ex,ey=int(math.floor(x1+.5)),int(math.floor(y1+.5))
+    pixels=[(cx,cy)]
+    dx,dy=x1-x0,y1-y0
+    stepx=1 if dx>0 else -1;stepy=1 if dy>0 else -1
+    tx=((cx+.5*stepx)-x0)/dx if dx else math.inf
+    ty=((cy+.5*stepy)-y0)/dy if dy else math.inf
+    dtx=abs(1./dx) if dx else math.inf;dty=abs(1./dy) if dy else math.inf
+    while (cx,cy)!=(ex,ey):
+        if len(pixels)>limit:raise ValueError('Projected segment is too long for the reference image')
+        if abs(tx-ty)<=1e-12:
+            # Exact corner crossing: keep both side cells so a diagonal step never skips a pixel.
+            pixels.append((cx+stepx,cy));pixels.append((cx,cy+stepy))
+            cx+=stepx;cy+=stepy;tx+=dtx;ty+=dty
+        elif tx<ty:cx+=stepx;tx+=dtx
+        else:cy+=stepy;ty+=dty
+        pixels.append((cx,cy))
+    return pixels
+
+
+def edge_pixels_allowed(p, q, k, size, allowed):
+    """Every pixel the 3D edge p→q projects onto lies inside the image and on an allowed pixel."""
+    from femto.planning.mesh_slice_planner import _project
+    p=np.asarray(p,float);q=np.asarray(q,float)
+    ends=[_project(v,k,size) for v in (p,q)]
+    if any(v is None for v in ends):return False
+    if allowed is None:return True
+    height,width=allowed.shape
+    for u,v in segment_pixels(ends[0],ends[1]):
+        if not (0<=u<width and 0<=v<height and allowed[v,u]):return False
+    return True
+
+
 class SurfaceLinks:
     """v4 on-surface connectors inside one mesh fragment of a selection block.
 
     Adjacent rows first try the frozen v2/v3.1 boundary-band turn (identical output where it
-    succeeds). Every other link, and every failed boundary turn, is routed as the shortest path
-    along the fragment's own mesh edges: each connector edge lies on one selected triangle, no
-    edge crosses a painted forbidden polygon, no edge leaves the reference image. No edge is
-    ever invented across a mesh gap, so links between mesh fragments never exist here."""
+    succeeds and stays on the block's selected pixels). Every other link, and every failed
+    boundary turn, is routed as the shortest path along the fragment's own mesh edges: each
+    connector edge lies on one selected triangle, no edge crosses a painted forbidden polygon,
+    no edge leaves the reference image and every pixel it projects onto belongs to this block's
+    selection component (`allowed`). No edge is ever invented across a mesh gap, so links
+    between mesh fragments never exist here."""
 
-    def __init__(self, mesh, region, frame, check, face_ids):
+    def __init__(self, mesh, region, frame, check, face_ids, allowed=None):
         from femto.planning.mesh_slice_planner import _forbidden_polygons
         self.vertices=np.asarray(mesh.vertices,float);self.faces=np.asarray(mesh.faces)
-        self.check=check;self.frame=frame
+        self.check=check;self.frame=frame;self.allowed=allowed
         view=region['view_reference']
         self.k=np.asarray(view['undistorted_intrinsic']);self.size=np.asarray(view['image_size'])
         self.polygons=_forbidden_polygons(region)
@@ -225,7 +266,7 @@ class SurfaceLinks:
                 key=tuple(sorted((int(a),int(b))))
                 if key not in edges or index<edges[key]:edges[key]=index
         self.edges=[(a,b,face) for (a,b),face in sorted(edges.items())]
-        # Forbidden / image checks depend only on the edge, so they are evaluated once.
+        # Forbidden / image / selection checks depend only on the edge, so they are evaluated once.
         self.edge_state={}
         for index,(a,b,face) in enumerate(self.edges):
             if index%256==0:check()
@@ -237,7 +278,7 @@ class SurfaceLinks:
         for node in self.adjacency:self.adjacency[node].sort()
 
     def _state(self, p, q):
-        """0 allowed, 1 outside the reference image, 2 crosses or touches a forbidden polygon."""
+        """0 allowed, 1 outside the reference image, 2 forbidden polygon, 3 explicitly unselected pixels."""
         from femto.planning.mesh_slice_planner import _project, _point_in_polygon
         uv=[_project(v,self.k,self.size) for v in (p,q)]
         if any(v is None for v in uv):return 1
@@ -245,31 +286,33 @@ class SurfaceLinks:
         for polygon in self.polygons:
             if _point_in_polygon(u,polygon) or _point_in_polygon(v,polygon):return 2
             if any(_intersects(u,v,c,d) for c,d in zip(polygon,np.roll(polygon,-1,axis=0))):return 2
+        if not edge_pixels_allowed(p,q,self.k,self.size,self.allowed):return 3
         return 0
 
-    def _allowed(self, state, *, ignore_forbidden, ignore_image):
-        return state==0 or (state==1 and ignore_image) or (state==2 and ignore_forbidden)
+    def _allowed(self, state, *, ignore_forbidden, ignore_image, ignore_selection=False):
+        return (state==0 or (state==1 and ignore_image) or (state==2 and ignore_forbidden)
+                or (state==3 and ignore_selection))
 
-    def _endpoint_links(self, node, point, face, *, ignore_forbidden, ignore_image):
+    def _endpoint_links(self, node, point, face, *, ignore_forbidden, ignore_image, ignore_selection=False):
         links=[]
         for vertex in self.faces[face]:
             vertex=int(vertex);q=self.vertices[vertex]
             state=self._state(point,q)
-            if self._allowed(state,ignore_forbidden=ignore_forbidden,ignore_image=ignore_image):
+            if self._allowed(state,ignore_forbidden=ignore_forbidden,ignore_image=ignore_image,ignore_selection=ignore_selection):
                 links.append((vertex,float(np.linalg.norm(q-point)),int(face)))
         return sorted(links)
 
-    def _search(self, left, right, *, ignore_forbidden=False, ignore_image=False):
+    def _search(self, left, right, *, ignore_forbidden=False, ignore_image=False, ignore_selection=False):
         a=np.asarray(left['xyz_m'],float);b=np.asarray(right['xyz_m'],float)
         fa,fb=int(left['triangle_index']),int(right['triangle_index'])
         if fa not in self.member or fb not in self.member:return None
+        flags=dict(ignore_forbidden=ignore_forbidden,ignore_image=ignore_image,ignore_selection=ignore_selection)
         if fa==fb:
             state=self._state(a,b)
-            if self._allowed(state,ignore_forbidden=ignore_forbidden,ignore_image=ignore_image):
+            if self._allowed(state,**flags):
                 return [(-2,-1,fa)]
-        start=self._endpoint_links(-2,a,fa,ignore_forbidden=ignore_forbidden,ignore_image=ignore_image)
-        finish={vertex:(length,face) for vertex,length,face in
-                self._endpoint_links(-1,b,fb,ignore_forbidden=ignore_forbidden,ignore_image=ignore_image)}
+        start=self._endpoint_links(-2,a,fa,**flags)
+        finish={vertex:(length,face) for vertex,length,face in self._endpoint_links(-1,b,fb,**flags)}
         # A* with the straight-line distance to the target: admissible for Euclidean edge lengths,
         # so the result is the same shortest edge path Dijkstra would return, found much faster.
         def remaining(node):return 0. if node==-1 else float(np.linalg.norm(self.vertices[node]-b))
@@ -282,8 +325,7 @@ class SurfaceLinks:
             if distance!=distances.get(node):continue
             if node==-1:break
             candidates=[(other,length,face) for other,length,face in self.adjacency[node]
-                        if self._allowed(self.edge_state[tuple(sorted((node,other)))],
-                                         ignore_forbidden=ignore_forbidden,ignore_image=ignore_image)]
+                        if self._allowed(self.edge_state[tuple(sorted((node,other)))],**flags)]
             if node in finish:candidates.append((-1,finish[node][0],finish[node][1]))
             for nxt,length,face in candidates:
                 cost=distance+length
@@ -315,11 +357,21 @@ class SurfaceLinks:
             return None
         return samples or None
 
+    def _samples_on_selection(self, left, samples):
+        """Boundary-band turns were routed without the selection mask: re-check every edge."""
+        if self.allowed is None:return True
+        previous=np.asarray(left['xyz_m'],float)
+        for sample in samples:
+            xyz=np.asarray(sample['xyz_m'],float)
+            if not edge_pixels_allowed(previous,xyz,self.k,self.size,self.allowed):return False
+            previous=xyz
+        return True
+
     def route(self, left, right, step, e2, *, adjacent_rows):
         """(samples, method) or (None, None); boundary band first for adjacent rows."""
         if adjacent_rows:
             samples=self.boundary.route(left,right,step,e2)
-            if samples:return samples,'boundary_band'
+            if samples and self._samples_on_selection(left,samples):return samples,'boundary_band'
         path=self._search(left,right)
         if path is None:return None,None
         samples=self._samples(path,left,right,step)
@@ -329,6 +381,7 @@ class SurfaceLinks:
         """Why no on-surface link exists; diagnostic only, never a decision."""
         if self._search(left,right,ignore_forbidden=True):return 'forbidden_blocked'
         if self._search(left,right,ignore_forbidden=True,ignore_image=True):return 'outside_reference_image'
+        if self._search(left,right,ignore_forbidden=True,ignore_image=True,ignore_selection=True):return 'explicit_unselected_blocked'
         return 'no_surface_path'
 
 

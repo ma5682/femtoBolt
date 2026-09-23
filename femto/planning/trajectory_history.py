@@ -76,14 +76,33 @@ def generate(row, control):
     folder = export_trajectory(trajectory, manifest.parent, check=control.check, commit=control.publish)
     load_trajectory(folder, reproduce=False)
     summary = block_summary(trajectory)
-    if summary is not None and not summary['complete']:
-        # Unfinished blocks: the new partial result is published for preview, but the old valid
-        # trajectory is neither replaced in the history nor deleted (user decision pending).
+    if not result_complete(trajectory):
+        # Unfinished work (broken chain, unplannable block, uncovered fragment or geometry-unconfirmed
+        # pixels): the new partial result is published for preview, but the old valid trajectory is
+        # neither replaced in the history nor deleted (user decision pending).
         return dict(folder=folder, removed=[], warnings=[], blocks=summary, kept_previous=[str(p) for p in old],
                     cleanup='skipped_incomplete_result')
     removed, warnings = remove_previous(manifest, old, folder)
     return dict(folder=folder, removed=removed, warnings=warnings, blocks=summary, kept_previous=[],
                 cleanup='done')
+
+
+def result_complete(payload_or_trajectory):
+    """One rule for "the new result may replace the old one": every block is a single chain AND
+    coverage is complete (no unplannable block, no uncovered mesh fragment, no geometry-unconfirmed
+    selected pixel). Continuity alone is never enough. v1–v3.1 files have no such record and count
+    as complete for the legacy cleanup flow."""
+    if isinstance(payload_or_trajectory, dict):
+        stats = payload_or_trajectory.get('statistics'); blocks = payload_or_trajectory.get('blocks')
+    else:
+        stats = payload_or_trajectory.statistics; blocks = payload_or_trajectory.blocks
+    if not isinstance(stats, dict) or not isinstance(blocks, dict) or blocks.get('schema') != 'femto-surface-trajectory-blocks-v2':
+        return True
+    return (all(b.get('status') == 'planned' for b in blocks.get('items', []))
+            and stats.get('continuity_status') == 'complete'
+            and stats.get('coverage_status') == 'complete'
+            and stats.get('geometry_unconfirmed_pixel_count') == 0
+            and stats.get('uncovered_fragment_count') == 0)
 
 
 def block_summary(trajectory):
@@ -96,19 +115,22 @@ def block_summary(trajectory):
     if selection:
         incomplete = [b for b in missing if b.get('status') == 'incomplete']
         unplannable = [b for b in missing if b.get('status') == 'unplannable']
-        complete = not missing
+        complete = result_complete(trajectory)
+        unconfirmed = stats.get('geometry_unconfirmed_pixel_count')
         text = (f"共 {stats['block_count']} 个工作块（按医师选择组件），单链完成 {stats['planned_block_count']} 块，"
                 f"未完成 {len(incomplete)} 块，无法规划 {len(unplannable)} 块；"
-                f"覆盖状态 {'完整' if stats['coverage_status'] == 'complete' else '部分'}（未覆盖网格碎片 {stats['uncovered_fragment_count']} 个 / {stats['uncovered_face_count']} 面）；"
-                + ('几何待确认像素 ' + str(stats['geometry_unconfirmed_pixel_count']) + '；' if stats.get('geometry_unconfirmed_pixel_count') else '')
-                + ('全部工作块已成为连续单链。' if complete else
-                   '未完成块：' + '、'.join(
+                f"覆盖状态 {'完整' if stats['coverage_status'] == 'complete' else '部分'}（未覆盖网格碎片 {stats['uncovered_fragment_count']} 个 / {stats['uncovered_face_count']} 面；"
+                f"几何待确认像素 {'未知' if unconfirmed is None else unconfirmed}）；"
+                + ('全部工作块已成为连续单链且覆盖完整。' if complete else
+                   ('未完成块：' + '、'.join(
                        f"块 {b['block_index']+1}（{b['face_count']} 面，"
                        + (f"{b['continuity']['chain_count']} 条断链：{b['link_failure_counts']}" if b['status'] == 'incomplete' else str(b.get('reason')))
-                       + '）' for b in missing[:8]) + ('…' if len(missing) > 8 else '') + '；旧轨迹已保留，未替换或删除。'))
+                       + '）' for b in missing[:8]) + ('…' if len(missing) > 8 else '') + '；' if missing else '路线连续但覆盖未完整；')
+                   + '旧轨迹已保留，未替换或删除。'))
         return dict(text=text, complete=complete, coverage_status=stats['coverage_status'],
                     continuity_status=stats['continuity_status'], block_count=stats['block_count'],
                     plannable_block_count=stats['plannable_block_count'],
+                    geometry_unconfirmed_pixel_count=unconfirmed,
                     unplannable=[dict(block_index=b['block_index'], face_count=b['face_count'], reason=b.get('reason'),
                                       status=b['status']) for b in missing])
     text = (f"共 {stats['block_count']} 块，可规划 {stats['plannable_block_count']} 块，"
@@ -123,12 +145,9 @@ def block_summary(trajectory):
 
 
 def saved_result_complete(payload):
-    """True unless a v4 file reports unfinished (incomplete or unplannable) work blocks."""
-    stats = payload.get('statistics') if isinstance(payload, dict) else None
-    blocks = payload.get('blocks') if isinstance(payload, dict) else None
-    if not isinstance(stats, dict) or not isinstance(blocks, dict) or blocks.get('schema') != 'femto-surface-trajectory-blocks-v2':
-        return True
-    return all(b.get('status') == 'planned' for b in blocks.get('items', []))
+    """True unless a v4 file reports unfinished work: broken chains, unplannable blocks, uncovered
+    fragments or geometry-unconfirmed selected pixels (same rule as `result_complete`)."""
+    return result_complete(payload) if isinstance(payload, dict) else True
 
 
 def saved_block_status(payload):
@@ -138,7 +157,8 @@ def saved_block_status(payload):
         return None
     if payload['blocks'].get('schema') == 'femto-surface-trajectory-blocks-v2':
         return (f"{stats['block_count']} 个工作块 / 单链完成 {stats.get('planned_block_count')} / 未完成 {stats.get('incomplete_block_count')} / 无法规划 {stats['unplannable_block_count']}"
-                + ('；全部完成' if stats.get('continuity_status') == 'complete' else '；未完成结果，旧轨迹保留'))
+                f" / 覆盖 {'完整' if stats.get('coverage_status') == 'complete' else '部分'}"
+                + ('；全部完成' if result_complete(payload) else '；未完成结果，旧轨迹保留'))
     return (f"{stats['block_count']} 块 / 可规划 {stats['plannable_block_count']} / "
             + ('全部块已规划' if stats.get('coverage_status') == 'complete'
                else f"部分覆盖（{stats['unplannable_block_count']} 块未规划）"))

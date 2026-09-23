@@ -13,7 +13,7 @@ from unittest import mock
 import numpy as np
 import trimesh
 
-from tests.test_mesh_slice_planner import grid_mesh, make_export, pixel_mask, two_patches
+from tests.test_mesh_slice_planner import IMAGE_SIZE, INTRINSIC, grid_mesh, make_export, pixel_mask, two_patches
 from femto.annotation.selection_intent import build_selection_intent
 from femto.planning.mesh_slice_planner import Unplannable, main, plan_mesh_slice
 from femto.planning.route_motion import MotionPlayer
@@ -131,8 +131,8 @@ class SelectionBlockAcceptanceTests(unittest.TestCase):
                              stats["connected_detours"] + stats["connected_row_turns"])
             for point in segments(result)[0].points:
                 self.assertTrue(_point_on_triangle(point["xyz_m"], mesh.vertices, mesh.faces[point["triangle_index"]]))
-                x, y = point["xyz_m"][:2]
-                self.assertFalse(abs(x) < 0.0025 and abs(y) < 0.005, "no sample crosses the unselected hole interior")
+                u, v = point["pixel"]
+                self.assertFalse(98 <= round(u) <= 102 and 97 <= round(v) <= 103, "no sample projects into the unselected hole")
             self.assertEqual(result.gap_report["gap_cause_counts"], {})
             self.assertGreaterEqual(stats["revisit_connector_sample_count"], 0)
 
@@ -445,10 +445,12 @@ class SelectionBlockAcceptanceTests(unittest.TestCase):
             reconstruction = Path(tmp) / "reconstruction"
             export_dir = reconstruction / "annotations" / "20260922_000000_deadbeef"
             export_dir.mkdir(parents=True)
-            source = make_export(export_dir, two_patches(), selection=dict(mask=LEFT_PATCH | RIGHT_PATCH))
+            source = make_export(export_dir, two_patches(), selection=dict(mask=LEFT_PATCH | RIGHT_PATCH, trim_to_support=True))
             row = history_row(export_dir, source)
             first = generate(row, TaskControl())
             self.assertEqual(first["cleanup"], "done")
+            self.assertTrue(first["blocks"]["complete"])
+            self.assertEqual(first["blocks"]["geometry_unconfirmed_pixel_count"], 0)
             good = first["folder"]
             before = (good / "trajectory.json").read_bytes()
             # Cancelled regeneration: nothing removed.
@@ -492,6 +494,138 @@ class SelectionBlockAcceptanceTests(unittest.TestCase):
                     generate(row, TaskControl())
             self.assertEqual((good / "trajectory.json").read_bytes(), before)
             self.assertTrue(result["folder"].is_dir())
+
+    def test_13_continuous_result_with_coverage_gaps_never_replaces_the_old_result(self):
+        """Review finding: `planned` only means continuous. A result whose blocks are all single chains
+        but that still has geometry-unconfirmed pixels (or uncovered fragments) is not complete."""
+        from femto.planning.trajectory_history import (block_summary, generate, history_rows, previous_trajectories,
+                                                       result_complete, saved_result_complete)
+        from femto.planning.planning_io import TaskControl
+        with tempfile.TemporaryDirectory() as tmp:
+            reconstruction = Path(tmp) / "reconstruction"
+            export_dir = reconstruction / "annotations" / "20260923_000000_cafebabe"
+            export_dir.mkdir(parents=True)
+            # First: a clean export whose mask is exactly the supported surface -> complete, replaces.
+            source = make_export(export_dir, grid_mesh(0.06, 0.03, 0.002), selection=dict(mask=FULL, trim_to_support=True))
+            row = history_row(export_dir, source)
+            first = generate(row, TaskControl())
+            self.assertEqual(first["cleanup"], "done")
+            good = first["folder"]
+            # Then: the physician paints beyond the measured surface. Continuity stays complete,
+            # coverage is partial because of geometry-unconfirmed pixels -> must not replace.
+            loose = make_export(sub(tmp, "loose"), grid_mesh(0.06, 0.03, 0.002), selection=dict(mask=FULL))
+            loose_manifest = json.loads(loose.read_text(encoding="utf-8"))
+            manifest = json.loads(source.read_text(encoding="utf-8"))
+            manifest["region"].update({k: loose_manifest["region"][k] for k in ("selection_intent", "selection_support", "triangle_indices")})
+            import shutil
+            shutil.copy(loose.parent / "region_1_mesh_m.ply", export_dir / "region_1_mesh_m.ply")
+            manifest["file_sha256"] = loose_manifest["file_sha256"]
+            source.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+            (export_dir / "annotations.json").write_text(json.dumps({"regions": [dict(manifest["region"], region_manifest_file=source.name)]}))
+            result = generate(row, TaskControl())
+            trajectory = load_trajectory(result["folder"], reproduce=False)
+            stats = trajectory.statistics
+            self.assertEqual(stats["continuity_status"], "complete")
+            self.assertTrue(all(b["status"] == "planned" for b in trajectory.blocks["items"]))
+            self.assertEqual(stats["coverage_status"], "partial")
+            self.assertGreater(stats["geometry_unconfirmed_pixel_count"], 0)
+            self.assertFalse(result_complete(trajectory))
+            self.assertFalse(block_summary(trajectory)["complete"])
+            self.assertIn("路线连续但覆盖未完整", block_summary(trajectory)["text"])
+            payload = json.loads((result["folder"] / "trajectory.json").read_text(encoding="utf-8"))
+            self.assertFalse(saved_result_complete(payload))
+            self.assertEqual(result["cleanup"], "skipped_incomplete_result")
+            self.assertEqual(result["removed"], [])
+            self.assertTrue(good.is_dir())
+            self.assertIn(good, previous_trajectories(source))
+            rows = history_rows(reconstruction)
+            flags = {r["folder"].name: r.get("result_complete") for r in rows if r["kind"] == "三维表面轨迹"}
+            self.assertEqual(flags, {good.name: True, result["folder"].name: False})
+            # Uncovered fragment alone also blocks replacement even with all blocks planned and every
+            # selected pixel supported: a 2 mm patch touching the main surface in the image (same
+            # selection component) but 0.5 mm apart in the mesh, too small for one row.
+            speck = grid_mesh(0.002, 0.002, 0.002).apply_translation([0.0315, 0.0, 0.0])
+            specked = plan(make_export(sub(tmp, "speck"), trimesh.util.concatenate([grid_mesh(0.06, 0.03, 0.002), speck]),
+                                       selection=dict(mask=FULL, trim_to_support=True)))
+            self.assertEqual(specked.statistics["geometry_unconfirmed_pixel_count"], 0)
+            self.assertEqual(specked.statistics["continuity_status"], "complete")
+            self.assertEqual(specked.statistics["uncovered_fragment_count"], 1)
+            self.assertEqual(specked.statistics["coverage_status"], "partial")
+            self.assertFalse(result_complete(specked))
+
+    def test_14_no_scan_or_connector_pixel_enters_unselected_pixels_including_the_border(self):
+        """Review finding: centroid-in-mask selects whole triangles, so samples and connector edges could
+        still project onto explicitly unselected pixels (44 samples in the hole fixture, edge overreach at
+        the mask border). Every point and every edge is now checked against the authoritative mask."""
+        from femto.annotation.selection_intent import component_labels
+        from femto.planning.selection_blocks import check_projection_inside_selection
+        from femto.planning.mesh_slice_planner import _project
+        from femto.planning.surface_row_turns import edge_pixels_allowed
+
+        def offending(result, labels):
+            intrinsic = np.asarray(INTRINSIC, float)
+            size = np.asarray(IMAGE_SIZE)
+            bad_points = bad_edges = 0
+            for segment in segments(result):
+                allowed = labels == result.blocks["items"][segment.block_index]["component_id"] + 1
+                previous = None
+                for point in segment.points:
+                    pixel = _project(np.asarray(point["xyz_m"]), intrinsic, size)
+                    u, v = int(np.floor(pixel[0] + .5)), int(np.floor(pixel[1] + .5))
+                    if not allowed[v, u]:
+                        bad_points += 1
+                    if previous is not None and not edge_pixels_allowed(previous, point["xyz_m"], intrinsic, size, allowed):
+                        bad_edges += 1
+                    previous = point["xyz_m"]
+            return bad_points, bad_edges
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = {
+                # Interior hole: whole triangles at the rim used to carry samples into the hole.
+                "hole": (grid_mesh(0.06, 0.03, 0.002), FULL & ~pixel_mask((98, 97, 102, 103))),
+                # Border overreach: the mask is smaller than the mesh projection on every side.
+                "border": (grid_mesh(0.06, 0.03, 0.002), pixel_mask((85, 92, 115, 108))),
+                # Two components one pixel apart: nothing may cross into the neighbour block.
+                "neighbours": (grid_mesh(0.06, 0.03, 0.002), pixel_mask((80, 88, 99, 112)) | pixel_mask((101, 88, 124, 112))),
+            }
+            for name, (mesh, mask) in cases.items():
+                with self.subTest(case=name):
+                    source = make_export(sub(tmp, name), mesh, selection=dict(mask=mask))
+                    result = plan(source)
+                    intent = json.loads(source.read_text(encoding="utf-8"))["region"]["selection_intent"]
+                    labels = component_labels(intent)
+                    self.assertEqual(offending(result, labels), (0, 0))
+                    self.assertGreater(result.statistics["point_count"], 0)
+                    region = json.loads(source.read_text(encoding="utf-8"))["region"]
+                    validate_trajectory(result, mesh=region_mesh(source), region=region)
+                    folder = export_trajectory(result, Path(tmp) / f"r_{name}", include_visuals=False)
+                    self.assertEqual(load_trajectory(folder).to_dict(), result.to_dict())
+            # The validator itself catches an overreach: shrink the labels and the same trajectory fails.
+            source = make_export(sub(tmp, "check"), grid_mesh(0.06, 0.03, 0.002), selection=dict(mask=FULL))
+            result = plan(source)
+            labels = component_labels(json.loads(source.read_text(encoding="utf-8"))["region"]["selection_intent"])
+            check_projection_inside_selection(segments(result), result.blocks["items"], labels,
+                                              np.asarray(INTRINSIC, float), np.asarray(IMAGE_SIZE))
+            shrunk = labels.copy()
+            shrunk[:, 110:] = 0
+            with self.assertRaisesRegex(ValueError, "unselected"):
+                check_projection_inside_selection(segments(result), result.blocks["items"], shrunk,
+                                                  np.asarray(INTRINSIC, float), np.asarray(IMAGE_SIZE))
+            # A one-pixel unselected strip between two allowed pixels is caught on the edge, not only at samples.
+            strip = labels.copy()
+            strip[:, 100] = 0
+            with self.assertRaisesRegex(ValueError, "unselected"):
+                check_projection_inside_selection(segments(result), result.blocks["items"], strip,
+                                                  np.asarray(INTRINSIC, float), np.asarray(IMAGE_SIZE))
+            # The hole case is linked around the hole (detours), and a strip that cannot be bypassed
+            # is reported as explicit_unselected_blocked rather than bridged.
+            hole = plan(make_export(sub(tmp, "hole2"), grid_mesh(0.06, 0.03, 0.002), selection=dict(mask=FULL & ~pixel_mask((98, 97, 102, 103)))))
+            self.assertEqual(hole.statistics["planned_block_count"], 1)
+            self.assertGreater(hole.statistics["connected_detours"], 0)
+            cut = plan(make_export(sub(tmp, "cut"), grid_mesh(0.06, 0.03, 0.002),
+                                   selection=dict(mask=pixel_mask((0, 0, 99, 199)) | pixel_mask((101, 0, 199, 199)))))
+            self.assertEqual(cut.statistics["block_count"], 2)
+            self.assertEqual(cut.statistics["gap_counts"], {"selection_break": 1})
 
 
 if __name__ == "__main__":
