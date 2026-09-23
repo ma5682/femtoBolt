@@ -583,19 +583,15 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
 
 
 def _edge_state(p: np.ndarray, q: np.ndarray, intrinsic: np.ndarray, image_size: np.ndarray,
-                polygons: list[np.ndarray]) -> int:
-    from femto.planning.mesh_slice_planner import _point_in_polygon, _project
-    from femto.planning.surface_row_turns import _intersects
+                polygons: list[np.ndarray], *, polygon_index: Any = None) -> int:
+    from femto.planning.mesh_slice_planner import _project
+    from femto.planning.surface_polygon_index import PreparedPolygonIndex
     uv = [_project(v, intrinsic, image_size) for v in (p, q)]
     if any(v is None for v in uv):
         return 1
     u, v = map(np.asarray, uv)
-    for polygon in polygons:
-        if _point_in_polygon(u, polygon) or _point_in_polygon(v, polygon):
-            return 2
-        if any(_intersects(u, v, c, d) for c, d in zip(polygon, np.roll(polygon, -1, axis=0))):
-            return 2
-    return 0
+    index = PreparedPolygonIndex(polygons) if polygon_index is None else polygon_index
+    return 2 if index.blocks_segment(u, v) else 0
 
 
 def check_selection_blocks(trajectory: SurfaceTrajectory, blocks: list[dict[str, Any]], segments: list[ScanSegment],
@@ -794,6 +790,8 @@ def _check_selection_binding(trajectory: SurfaceTrajectory, blocks: list[dict[st
     intrinsic = np.asarray(view["undistorted_intrinsic"], dtype=np.float64)
     image_size = np.asarray(view["image_size"], dtype=np.int64)
     polygons = _forbidden_polygons(region)
+    from femto.planning.surface_polygon_index import PreparedPolygonIndex
+    polygon_index = PreparedPolygonIndex(polygons)
     by_component = {item["component_id"]: item for item in intent["components"]}
     if sorted(by_component) != sorted(block["component_id"] for block in blocks):
         raise ValueError("Block set does not match the selection components")
@@ -825,7 +823,8 @@ def _check_selection_binding(trajectory: SurfaceTrajectory, blocks: list[dict[st
             if int(owners[point["triangle_index"]]) != expected_component:
                 raise ValueError("Scan point lies on a face outside its selection block")
             if point.get("role") == "connector" and previous is not None:
-                state = _edge_state(np.asarray(previous), np.asarray(point["xyz_m"]), intrinsic, image_size, polygons)
+                state = _edge_state(np.asarray(previous), np.asarray(point["xyz_m"]), intrinsic, image_size, polygons,
+                                    polygon_index=polygon_index)
                 if state == 2:
                     raise ValueError("Connector edge crosses a painted forbidden / excluded region")
                 if state == 1:

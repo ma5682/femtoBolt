@@ -7,6 +7,7 @@ import math
 import numpy as np
 
 from femto.planning.surface_trajectory import Gap, POINT_BUDGET, ScanSegment, validate_trajectory
+from femto.planning.surface_polygon_index import PreparedPolygonIndex
 
 
 def _intersects(a, b, c, d):
@@ -30,6 +31,8 @@ class BoundaryTurns:
         view=region['view_reference']
         self.k=np.asarray(view['undistorted_intrinsic']);self.size=np.asarray(view['image_size'])
         self.polygons=_forbidden_polygons(region)
+        self._polygon_source=self.polygons
+        self._polygon_index=PreparedPolygonIndex(self.polygons)
         faces=np.asarray(mesh.faces)
         # Restricting to one block keeps its boundary graph free of any other
         # surface, even one that only touches or overlaps it geometrically.
@@ -46,14 +49,14 @@ class BoundaryTurns:
         self.e2=None if frame is None else np.asarray(frame['e2'])
 
     def allowed(self, a, b):
-        from femto.planning.mesh_slice_planner import _project, _point_in_polygon
+        from femto.planning.mesh_slice_planner import _project
         uv=[_project(p,self.k,self.size) for p in (a,b)]
         if any(p is None for p in uv):return False
-        u,v=map(np.asarray,uv)
-        for polygon in self.polygons:
-            if _point_in_polygon(u,polygon) or _point_in_polygon(v,polygon):return False
-            if any(_intersects(u,v,c,d) for c,d in zip(polygon,np.roll(polygon,-1,axis=0))):return False
-        return True
+        # diagnose() temporarily replaces polygons; never reuse its old constraints.
+        if self._polygon_source is not self.polygons:
+            self._polygon_source=self.polygons
+            self._polygon_index=PreparedPolygonIndex(self.polygons)
+        return not self._polygon_index.blocks_segment(*uv)
 
     def route(self, left, right, step, e2=None):
         e2=self.e2 if e2 is None else np.asarray(e2,float)
@@ -256,6 +259,8 @@ class SurfaceLinks:
         view=region['view_reference']
         self.k=np.asarray(view['undistorted_intrinsic']);self.size=np.asarray(view['image_size'])
         self.polygons=_forbidden_polygons(region)
+        self._polygon_source=self.polygons
+        self._polygon_index=PreparedPolygonIndex(self.polygons)
         self.face_ids=[int(v) for v in face_ids];self.member=set(self.face_ids)
         self.boundary=BoundaryTurns(mesh,region,frame,check,face_ids=self.face_ids)
         edges={}
@@ -279,14 +284,18 @@ class SurfaceLinks:
 
     def _state(self, p, q):
         """0 allowed, 1 outside the reference image, 2 forbidden polygon, 3 explicitly unselected pixels."""
-        from femto.planning.mesh_slice_planner import _project, _point_in_polygon
+        from femto.planning.mesh_slice_planner import _project
         uv=[_project(v,self.k,self.size) for v in (p,q)]
         if any(v is None for v in uv):return 1
-        u,v=map(np.asarray,uv)
-        for polygon in self.polygons:
-            if _point_in_polygon(u,polygon) or _point_in_polygon(v,polygon):return 2
-            if any(_intersects(u,v,c,d) for c,d in zip(polygon,np.roll(polygon,-1,axis=0))):return 2
-        if not edge_pixels_allowed(p,q,self.k,self.size,self.allowed):return 3
+        if self._polygon_source is not self.polygons:
+            self._polygon_source=self.polygons
+            self._polygon_index=PreparedPolygonIndex(self.polygons)
+        if self._polygon_index.blocks_segment(*uv):return 2
+        # Reuse exactly the projections above; the supercover predicate is unchanged.
+        if self.allowed is not None:
+            height,width=self.allowed.shape
+            for u,v in segment_pixels(*uv):
+                if not (0<=u<width and 0<=v<height and self.allowed[v,u]):return 3
         return 0
 
     def _allowed(self, state, *, ignore_forbidden, ignore_image, ignore_selection=False):
