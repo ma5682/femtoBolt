@@ -27,12 +27,12 @@ PRODUCT_SINGLE_REGION=True
 
 class FixedRGBViewer:
     def _build_main_area(self,root):
-        main=tk.Frame(root,bg='#101b26');main.pack(side='left',fill='both',expand=True)
+        main=tk.Frame(root,bg='#0f141c');main.pack(side='left',fill='both',expand=True)
         tk.Label(main,text=pick(self.language, '固定初始相机视角 · 图像选区 / 三维映射','Locked initial camera · RGB selection / 3D mapping'),
-            fg='#e5f1f8',bg='#101b26',font=('Microsoft YaHei UI',16,'bold'),pady=12).pack(fill='x')
+            fg='#e8eef5',bg='#0f141c',font=('Microsoft YaHei UI',16,'bold'),pady=12).pack(fill='x')
         self.status=tk.StringVar(value=pick(self.language, '正在读取参考照片与三维表面…','Loading reference RGB and surface…'))
         tk.Label(main,textvariable=self.status,fg='#9ae1cf',bg='#18303c',wraplength=680,justify='left',pady=8).pack(fill='x')
-        self.canvas=tk.Canvas(main,bg='#08121c',highlightthickness=0)
+        self.canvas=tk.Canvas(main,bg='#080d13',highlightthickness=0)
         self.canvas.pack(fill='both',expand=True)
         self.canvas.bind('<Configure>',lambda e:self.draw())
         self.canvas.bind('<Button-1>',self.click)
@@ -44,22 +44,22 @@ class FixedRGBViewer:
         self.canvas.bind('<ButtonPress-3>',self.pan_start)
         self.canvas.bind('<B3-Motion>',self.pan_move)
         tk.Label(main,text=pick(self.language, '按住左键涂抹 · 滚轮缩放 · 右键平移','Left drag: paint · Wheel: zoom · Right drag: pan'),
-            bg='#101b26',fg='#b6c9d9',pady=8).pack(fill='x')
+            bg='#0f141c',fg='#9fb2c4',pady=8).pack(fill='x')
 
     def _build_sidebar_shell(self,root):
-        sidebar=tk.Frame(root,bg='#142330');sidebar.pack(side='right',fill='y')
+        sidebar=tk.Frame(root,bg='#121b25',highlightbackground='#243042',highlightthickness=1);sidebar.pack(side='right',fill='y')
         scroll=ttk.Scrollbar(sidebar,orient='vertical');scroll.pack(side='right',fill='y')
-        self.side_canvas=tk.Canvas(sidebar,width=380 if self.result.is_file() else 320,bg='#142330',highlightthickness=0,yscrollcommand=scroll.set)
+        self.side_canvas=tk.Canvas(sidebar,width=380 if self.result.is_file() else 320,bg='#121b25',highlightthickness=0,yscrollcommand=scroll.set)
         self.side_canvas.pack(side='left',fill='y');scroll.configure(command=self.side_canvas.yview)
-        side=tk.Frame(self.side_canvas,bg='#142330',padx=14,pady=14)
+        side=tk.Frame(self.side_canvas,bg='#121b25',padx=14,pady=14)
         self.side_canvas.create_window((0,0),window=side,anchor='nw',width=380 if self.result.is_file() else 320)
         side.bind('<Configure>',lambda e:self.side_canvas.configure(scrollregion=self.side_canvas.bbox('all')))
         self.save_state=tk.StringVar(value=pick(self.language, '没有未保存的更改','No unsaved changes'))
-        tk.Label(side,textvariable=self.save_state,bg='#142330',fg='#e7c27d',wraplength=285,justify='left').pack(fill='x',pady=4)
+        tk.Label(side,textvariable=self.save_state,bg='#121b25',fg='#e7c27d',wraplength=285,justify='left').pack(fill='x',pady=4)
         self.task_feedback=tk.StringVar(value='')
-        tk.Label(side,textvariable=self.task_feedback,bg='#142330',fg='#9ae1cf',wraplength=285,justify='left').pack(fill='x')
+        tk.Label(side,textvariable=self.task_feedback,bg='#121b25',fg='#9ae1cf',wraplength=285,justify='left').pack(fill='x')
         self.draft_feedback=tk.StringVar(value='草稿：等待来源加载')
-        tk.Label(side,textvariable=self.draft_feedback,bg='#142330',fg='#a4bdcf',wraplength=285,justify='left').pack(fill='x')
+        tk.Label(side,textvariable=self.draft_feedback,bg='#121b25',fg='#a4bdcf',wraplength=285,justify='left').pack(fill='x')
         self.cancel_task_button=ttk.Button(side,text='取消当前任务',command=self.cancel_planning)
         self.cancel_task_button.pack(fill='x',pady=3)
         self.workspace_tabs=None
@@ -68,7 +68,7 @@ class FixedRGBViewer:
             self.workspace_tabs=ttk.Notebook(side);self.workspace_tabs.pack(fill='both',expand=True)
             tabs=[]
             for title in ('1 区域与禁区','2 路线演示','3 保存分享','高级'):
-                tab=tk.Frame(self.workspace_tabs,bg='#142330');self.workspace_tabs.add(tab,text=title);tabs.append(tab)
+                tab=tk.Frame(self.workspace_tabs,bg='#121b25');self.workspace_tabs.add(tab,text=title);tabs.append(tab)
             side,plan_side,save_side,advanced_side=tabs
         return side,plan_side,save_side,advanced_side
 
@@ -88,25 +88,37 @@ class FixedRGBViewer:
         self.zoom=1.;self.pan=np.zeros(2);self.scale=1.;self.offset=np.zeros(2)
         self.mailbox=queue.Queue(maxsize=1);self.widgets=[]
         root.title(pick(self.language, 'Femto · 固定 RGB 选区与三维坐标','Femto · Fixed RGB annotation'))
-        root.geometry('1280x820');root.minsize(1000,720);root.configure(bg='#101b26')
+        root.geometry('1280x820');root.minsize(1000,720);root.configure(bg='#0f141c')
+        style = ttk.Style(root)
+        style.theme_use('clam')
+        style.configure('TButton', background='#1d2b39', foreground='#e8eef5',
+                        borderwidth=0, padding=(10, 7), font=('Microsoft YaHei UI', 9))
+        style.map('TButton', background=[('active', '#294052'), ('disabled', '#17212b')],
+                  foreground=[('disabled', '#617284')])
+        style.configure('TNotebook', background='#121b25', borderwidth=0)
+        style.configure('TNotebook.Tab', background='#1b2a39', foreground='#9fb2c4',
+                        padding=(12, 7), font=('Microsoft YaHei UI', 9))
+        style.map('TNotebook.Tab', background=[('selected', '#1d3547'), ('active', '#203c50')],
+                  foreground=[('selected', '#e8eef5'), ('active', '#e8eef5')])
+        root.configure(bg='#0f141c')
         root.protocol('WM_DELETE_WINDOW',self.close)
         self._build_main_area(root)
         side,plan_side,save_side,advanced_side=self._build_sidebar_shell(root)
         self.info=tk.StringVar(value='—')
-        tk.Label(advanced_side,textvariable=self.info,bg='#142330',fg='#e3eef6',wraplength=285,justify='left',anchor='w').pack(fill='x',pady=6)
+        tk.Label(advanced_side,textvariable=self.info,bg='#121b25',fg='#e3eef6',wraplength=285,justify='left',anchor='w').pack(fill='x',pady=6)
         self.readout=tk.StringVar(value='X —  Y —  Z —')
-        tk.Label(advanced_side,textvariable=self.readout,bg='#142330',fg='#70e1c3',font=('Consolas',13),wraplength=285,justify='left',anchor='w').pack(fill='x',pady=10)
+        tk.Label(advanced_side,textvariable=self.readout,bg='#121b25',fg='#70e1c3',font=('Consolas',13),wraplength=285,justify='left',anchor='w').pack(fill='x',pady=10)
         self.mode=tk.StringVar(value='region')
-        row=tk.Frame(side,bg='#142330');row.pack(fill='x')
+        row=tk.Frame(side,bg='#121b25');row.pack(fill='x')
         if 'point_tools' in PRODUCT_HIDDEN_FEATURES:
-            tk.Label(row,text=pick(self.language, '方形涂抹','Square brush'),bg='#142330',fg='#e3eef6').pack(side='left')
+            tk.Label(row,text=pick(self.language, '方形涂抹','Square brush'),bg='#121b25',fg='#e3eef6').pack(side='left')
         else:
             for value,zh,en in [('point','选点 / 测距','Point / distance'),('region','方形涂抹','Square brush')]:
                 w=ttk.Radiobutton(row,text=pick(self.language, zh,en),value=value,variable=self.mode,command=self.change_mode)
                 w.pack(side='left');self.widgets.append(w)
         self.selection_method=tk.StringVar(value='work');self.active_selection_method='work'
-        tk.Label(side,text=pick(self.language, '方形涂抹类型（结果自动判断）','Square paint type (result is automatic)'),bg='#142330',fg='#c4d8e8').pack(anchor='w',pady=(6,0))
-        method_row=tk.Frame(side,bg='#142330');method_row.pack(fill='x')
+        tk.Label(side,text=pick(self.language, '方形涂抹类型（结果自动判断）','Square paint type (result is automatic)'),bg='#121b25',fg='#c4d8e8').pack(anchor='w',pady=(6,0))
+        method_row=tk.Frame(side,bg='#121b25');method_row.pack(fill='x')
         for value,zh,en in [('work','工作区域','Work area'),('forbidden','禁止区域','Forbidden area')]:
             w=ttk.Radiobutton(method_row,text=pick(self.language, zh,en),value=value,variable=self.selection_method,
                 command=self.change_selection_method)
@@ -117,7 +129,7 @@ class FixedRGBViewer:
         ttk.Label(brush_row,text=pick(self.language, '方块大小（屏幕像素）','Square size (screen px)')).pack(side='left')
         self.brush_size_label=ttk.Label(brush_row,text='40');self.brush_size_label.pack(side='right')
         brush_scale=tk.Scale(side,from_=8,to=160,orient='horizontal',variable=self.brush_size,
-            showvalue=False,command=self.brush_resize,bg='#142330',fg='#dae8ef',highlightthickness=0)
+            showvalue=False,command=self.brush_resize,bg='#121b25',fg='#dae8ef',highlightthickness=0)
         brush_scale.pack(fill='x');self.widgets.append(brush_scale)
         w=ttk.Checkbutton(side,text=pick(self.language, '擦除已涂部分','Erase painted selection'),variable=self.brush_erase,
             command=lambda:self.draw_brush_cursor())
@@ -137,7 +149,7 @@ class FixedRGBViewer:
         if 'legacy_exclusion_editor' not in PRODUCT_HIDDEN_FEATURES:
             self.action(side,'添加禁止区域（先选主区域）','Draw forbidden area in selected region',self.begin_exclusion)
             self.action(side,'清除所选区域禁区 / 可撤销','Clear exclusions / undoable',self.clear_exclusions)
-        tk.Label(side,text=pick(self.language, '名称 / 备注','Name / note'),bg='#142330',fg='#c4d8e8').pack(anchor='w')
+        tk.Label(side,text=pick(self.language, '名称 / 备注','Name / note'),bg='#121b25',fg='#c4d8e8').pack(anchor='w')
         self.name=tk.StringVar(value=pick(self.language, '标记 01','Marker 01'));self.note=tk.StringVar()
         for var in (self.name,self.note):
             w=ttk.Entry(side,textvariable=var,width=32);w.pack(fill='x',pady=3);self.widgets.append(w)
@@ -146,7 +158,7 @@ class FixedRGBViewer:
         self.items.pack(fill='x',pady=6);self.items.bind('<<ListboxSelect>>',self.select);self.widgets.append(self.items)
         self.items.bind('<Control-a>',self.select_all)
         self.action(side,'全选标记','Select all annotations',self.select_all)
-        tk.Label(side,text=pick(self.language, 'Ctrl 多选 · Shift 连选 · Ctrl+A 全选','Ctrl: multi-select · Shift: range · Ctrl+A: all'),bg='#142330',fg='#a4bdcf').pack(anchor='w')
+        tk.Label(side,text=pick(self.language, 'Ctrl 多选 · Shift 连选 · Ctrl+A 全选','Ctrl: multi-select · Shift: range · Ctrl+A: all'),bg='#121b25',fg='#a4bdcf').pack(anchor='w')
         if not PRODUCT_SINGLE_REGION:
             for zh,en,fn in [('应用名称备注','Apply edits',self.edit),('删除所选 / 可撤销','Delete selected',self.delete),
                 ('清除当前选中','Clear selection',self.clear_selection)]:
@@ -163,14 +175,14 @@ class FixedRGBViewer:
             self.action(advanced_side,'打开精度测试记录','Open distance test records',self.open_measurement_records)
             tk.Label(advanced_side,text=pick(self.language, '测量：派生几何 · 展示：RGB / GLB\n绝对 XYZ 精度未验证；实测距离不等于治疗定位验收。',
                 'Measurement: derived geometry; display: RGB / GLB\nAbsolute XYZ accuracy unverified; distance tests are not clinical validation.'),
-                bg='#142330',fg='#e7c27d',wraplength=285,justify='left').pack(fill='x',pady=6)
+                bg='#121b25',fg='#e7c27d',wraplength=285,justify='left').pack(fill='x',pady=6)
         self.action(save_side,'历史区域导出记录','Region export history',self.export_history)
         if 'project_management' not in PRODUCT_HIDDEN_FEATURES:
             self.action(save_side,'保存方案','Save plan',self.save_region_project)
             self._plan_buttons['save_region_project_as']=self.action(save_side,'方案另存为…','Save plan as…',lambda:self.save_region_project(save_as=True))
             self.action(save_side,'恢复或放弃草稿…','Recover or discard draft…',self.offer_recovery)
             self.action(save_side,'打开已有方案…','Open portable region workspace',self.open_region_project)
-        self.planning_tools=tk.Frame(plan_side,bg='#142330')
+        self.planning_tools=tk.Frame(plan_side,bg='#121b25')
         if self.result.is_file():self.planning_tools.pack(fill='x')
         self.action(advanced_side if self.workspace_tabs else self.planning_tools,'像素扫描路径（预览）','Pixel raster path preview',self.plan_region_path)
         self.action(advanced_side if self.workspace_tabs else self.planning_tools,'毫米曲面路径（近似）','Metric surface contours (approx.)',self.plan_metric_path)
@@ -184,7 +196,7 @@ class FixedRGBViewer:
         self.action(advanced_side if self.workspace_tabs else self.planning_tools,'清除路径预览','Clear path preview',self.clear_path_preview)
         tk.Label(side,text=pick(self.language, 'RGB 照片不代表每个像素有深度。\n绿色：几何支持；青色：首帧缺深度处获得几何支持。\n坐标为估计值，未做实物精度验证；仅用于研发。',
             'RGB visibility does not guarantee depth.\nGreen: geometry support; cyan: support where reference depth is missing.\nEstimated coordinates; physical accuracy unverified. R&D only.'),
-            bg='#142330',fg='#a4bdcf',wraplength=285,justify='left').pack(fill='x',pady=10)
+            bg='#121b25',fg='#a4bdcf',wraplength=285,justify='left').pack(fill='x',pady=10)
         def scroll_side(e):
             self.side_canvas.yview_scroll(-1 if e.delta>0 else 1,'units');return 'break'
         def bind_scroll(widget):
@@ -448,7 +460,7 @@ class FixedRGBViewer:
                     self.canvas.create_text(x+9,y+9,anchor='nw',text=pick(self.language, '光轴中心（非原点）','Optical axis (not W0)'),fill='#ffffff',tags='coordinate_guide')
         if self.show_axes.get():
             c=self.canvas;tag='coordinate_guide'
-            c.create_rectangle(12,12,268,142,fill='#101b26',outline='#395268',tags=tag)
+            c.create_rectangle(12,12,268,142,fill='#0f141c',outline='#395268',tags=tag)
             c.create_text(24,24,anchor='nw',text=pick(self.language, 'W0 坐标方向示意 · 无比例','W0 directions · not to scale'),fill='#dceaf4',tags=tag)
             x,y=40,65
             c.create_line(x,y,x+65,y,arrow='last',fill='#ff7777',width=2,tags=tag)

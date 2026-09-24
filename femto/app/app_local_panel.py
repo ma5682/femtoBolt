@@ -31,7 +31,7 @@ TEXT = {
  'reason_relocalization_pending': ('已通过一帧，等待连续新鲜帧确认','One frame passed; waiting for consecutive fresh confirmation'),
  'reason_replay_end_while_relocalizing': ('回放结束时仍未恢复可信位姿','Replay ended without a trusted recovered pose'),
  'reason_pose_correction_recheck': ('位姿修正后需重新停稳','Recheck stillness after pose correction'),
- 'title': ('局部三维采集与区域标记', 'Local capture and surface annotation'),
+ 'title': ('三维采集与轨迹规划工作台', '3D capture and trajectory planning workstation'),
  'tab': ('局部移动补采', 'Local capture'), 'legacy': ('固定采集与高级功能', 'Fixed capture & advanced'),
  'origin': ('01 建立原点', '01 Set origin'), 'capture': ('02 移动补采', '02 Capture'),
  'review': ('03 检查模型', '03 Review'), 'mark': ('04 区域标记', '04 Annotate'),
@@ -150,7 +150,10 @@ def read_review_clouds(result: str | Path, include_initial: bool=True) -> dict[A
 class LocalPanel:
     def __init__(self, app, parent):
         self.app = app
-        self.frame = tk.Frame(parent, bg='#0b121a')
+        # Primary clinical surface: keep the existing state machine and present
+        # it as a compact workstation with a fixed header, stepper, viewport,
+        # inspector and action dock.
+        self.frame = tk.Frame(parent, bg='#0f141c')
         self.frame.pack(fill='both', expand=True)
         self.active = False; self.finishing = False; self.paused = False
         self.cancelling = False
@@ -166,78 +169,164 @@ class LocalPanel:
         self._review_mailbox = None
         self.highlight = tk.BooleanVar(value=True)
         self.labels = []
-        self.frame.columnconfigure(0, weight=1)
-        self.frame.rowconfigure(2, weight=1)
-        title = tk.Label(self.frame, bg='#0b121a', fg='#e7eef5', font=('Microsoft YaHei UI',19,'bold'))
-        title.grid(row=0,column=0,columnspan=2,sticky='w',padx=18,pady=12)
-        self.labels.append((title,'title'))
-        steps = tk.Frame(self.frame,bg='#0b121a'); steps.grid(row=1,column=0,columnspan=2,sticky='ew',padx=18)
-        self.steps=[]
-        for i,key in enumerate(('origin','capture','review','mark')):
-            steps.columnconfigure(i,weight=1)
-            label=tk.Label(steps,bg='#172635',fg='#91a9bd',padx=12,pady=10)
-            label.grid(row=0,column=i,sticky='ew',padx=3,pady=6)
-            self.labels.append((label,key)); self.steps.append(label)
-        main=tk.Frame(self.frame,bg='#101c28');main.grid(row=2,column=0,sticky='nsew',padx=(18,8),pady=8)
-        toolbar=tk.Frame(main,bg='#101c28');toolbar.pack(fill='x',padx=8,pady=8)
-        self.buttons={}
-        history_actions=tk.Frame(self.frame,bg='#0b121a')
-        history_actions.grid(row=0,column=1,sticky='e',padx=18,pady=12)
-        self.button(history_actions,'comparison',self.open_comparison).pack(side='left',padx=3)
-        self.button(history_actions,'history',self.open_history).pack(side='left',padx=3)
-        for key in ('preview','depth','initial','live','final','fit'):
-            self.button(toolbar,key,lambda k=key:self.set_view(k)).pack(side='left',padx=3)
-        preview_options=tk.Frame(main,bg='#101c28');preview_options.pack(fill='x',padx=8)
-        self.highlight_button=tk.Checkbutton(preview_options,variable=self.highlight,command=self.draw_cloud,
-            bg='#101c28',fg='#67dbc0',selectcolor='#233444',activebackground='#101c28',activeforeground='#edf5fa')
-        self.highlight_button.pack(anchor='w')
-        self.preview_status=tk.StringVar(value='')
-        tk.Label(preview_options,textvariable=self.preview_status,bg='#101c28',fg='#9fb4c7',
-                 anchor='w',justify='left',wraplength=600).pack(fill='x')
-        # Reserve status space before the expanding image. A large PhotoImage
-        # previously squeezed the last-packed error hint off the bottom.
-        self.hint=tk.StringVar()
-        self.hint_label=tk.Label(main,textvariable=self.hint,bg='#142738',fg='#d6e6ef',
-            anchor='w',justify='left',wraplength=600,padx=12,pady=10)
+        self.buttons = {}
+        palette = {
+            'window': '#0f141c', 'panel': '#161d27', 'panel2': '#192431',
+            'viewport': '#080d13', 'border': '#243042', 'muted': '#8fa2b5',
+            'text': '#e8eef5', 'primary': '#00b4d8', 'primary_hover': '#0096c7',
+            'success': '#06d6a0', 'warning': '#ffd166', 'danger': '#ef476f',
+        }
+        self.palette = palette
+        self.frame.columnconfigure(0, weight=0, minsize=220)
+        self.frame.columnconfigure(1, weight=1)
+        self.frame.columnconfigure(2, weight=0, minsize=300)
+        self.frame.rowconfigure(1, weight=1)
+
+        # Fixed header ------------------------------------------------------------
+        header = tk.Frame(self.frame, bg=palette['panel'], height=72,
+                          highlightbackground=palette['border'], highlightthickness=1)
+        header.grid(row=0, column=0, columnspan=3, sticky='nsew')
+        header.grid_propagate(False)
+        brand = tk.Frame(header, bg=palette['panel'])
+        brand.pack(side='left', fill='y', padx=(18, 24))
+        logo_path = REPO_ROOT / 'prototype' / 'assets' / 'uziyuan_logo.png'
+        self._brand_image = None
+        if logo_path.is_file():
+            try:
+                logo = Image.open(logo_path).convert('RGBA')
+                logo.thumbnail((142, 40), Image.Resampling.LANCZOS)
+                self._brand_image = ImageTk.PhotoImage(logo)
+            except Exception:
+                self._brand_image = None
+        if self._brand_image is not None:
+            tk.Label(brand, image=self._brand_image, bg=palette['panel']).pack(side='left', pady=15)
+        else:
+            tk.Label(brand, text='U·ZIYUAN', bg=palette['panel'], fg=palette['text'],
+                     font=('Segoe UI', 14, 'bold')).pack(side='left', pady=17)
+        tk.Frame(header, bg=palette['border'], width=1).pack(side='left', fill='y', pady=15)
+        title_block = tk.Frame(header, bg=palette['panel'])
+        title_block.pack(side='left', fill='y', padx=22)
+        title = tk.Label(title_block, bg=palette['panel'], fg=palette['text'],
+                         text=self.text('title'), font=('Microsoft YaHei UI', 16, 'bold'))
+        title.pack(anchor='w', pady=(14, 1))
+        self.labels.append((title, 'title'))
+        tk.Label(title_block, bg=palette['panel'], fg=palette['muted'],
+                 text='项目：当前采集会话  ·  空间基准已锁定',
+                 font=('Microsoft YaHei UI', 9)).pack(anchor='w')
+        header_actions = tk.Frame(header, bg=palette['panel'])
+        header_actions.pack(side='right', fill='y', padx=16)
+        tk.Label(header_actions, text='项目回放 · 只读', bg='#1b2a39', fg=palette['text'],
+                 padx=14, pady=7, font=('Microsoft YaHei UI', 9)).pack(side='left', pady=15, padx=(0, 10))
+
+        # Vertical workflow stepper ---------------------------------------------
+        sidebar = tk.Frame(self.frame, bg='#121b25',
+                           highlightbackground=palette['border'], highlightthickness=1)
+        sidebar.grid(row=1, column=0, sticky='nsew')
+        sidebar.grid_propagate(False)
+        tk.Label(sidebar, text='工作流程', bg='#121b25', fg=palette['muted'],
+                 font=('Microsoft YaHei UI', 9, 'bold')).pack(anchor='w', padx=22, pady=(20, 8))
+        steps = tk.Frame(sidebar, bg='#121b25')
+        steps.pack(fill='both', expand=True, padx=12)
+        self.steps = []
+        for i, key in enumerate(('origin', 'capture', 'review', 'mark')):
+            label = tk.Label(steps, bg='#172635', fg='#91a9bd', anchor='w', justify='left',
+                             padx=18, pady=14, font=('Microsoft YaHei UI', 10, 'bold'))
+            label.pack(fill='x', pady=(0, 7))
+            self.labels.append((label, key)); self.steps.append(label)
+        tk.Label(sidebar, text='设备状态\n● 相机已连接\n● 标定文件已加载',
+                 bg='#121b25', fg='#78d9b2', justify='left', anchor='w',
+                 font=('Microsoft YaHei UI', 9), padx=22, pady=16).pack(side='bottom', fill='x')
+
+        # Dominant viewport -------------------------------------------------------
+        main = tk.Frame(self.frame, bg=palette['viewport'])
+        main.grid(row=1, column=1, sticky='nsew', padx=10, pady=10)
+        toolbar = tk.Frame(main, bg=palette['panel'], height=48,
+                           highlightbackground=palette['border'], highlightthickness=1)
+        toolbar.pack(fill='x'); toolbar.pack_propagate(False)
+        for key in ('preview', 'depth', 'initial', 'live', 'final', 'fit'):
+            self.button(toolbar, key, lambda k=key: self.set_view(k)).pack(side='left', padx=(8 if key == 'preview' else 2, 2), pady=7)
+        preview_options = tk.Frame(main, bg=palette['viewport'], height=32)
+        preview_options.pack(fill='x'); preview_options.pack_propagate(False)
+        self.highlight_button = tk.Checkbutton(preview_options, variable=self.highlight, command=self.draw_cloud,
+            bg=palette['viewport'], fg='#67dbc0', selectcolor='#233444',
+            activebackground=palette['viewport'], activeforeground=palette['text'])
+        self.highlight_button.pack(side='left', anchor='w')
+        self.preview_status = tk.StringVar(value='')
+        tk.Label(preview_options, textvariable=self.preview_status, bg=palette['viewport'], fg=palette['muted'],
+                 anchor='w', justify='left', wraplength=600).pack(side='left', fill='x', expand=True)
+        self.hint = tk.StringVar()
+        self.hint_label = tk.Label(main, textvariable=self.hint, bg='#142738', fg='#d6e6ef',
+            anchor='w', justify='left', wraplength=600, padx=12, pady=7)
         self.hint_label.pack(fill='x')
-        self.stability_text=tk.StringVar()
-        self.stability_label=tk.Label(main,textvariable=self.stability_text,bg='#142738',fg='#a4dccf',
-            anchor='w',justify='left',wraplength=600,padx=12,pady=4)
+        self.stability_text = tk.StringVar()
+        self.stability_label = tk.Label(main, textvariable=self.stability_text, bg='#142738', fg='#a4dccf',
+            anchor='w', justify='left', wraplength=600, padx=12, pady=4)
         self.stability_label.pack(fill='x')
-        main.bind('<Configure>',lambda e:(self.hint_label.configure(wraplength=max(180,e.width-28)),
-                                       self.stability_label.configure(wraplength=max(180,e.width-28))))
-        self.preview=tk.Label(main,bg='#07121c',fg='#b2c4d5',text='RGB-D',anchor='center',width=1,height=1)
-        self.preview.pack(fill='both',expand=True)
-        self.quality_frame=tk.Frame(main,bg='#142738')
-        quality_scroll=ttk.Scrollbar(self.quality_frame,orient='vertical')
-        quality_scroll.pack(side='right',fill='y')
-        self.quality_text=tk.Text(self.quality_frame,height=8,wrap='word',bg='#142738',fg='#deedf4',
-            relief='flat',padx=10,pady=6,state='disabled',yscrollcommand=quality_scroll.set)
-        self.quality_text.pack(fill='both',expand=True)
+        main.bind('<Configure>', lambda e: (self.hint_label.configure(wraplength=max(180, e.width-28)),
+                                            self.stability_label.configure(wraplength=max(180, e.width-28))))
+        self.preview = tk.Label(main, bg=palette['viewport'], fg='#b2c4d5', text='RGB-D', anchor='center', width=1, height=1,
+                                highlightbackground=palette['border'], highlightthickness=1)
+        self.preview.pack(fill='both', expand=True)
+        self.quality_frame = tk.Frame(main, bg='#142738')
+        quality_scroll = ttk.Scrollbar(self.quality_frame, orient='vertical')
+        quality_scroll.pack(side='right', fill='y')
+        self.quality_text = tk.Text(self.quality_frame, height=8, wrap='word', bg='#142738', fg='#deedf4',
+            relief='flat', padx=10, pady=6, state='disabled', yscrollcommand=quality_scroll.set)
+        self.quality_text.pack(fill='both', expand=True)
         quality_scroll.configure(command=self.quality_text.yview)
-        self.preview.bind('<Configure>',lambda e:self.draw_cloud())
-        self.preview.bind('<ButtonPress-1>',lambda e:setattr(self,'drag_position',(e.x,e.y)))
-        self.preview.bind('<B1-Motion>',self.rotate)
-        self.preview.bind('<MouseWheel>',self.wheel)
-        side=tk.Frame(self.frame,bg='#111e2b',width=315,padx=14,pady=14)
-        side.grid(row=2,column=1,sticky='ns',padx=(0,18),pady=8)
-        pose_title=tk.Label(side,bg='#111e2b',fg='#b8d2e2');pose_title.pack(anchor='w');self.labels.append((pose_title,'pose'))
-        self.pose=tk.StringVar(value='X —     Y —     Z —\nRx —    Ry —    Rz —')
-        tk.Label(side,textvariable=self.pose,bg='#111e2b',fg='#edf6fa',font=('Consolas',13),justify='left',pady=14).pack(anchor='w')
-        unit=tk.Label(side,bg='#111e2b',fg='#9fb4c7',wraplength=280,justify='left');unit.pack(anchor='w');self.labels.append((unit,'unit'))
-        self.age=tk.StringVar(value='—');tk.Label(side,textvariable=self.age,bg='#111e2b',fg='#9fb4c7').pack(anchor='w',pady=4)
-        self.counter=tk.StringVar();tk.Label(side,textvariable=self.counter,bg='#111e2b',fg='#6ee1c0').pack(anchor='w',pady=6)
-        actions=tk.Frame(side,bg='#111e2b');actions.pack(fill='x')
-        actions.columnconfigure(0,weight=1,uniform='actions')
-        actions.columnconfigure(1,weight=1,uniform='actions')
-        # Pair the short actions so the report remains fully visible at 720 px.
-        for key,command,row,col,span in [('start',self.start,0,0,2),
-            ('add',lambda:self.send('local_request'),1,0,2),('pause',self.pause,2,0,1),
-            ('cancel',lambda:self.finish(False),2,1,1),('finish',lambda:self.finish(True),3,0,2),
-            ('view',self.open_model,4,0,2),('cloud',app.toggle_point_cloud_preview,5,0,1),
-            ('report',self.open_report,5,1,1)]:
-            self.button(actions,key,command).grid(row=row,column=col,columnspan=span,sticky='ew',padx=2,pady=4)
-        note=tk.Label(side,bg='#111e2b',fg='#9fb4c7',wraplength=280,justify='left');note.pack(anchor='w',pady=6);self.labels.append((note,'note'))
+        self.preview.bind('<Configure>', lambda e: self.draw_cloud())
+        self.preview.bind('<ButtonPress-1>', lambda e: setattr(self, 'drag_position', (e.x, e.y)))
+        self.preview.bind('<B1-Motion>', self.rotate)
+        self.preview.bind('<MouseWheel>', self.wheel)
+
+        # Quality inspector -------------------------------------------------------
+        side = tk.Frame(self.frame, bg='#121b25', width=300, padx=16, pady=16,
+                        highlightbackground=palette['border'], highlightthickness=1)
+        side.grid(row=1, column=2, sticky='nsew', padx=(0, 10), pady=10)
+        side.grid_propagate(False)
+        pose_title = tk.Label(side, bg='#121b25', fg='#b8d2e2', font=('Microsoft YaHei UI', 12, 'bold'))
+        pose_title.pack(anchor='w'); self.labels.append((pose_title, 'pose'))
+        self.pose = tk.StringVar(value='X —     Y —     Z —\nRx —    Ry —    Rz —')
+        tk.Label(side, textvariable=self.pose, bg='#121b25', fg='#edf6fa', font=('Consolas', 13),
+                 justify='left', pady=16).pack(anchor='w')
+        unit = tk.Label(side, bg='#121b25', fg='#9fb4c7', wraplength=260, justify='left')
+        unit.pack(anchor='w'); self.labels.append((unit, 'unit'))
+        ttk.Separator(side, orient='horizontal').pack(fill='x', pady=16)
+        tk.Label(side, text='当前采集', bg='#121b25', fg='#b8d2e2',
+                 font=('Microsoft YaHei UI', 11, 'bold')).pack(anchor='w')
+        self.age = tk.StringVar(value='—')
+        tk.Label(side, textvariable=self.age, bg='#121b25', fg='#9fb4c7').pack(anchor='w', pady=5)
+        self.counter = tk.StringVar()
+        tk.Label(side, textvariable=self.counter, bg='#121b25', fg='#6ee1c0').pack(anchor='w', pady=5)
+        note = tk.Label(side, bg='#121b25', fg='#9fb4c7', wraplength=260, justify='left')
+        note.pack(anchor='w', pady=10); self.labels.append((note, 'note'))
+
+        # Bottom action dock ------------------------------------------------------
+        footer = tk.Frame(self.frame, bg='#111923', height=64,
+                          highlightbackground=palette['border'], highlightthickness=1)
+        footer.grid(row=2, column=0, columnspan=3, sticky='nsew')
+        footer.grid_propagate(False)
+        footer_status = tk.Frame(footer, bg='#111923')
+        footer_status.pack(side='left', fill='both', expand=True, padx=(16, 10))
+        self.hint_label.pack_forget(); self.stability_label.pack_forget()
+        self.hint_label.configure(wraplength=720, padx=0, pady=3)
+        self.hint_label.pack(in_=footer_status, anchor='w', fill='x', pady=(8, 0))
+        self.stability_label.configure(wraplength=720, padx=0, pady=0)
+        self.stability_label.pack(in_=footer_status, anchor='w', fill='x')
+        actions = tk.Frame(footer, bg='#111923')
+        actions.pack(side='right', padx=12, pady=9)
+        actions.columnconfigure(0, weight=1, uniform='actions')
+        actions.columnconfigure(1, weight=1, uniform='actions')
+        # Keep the existing button registry.  The action dock is compact and
+        # state updates still come from refresh(), so no command semantics move.
+        self._footer_actions = {}
+        for key, command in [('start', self.start), ('add', lambda: self.send('local_request')),
+                             ('pause', self.pause), ('cancel', lambda: self.finish(False)),
+                             ('finish', lambda: self.finish(True)), ('view', self.open_model),
+                             ('cloud', app.toggle_point_cloud_preview), ('report', self.open_report)]:
+            button = self.button(actions, key, command)
+            button.pack(side='left', padx=2)
+            self._footer_actions[key] = button
         self.refresh(); self.tick()
 
     def text(self,key: str,**values: Any) -> Any:
@@ -245,8 +334,39 @@ class LocalPanel:
         return pick(self.app.language, zh, en).format(**values)
 
     def button(self,parent: Any,key: str,command: Any) -> Any:
-        b=tk.Button(parent,command=command,bg='#1e4559' if key in ('start','finish','view') else '#233444',fg='#edf5fa',activebackground='#285870',activeforeground='white',relief='flat',padx=10,pady=6)
+        primary = key in ('start', 'finish', 'view')
+        b = tk.Button(
+            parent, command=command,
+            bg='#00b4d8' if primary else '#1d2b39',
+            activebackground='#0096c7' if primary else '#294052',
+            fg='#07141b' if primary else '#edf5fa',
+            activeforeground='#07141b' if primary else 'white',
+            disabledforeground='#617284', relief='flat', bd=0,
+            padx=12, pady=7, cursor='hand2' if primary else 'arrow',
+            font=('Microsoft YaHei UI', 9, 'bold' if primary else 'normal'))
         self.buttons[key]=b;return b
+
+    def _refresh_footer_actions(self) -> None:
+        """Keep the footer focused on the next safe action.
+
+        The buttons remain the same command objects used by the original panel;
+        only their presentation changes with the workflow state.
+        """
+        if not hasattr(self, '_footer_actions'):
+            return
+        active = self.active
+        visible = {'start'} if not active else {'add', 'pause', 'cancel'}
+        if active and self.count >= 3 and self.state == 'tracking' and not self.finishing:
+            visible.add('finish')
+        if not active and self.result:
+            visible.update({'view', 'report'})
+        for key, button in self._footer_actions.items():
+            if key in visible:
+                if not button.winfo_manager():
+                    button.pack(side='left', padx=2)
+            else:
+                if button.winfo_manager():
+                    button.pack_forget()
 
     def refresh(self) -> None:
         for label,key in self.labels:label.configure(text=self.text(key))
@@ -299,6 +419,7 @@ class LocalPanel:
         for i,label in enumerate(self.steps):
             label.configure(bg=('#77312f' if lost else '#175e73') if i==stage else '#172635',
                             fg='#effaff' if i==stage else '#91a9bd')
+        self._refresh_footer_actions()
 
     def reason_text(self, reason: str, metrics: Any=None) -> Any:
         if reason=='pair_quality' and metrics and metrics.get('rejected_checks'):

@@ -83,9 +83,9 @@ class FemtoControlApp:
         self.root = root
         self.language = load_language()
         self.root.title(tr(self.language, "app.window_title"))
-        self.root.geometry("1460x900")
-        self.root.minsize(1120, 720)
-        self.root.configure(bg="#0b1118")
+        self.root.geometry("1600x900")
+        self.root.minsize(1280, 720)
+        self.root.configure(bg="#0f141c")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.command_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -195,33 +195,52 @@ class FemtoControlApp:
         style = ttk.Style()
         style.theme_use("clam")
         style.configure(
+            "TNotebook",
+            background="#0f141c",
+            borderwidth=0,
+            tabmargins=(0, 0, 0, 0),
+        )
+        style.configure(
+            "TNotebook.Tab",
+            background="#161d27",
+            foreground="#9fb2c4",
+            borderwidth=0,
+            padding=(18, 8),
+            font=("Microsoft YaHei UI", 9),
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", "#1d3547"), ("active", "#203c50")],
+            foreground=[("selected", "#eaf7fb"), ("active", "#eaf7fb")],
+        )
+        style.configure(
             "Dark.Horizontal.TProgressbar",
-            troughcolor="#1a2633",
-            background="#42d392",
-            bordercolor="#1a2633",
-            lightcolor="#42d392",
-            darkcolor="#42d392",
+            troughcolor="#1b2734",
+            background="#06d6a0",
+            bordercolor="#1b2734",
+            lightcolor="#06d6a0",
+            darkcolor="#06d6a0",
         )
         self.workbench = ttk.Notebook(self.root)
         self.workbench.pack(fill=tk.BOTH, expand=True)
-        local_host = tk.Frame(self.workbench, bg='#0b121a')
-        legacy_host = tk.Frame(self.workbench, bg='#0b1118')
+        local_host = tk.Frame(self.workbench, bg='#0f141c')
+        legacy_host = tk.Frame(self.workbench, bg='#0f141c')
         self.workbench.add(local_host, text='局部移动补采 / Local capture')
         self.workbench.add(legacy_host, text='固定采集与高级功能 / Advanced')
         from femto.app.app_local_panel import LocalPanel
         self.local_panel = LocalPanel(self, local_host)
-        shell = tk.Frame(legacy_host, bg="#0b1118")
+        shell = tk.Frame(legacy_host, bg="#0f141c")
         shell.pack(fill=tk.BOTH, expand=True, padx=18, pady=18)
         shell.grid_columnconfigure(0, weight=1)
         shell.grid_columnconfigure(1, minsize=360)
         shell.grid_rowconfigure(1, weight=1)
 
-        header = tk.Frame(shell, bg="#0b1118")
+        header = tk.Frame(shell, bg="#0f141c")
         header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
         self.heading_label = tk.Label(
             header,
             text=tr(self.language, "app.heading"),
-            bg="#0b1118",
+            bg="#0f141c",
             fg="#f2f7fb",
             font=("Microsoft YaHei UI", 19, "bold"),
         )
@@ -229,7 +248,7 @@ class FemtoControlApp:
         tk.Label(
             header,
             textvariable=self.device_var,
-            bg="#0b1118",
+            bg="#0f141c",
             fg="#8fa8bf",
             font=("Microsoft YaHei UI", 10),
         ).pack(anchor="w", pady=(5, 0))
@@ -478,7 +497,10 @@ class FemtoControlApp:
             bd=0,
             height=height,
             cursor="hand2",
-            font=("Microsoft YaHei UI", 11, "bold"),
+            highlightthickness=0,
+            padx=12,
+            pady=6,
+            font=("Microsoft YaHei UI", 10, "bold"),
         )
 
     def _t(self, key: str, **values: Any) -> str:
