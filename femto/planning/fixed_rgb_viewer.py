@@ -56,11 +56,14 @@ class FixedRGBViewer:
         self.side_canvas.create_window((0,0),window=side,anchor='nw',width=side_width)
         side.bind('<Configure>',lambda e:self.side_canvas.configure(scrollregion=self.side_canvas.bbox('all')))
         self.save_state=tk.StringVar(value=pick(self.language, '没有未保存的更改','No unsaved changes'))
-        tk.Label(side,textvariable=self.save_state,bg='#121b25',fg='#e7c27d',wraplength=285,justify='left').pack(fill='x',pady=4)
+        tk.Label(side,textvariable=self.save_state,bg='#121b25',fg='#ffd166',wraplength=285,justify='left',
+                 font=('Microsoft YaHei UI', 9, 'bold')).pack(fill='x',pady=2)
         self.task_feedback=tk.StringVar(value='')
-        tk.Label(side,textvariable=self.task_feedback,bg='#121b25',fg='#9ae1cf',wraplength=285,justify='left').pack(fill='x')
+        tk.Label(side,textvariable=self.task_feedback,bg='#121b25',fg='#9ae1cf',wraplength=285,justify='left',
+                 font=('Microsoft YaHei UI', 8)).pack(fill='x')
         self.draft_feedback=tk.StringVar(value='草稿：等待来源加载')
-        tk.Label(side,textvariable=self.draft_feedback,bg='#121b25',fg='#a4bdcf',wraplength=285,justify='left').pack(fill='x')
+        tk.Label(side,textvariable=self.draft_feedback,bg='#121b25',fg='#a4bdcf',wraplength=285,justify='left',
+                 font=('Microsoft YaHei UI', 8)).pack(fill='x')
         self.cancel_task_button=ttk.Button(side,text='取消当前任务',command=self.cancel_planning)
         self.cancel_task_button.pack(fill='x',pady=3)
         self.workspace_tabs=None
@@ -71,6 +74,16 @@ class FixedRGBViewer:
             for title in ('1 区域与禁区','2 路线演示','3 保存分享','高级'):
                 tab=tk.Frame(self.workspace_tabs,bg='#121b25');self.workspace_tabs.add(tab,text=title);tabs.append(tab)
             side,plan_side,save_side,advanced_side=tabs
+            for tab, title, subtitle in (
+                (side, '区域与禁区', '标记治疗区域，设置需要避让的范围'),
+                (plan_side, '路线演示', '生成路径并检查覆盖结果'),
+                (save_side, '保存分享', '保存规划方案和导出文件'),
+                (advanced_side, '高级诊断', '仅供研发和质量核查使用'),
+            ):
+                tk.Label(tab, text=title, bg='#121b25', fg='#e8eef5',
+                         font=('Microsoft YaHei UI', 12, 'bold')).pack(anchor='w', pady=(2, 1))
+                tk.Label(tab, text=subtitle, bg='#121b25', fg='#8fa2b5',
+                         font=('Microsoft YaHei UI', 8)).pack(anchor='w', pady=(0, 8))
         return side,plan_side,save_side,advanced_side
 
     def __init__(self,root,result,language='zh'):
@@ -236,9 +249,7 @@ class FixedRGBViewer:
         return pick(self.language, translations.get(error, error), error)
     def action(self,parent: Any,zh: str,en: str,fn: Any) -> Any:
         primary_names = {
-            'finish_polygon', 'plan_region_path', 'plan_metric_path',
-            'plan_coverage_path', 'plan_surface_spacing', 'present_region_path',
-            'save', 'export_region_path', 'save_region_project',
+            'finish_polygon', 'plan_surface_spacing', 'save',
         }
         style = 'Medical.Primary.TButton' if getattr(fn, '__name__', '') in primary_names else 'TButton'
         b=ttk.Button(parent,text=pick(self.language, zh,en),command=fn,style=style)
