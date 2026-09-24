@@ -21,13 +21,17 @@ class PreviewField:
 COVERAGE_FIELDS = (
     PreviewField('width_mm', '模拟扫描宽度 / mm', .2, 100.),
     PreviewField('overlap_percent', '相邻路线重叠率 / %', 0., 90.),
-    PreviewField('boundary_margin_mm', '额外选区内缩 / mm', 0., 50.),
+)
+COVERAGE_ADVANCED_FIELDS = (
+    PreviewField('boundary_margin_mm', '选区边缘内缩 / mm（会减少边缘覆盖）', 0., 50.),
 )
 SURFACE_FIELDS = (
     PreviewField('spacing_mm', '目标表面层间距 / mm', .1, 100.),
     PreviewField('sample_step_mm', '沿线最大采样步长 / mm', .1, 100.),
     PreviewField('width_mm', '模拟扫描宽度 / mm', .2, 100.),
-    PreviewField('boundary_margin_mm', '额外选区内缩 / mm', 0., 50.),
+)
+SURFACE_ADVANCED_FIELDS = (
+    PreviewField('boundary_margin_mm', '选区边缘内缩 / mm（会减少边缘覆盖）', 0., 50.),
     PreviewField('tolerance_mm', '间距报告容差 / mm', .01, 100.),
 )
 DIRECTIONS = {'水平往返': 'horizontal', '垂直往返': 'vertical'}
@@ -53,10 +57,12 @@ class PreviewSettingsDialog:
 
     def __init__(self, parent: Any, title: str, fields: tuple[PreviewField, ...],
                  initial: dict[str, Any], summary: Callable[[dict[str, float]], str],
-                 choices: dict[str, tuple[str, dict[str, str]]] | None = None) -> None:
+                 choices: dict[str, tuple[str, dict[str, str]]] | None = None,
+                 advanced_fields: tuple[PreviewField, ...] = ()) -> None:
         import tkinter as tk
         from tkinter import ttk
-        self.fields, self.summary = fields, summary
+        self.fields, self.advanced_fields, self.summary = fields, advanced_fields, summary
+        self.all_fields = fields + advanced_fields
         self.choices = choices or {}
         self.result = None
         self.window = tk.Toplevel(parent)
@@ -70,7 +76,7 @@ class PreviewSettingsDialog:
         tk.Label(body, text=title, **{**label_options, 'font': ('Microsoft YaHei UI', 14, 'bold')}).grid(
             row=0, column=0, columnspan=2, sticky='w')
         tk.Label(body, text='占位值，非设备参数。结果仅为几何预览。\n'
-                 '额外选区内缩会减少边缘覆盖，不代表探头外壳避让。',
+                 '探头外壳避让余量不在此处计算；正式治疗头参数中只记录，不参与规划。',
                  wraplength=440, justify='left', **{**label_options, 'fg': '#ffd166'}).grid(
             row=1, column=0, columnspan=2, sticky='w', pady=(8, 14))
         self.texts, self.choice_vars, self.entries = {}, {}, {}
@@ -84,13 +90,32 @@ class PreviewSettingsDialog:
                 row=row, column=1, sticky='e', padx=(18, 0), pady=6)
             row += 1
         for field in fields:
-            variable = tk.StringVar(self.window, value=f'{initial[field.key]:g}')
+            variable = tk.StringVar(self.window, value=f'{initial.get(field.key, 0.):g}')
             self.texts[field.key] = variable
             tk.Label(body, text=field.label, **label_options).grid(row=row, column=0, sticky='w', pady=6)
             entry = ttk.Entry(body, textvariable=variable, width=21)
             entry.grid(row=row, column=1, sticky='e', padx=(18, 0), pady=6)
             self.entries[field.key] = entry
             row += 1
+        self.advanced_enabled = tk.BooleanVar(self.window, value=False)
+        self.advanced_frame = None
+        if advanced_fields:
+            ttk.Checkbutton(body, text='显示高级几何参数', variable=self.advanced_enabled,
+                            command=self.toggle_advanced).grid(row=row, column=0, columnspan=2,
+                                                                sticky='w', pady=(8, 2))
+            row += 1
+            self.advanced_frame = tk.Frame(body, bg='#161d27')
+            self.advanced_frame.grid(row=row, column=0, columnspan=2, sticky='ew')
+            self.advanced_frame.grid_remove()
+            for field in advanced_fields:
+                variable = tk.StringVar(self.window, value=f'{initial.get(field.key, 0.):g}')
+                self.texts[field.key] = variable
+                tk.Label(self.advanced_frame, text=field.label, **label_options).grid(
+                    row=len(self.entries), column=0, sticky='w', pady=6)
+                entry = ttk.Entry(self.advanced_frame, textvariable=variable, width=21)
+                entry.grid(row=len(self.entries), column=1, sticky='e', padx=(18, 0), pady=6)
+                self.entries[field.key] = entry
+                row += 1
         self.feedback = tk.StringVar(self.window)
         self.feedback_label = tk.Label(body, textvariable=self.feedback, wraplength=440, justify='left',
                                        **{**label_options, 'fg': '#06d6a0'})
@@ -107,7 +132,15 @@ class PreviewSettingsDialog:
         self.refresh()
 
     def values(self) -> dict[str, float]:
-        return parse_fields(self.fields, {key: var.get() for key, var in self.texts.items()})
+        return parse_fields(self.all_fields, {key: var.get() for key, var in self.texts.items()})
+
+    def toggle_advanced(self) -> None:
+        if self.advanced_frame is None:
+            return
+        if self.advanced_enabled.get():
+            self.advanced_frame.grid()
+        else:
+            self.advanced_frame.grid_remove()
 
     def refresh(self, *_: Any) -> None:
         try:
@@ -143,12 +176,14 @@ def ask_coverage_settings(parent: Any, initial: dict[str, Any]) -> dict[str, Any
     dialog = PreviewSettingsDialog(parent, '固定 RGB 覆盖预览', COVERAGE_FIELDS, initial,
         lambda v: f"预计相邻行距：{v['width_mm'] * (1-v['overlap_percent']/100):g} mm\n"
                   '按固定画面选择起点，实际位置由表面与禁区决定。',
-        dict(direction=('往返方向', DIRECTIONS), start_corner=('起点偏好', CORNERS)))
+        dict(direction=('往返方向', DIRECTIONS), start_corner=('起点偏好', CORNERS)),
+        advanced_fields=COVERAGE_ADVANCED_FIELDS)
     return dialog.show()
 
 
 def ask_surface_settings(parent: Any, initial: dict[str, Any]) -> dict[str, Any] | None:
     dialog = PreviewSettingsDialog(parent, '三维表面间距预览', SURFACE_FIELDS, initial,
         lambda v: f"目标层间距：{v['spacing_mm']:g} mm · 采样步长：{v['sample_step_mm']:g} mm\n"
-                  '网格表面层间距近似；以生成后的间距报告为准。')
+                  '网格表面层间距近似；以生成后的间距报告为准。',
+        advanced_fields=SURFACE_ADVANCED_FIELDS)
     return dialog.show()

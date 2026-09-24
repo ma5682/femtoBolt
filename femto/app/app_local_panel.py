@@ -114,9 +114,9 @@ TEXT = {
  'calibration_changed': ('标定文件发生变化，本次不发布模型。', 'Calibration changed; no model published.'),
  'camera_error': ('相机读取发生错误，采集已中断；原始证据已保留。请检查设备连接并重启相机。',
                   'Camera read failed; capture interrupted and evidence retained. Check the connection and restart the camera.'),
- 'pose': ('空间位姿 · 估计值', 'Spatial pose · estimate'),
- 'unit': ('XYZ / mm；俯仰 Rx、偏航 Ry、滚转 Rz / °\n补采范围：距参考位置 ≤30 mm；相对初始朝向总旋转 ≤10°', 'XYZ / mm; pitch Rx, yaw Ry, roll Rz / °\nCapture: radius ≤30 mm from reference; total rotation ≤10°'),
- 'note': ('补采后更新累计点云；结束后生成最终模型。\n参考位置固定；坐标仅用于研发可视化。', 'Accumulated cloud after each capture; final model after finishing.\nReference position fixed; R&D coordinates only.'),
+ 'pose': ('当前姿态', 'Current pose'),
+ 'unit': ('保持目标位于视口中央；停稳后再请求补采。', 'Keep the target centered; hold still before requesting a view.'),
+ 'note': ('补采后更新累计点云；结束后生成最终模型。\n参考位置会保留，补采前请先停稳。', 'The accumulated cloud updates after each view; the final model is built after finishing.\nThe reference is retained; hold still before each view.'),
  'none': ('暂无当前任务模型', 'No current-session model'),
  'report': ('查看本次报告', 'Open session report'),
  'rejected': ('错误 / 拒绝原因：', 'Error / rejection: '),
@@ -269,6 +269,22 @@ class LocalPanel:
                  anchor='w', justify='left', wraplength=600).pack(side='left', fill='x', expand=True)
         self.hint = tk.StringVar()
         self.stability_text = tk.StringVar()
+        self.alert_frame = tk.Frame(main, bg='#5d2730', height=58,
+                                    highlightbackground='#ef476f', highlightthickness=1)
+        self.alert_frame.pack_propagate(False)
+        alert_copy = tk.Frame(self.alert_frame, bg='#5d2730')
+        alert_copy.pack(side='left', fill='both', expand=True, padx=(12, 8), pady=6)
+        self.alert_title = tk.StringVar(value='')
+        self.alert_detail = tk.StringVar(value='')
+        tk.Label(alert_copy, textvariable=self.alert_title, bg='#5d2730', fg='#fff3f4',
+                 anchor='w', font=('Microsoft YaHei UI', 10, 'bold')).pack(anchor='w')
+        tk.Label(alert_copy, textvariable=self.alert_detail, bg='#5d2730', fg='#ffd9dd',
+                 anchor='w', justify='left', wraplength=620, font=('Microsoft YaHei UI', 9)).pack(anchor='w')
+        self.alert_action = tk.Button(self.alert_frame, text='重新开始采集', command=self.restart_capture,
+                                      bg='#ef476f', fg='#250b12', activebackground='#d9345b',
+                                      activeforeground='white', relief='flat', bd=0, padx=12, pady=8,
+                                      font=('Microsoft YaHei UI', 9, 'bold'))
+        self.alert_action.pack(side='right', padx=(4, 12), pady=10)
         self.preview = tk.Label(main, bg=palette['viewport'], fg='#b2c4d5', text='RGB-D', anchor='center', width=1, height=1,
                                 highlightbackground=palette['border'], highlightthickness=1)
         self.preview.pack(fill='both', expand=True)
@@ -291,8 +307,8 @@ class LocalPanel:
         side.grid_propagate(False)
         pose_title = tk.Label(side, bg='#121b25', fg='#b8d2e2', font=('Microsoft YaHei UI', 12, 'bold'))
         pose_title.pack(anchor='w'); self.labels.append((pose_title, 'pose'))
-        self.pose = tk.StringVar(value='X —     Y —     Z —\nRx —    Ry —    Rz —')
-        tk.Label(side, textvariable=self.pose, bg='#121b25', fg='#edf6fa', font=('Consolas', 13),
+        self.pose = tk.StringVar(value='等待确认')
+        tk.Label(side, textvariable=self.pose, bg='#121b25', fg='#edf6fa', font=('Microsoft YaHei UI', 13, 'bold'),
                  justify='left', pady=16).pack(anchor='w')
         unit = tk.Label(side, bg='#121b25', fg='#9fb4c7', wraplength=260, justify='left')
         unit.pack(anchor='w'); self.labels.append((unit, 'unit'))
@@ -468,6 +484,39 @@ class LocalPanel:
         self._details_content.yview_moveto(position)
         self._details_text = content
 
+    def _refresh_alert(self) -> None:
+        """Show a compact blocking alert only when the next action is recovery."""
+        blocking = self.state in ('lost', 'tracking_lost', 'camera_error')
+        if not blocking:
+            self.alert_frame.pack_forget()
+            return
+        if self.state == 'camera_error':
+            title, action = '采集已中断', '重新开始采集'
+        else:
+            title, action = '跟踪已中断，需要重新采集', '结束并重新采集'
+        detail = self.hint.get().split('\n', 1)[0] or '当前结果未发布，已接纳数据仍保留在本次会话中。'
+        self.alert_title.set(title)
+        self.alert_detail.set(detail)
+        self.alert_action.configure(text=action)
+        if not self.alert_frame.winfo_manager():
+            self.alert_frame.pack(fill='x', before=self.preview)
+
+    def restart_capture(self) -> None:
+        """Cancel a failed session, then return to the first safe capture action."""
+        deadline = getattr(self, '_restart_deadline', None)
+        if deadline is None:
+            deadline = self._restart_deadline = time.monotonic() + 5.0
+        if self.active:
+            if time.monotonic() >= deadline:
+                self._restart_deadline = None
+                return
+            if not self.cancelling:
+                self.finish(False)
+            self.app.root.after(160, self.restart_capture)
+            return
+        self._restart_deadline = None
+        self.start()
+
     def show_status_details(self) -> None:
         if self._details_window is not None and self._details_window.winfo_exists():
             self._details_window.lift();return
@@ -602,6 +651,7 @@ class LocalPanel:
         self.hint_label.configure(bg=color)
         self._refresh_device_display()
         self._refresh_status_details()
+        self._refresh_alert()
 
     def send(self,command: Any,payload: Any=None) -> None:
         message=dict(session_id=self.session_id,value=payload)
@@ -621,7 +671,7 @@ class LocalPanel:
         self.notice=None;self.pitch=0.;self.yaw=0.;self.zoom=1.
         if hasattr(self,'center'):del self.center
         self.app.capturing=True;self.app.local_busy=True
-        self.set_view('live');self.pose.set('X —     Y —     Z —\nRx —    Ry —    Rz —')
+        self.set_view('live');self.pose.set('等待确认')
         self.send('local_start');self.app._set_action_state();self.refresh()
 
     def pause(self) -> None:
@@ -650,7 +700,7 @@ class LocalPanel:
             self.stability=self.record.get('candidate_stability')
             if self.record.get('continuity',{}).get('relocalized'):
                 self.notice='relocalized';self.notice_until=time.monotonic()+5.
-            if self.state!='tracking':self.pose.set('X —     Y —     Z —\nRx —    Ry —    Rz —')
+            if self.state!='tracking':self.pose.set('等待确认')
         elif kind=='local_stability':
             self.stability=payload['stability']
         elif kind=='local_notice':
@@ -665,7 +715,7 @@ class LocalPanel:
             self.state='ready' if kind=='local_finished' else 'cancelled' if kind=='local_cancelled' else payload.get('error','lost')
             self.failure=payload.get('failure',{}) if kind=='local_error' else None
             if payload.get('quality') is not None:self.quality=payload['quality']
-            if kind=='local_error':self.pose.set('X —     Y —     Z —\nRx —    Ry —    Rz —')
+            if kind=='local_error':self.pose.set('等待确认')
             if kind=='local_finished':
                 if payload.get('quality') is not None:self.quality=payload['quality']
                 self.result=Path(payload['result']);self.app.latest_result=self.result;self.app.latest_moving_result=self.result
@@ -697,13 +747,12 @@ class LocalPanel:
             if tracking_live and self.state not in ('lost','tracking_lost','camera_error'):
                 self.age.set(self.text('age',age=age,latency=r.get('latency_ms',0)))
             if self.failure is None and r['state']=='tracking' and self.state not in ('lost','tracking_lost','camera_error') and (not tracking_live or age<=2):
-                xyz=r['xyz_mm'];ang=r['pitch_yaw_roll_deg']
-                self.pose.set('X {:+.1f}  Y {:+.1f}  Z {:+.1f}\n'.format(*xyz)+('Rx {:+.1f} Ry {:+.1f} Rz {:+.1f}'.format(*ang) if ang else 'Rx —  Ry —  Rz —'))
+                self.pose.set('已跟踪')
             else:
-                self.pose.set('X —     Y —     Z —\nRx —    Ry —    Rz —')
+                self.pose.set('等待确认')
                 if tracking_live and age>2:
                     self.buttons['add'].configure(state='disabled')
-        else:self.pose.set('X —     Y —     Z —\nRx —    Ry —    Rz —')
+        else:self.pose.set('等待确认')
         self.app.root.after(150,self.tick)
 
     def set_view(self,view: Any) -> None:

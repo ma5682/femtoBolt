@@ -8,11 +8,11 @@ from femto.planning.treatment_head import PLACEHOLDER_DEFAULTS, head_parameters
 
 FIELDS = (
     ("row_spacing_mm", "指定行距 / mm"),
-    ("effective_treatment_width_mm", "有效治疗宽度 / mm"),
+    ("effective_treatment_width_mm", "有效作用宽度 / mm"),
     ("overlap_percent", "治疗重叠率 / %"),
     ("treatment_depth_mm", "治疗深度 / mm（仅记录）"),
-    ("head_diameter_mm", "治疗头直径 / mm（仅记录）"),
-    ("safety_margin_mm", "安全边界 / mm（仅记录）"),
+    ("head_diameter_mm", "治疗头外壳直径 / mm（仅记录）"),
+    ("safety_margin_mm", "探头外壳避让余量 / mm（仅记录）"),
 )
 
 
@@ -25,7 +25,10 @@ def collect(mode: str, texts: dict[str, str]) -> dict[str, Any]:
         try:
             values[key] = float(texts[key].strip())
         except (KeyError, ValueError):
-            raise ValueError(f"{label} 不是有效数字") from None
+            # Keep the established report wording for machine/readback
+            # compatibility while the clinician form uses “有效作用宽度”.
+            error_label = "有效治疗宽度 / mm" if key == "effective_treatment_width_mm" else label
+            raise ValueError(f"{error_label} 不是有效数字") from None
     return head_parameters(mode, **values)
 
 
@@ -39,22 +42,43 @@ def ask_treatment_head(parent: Any, initial: dict[str, Any] | None = None) -> di
     window.title("治疗头参数")
     window.transient(parent)
     window.resizable(False, False)
-    body = ttk.Frame(window, padding=12)
+    body = ttk.Frame(window, padding=14)
     body.pack(fill="both", expand=True)
-    ttk.Label(body, text="默认值为占位值，不是设备参数。只有行距影响轨迹；深度、直径、安全边界仅写入记录。",
-              wraplength=380, justify="left").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+    ttk.Label(body, text="默认值为占位值，不是设备参数。只有行距影响轨迹；深度、直径和探头外壳避让余量仅写入记录。",
+              wraplength=420, justify="left").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
     mode = tk.StringVar(value=initial.get("mode", "direct_row_spacing"))
     ttk.Radiobutton(body, text="直接指定行距", variable=mode, value="direct_row_spacing").grid(row=1, column=0, columnspan=2, sticky="w")
     ttk.Radiobutton(body, text="根据有效治疗宽度自动计算", variable=mode, value="from_effective_width").grid(row=2, column=0, columnspan=2, sticky="w")
     texts: dict[str, tk.StringVar] = {}
     entries: dict[str, Any] = {}
-    for index, (key, label) in enumerate(FIELDS, start=3):
+    basic_fields = FIELDS[:3]
+    deferred_fields = FIELDS[3:]
+    for index, (key, label) in enumerate(basic_fields, start=3):
         ttk.Label(body, text=label).grid(row=index, column=0, sticky="w", pady=2)
         texts[key] = tk.StringVar(value=f"{initial.get(key, PLACEHOLDER_DEFAULTS[key]):g}")
         entries[key] = ttk.Entry(body, textvariable=texts[key], width=10)
         entries[key].grid(row=index, column=1, sticky="e", pady=2)
+    advanced = tk.BooleanVar(value=False)
+    advanced_toggle = ttk.Checkbutton(body, text="显示高级记录参数", variable=advanced)
+    advanced_toggle.grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 2))
+    advanced_frame = ttk.Frame(body)
+    advanced_frame.grid(row=7, column=0, columnspan=2, sticky="ew")
+    advanced_frame.grid_remove()
+    for index, (key, label) in enumerate(deferred_fields):
+        ttk.Label(advanced_frame, text=label).grid(row=index, column=0, sticky="w", pady=2)
+        texts[key] = tk.StringVar(value=f"{initial.get(key, PLACEHOLDER_DEFAULTS[key]):g}")
+        entries[key] = ttk.Entry(advanced_frame, textvariable=texts[key], width=10)
+        entries[key].grid(row=index, column=1, sticky="e", pady=2)
+
+    def toggle_advanced(*_: Any) -> None:
+        if advanced.get():
+            advanced_frame.grid()
+        else:
+            advanced_frame.grid_remove()
+
+    advanced_toggle.configure(command=toggle_advanced)
     computed = tk.StringVar()
-    ttk.Label(body, textvariable=computed, wraplength=380, justify="left").grid(row=len(FIELDS) + 3, column=0, columnspan=2, sticky="w", pady=(8, 0))
+    ttk.Label(body, textvariable=computed, wraplength=420, justify="left").grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 0))
     result: list[dict[str, Any] | None] = [None]
     ok = ttk.Button(body, text="生成")
 
@@ -81,7 +105,7 @@ def ask_treatment_head(parent: Any, initial: dict[str, Any] | None = None) -> di
     for value in texts.values():
         value.trace_add("write", refresh)
     buttons = ttk.Frame(body)
-    buttons.grid(row=len(FIELDS) + 4, column=0, columnspan=2, sticky="e", pady=(10, 0))
+    buttons.grid(row=9, column=0, columnspan=2, sticky="e", pady=(10, 0))
     ok.configure(command=accept)
     ok.pack(in_=buttons, side="left")
     ttk.Button(buttons, text="取消", command=window.destroy).pack(side="left", padx=(6, 0))

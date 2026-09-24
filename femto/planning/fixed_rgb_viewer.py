@@ -28,7 +28,7 @@ PRODUCT_SINGLE_REGION=True
 class FixedRGBViewer:
     def _build_main_area(self,root):
         main=tk.Frame(root,bg='#0f141c');main.pack(side='left',fill='both',expand=True)
-        tk.Label(main,text=pick(self.language, '固定初始相机视角 · 图像选区 / 三维映射','Locked initial camera · RGB selection / 3D mapping'),
+        tk.Label(main,text=pick(self.language, '步骤 2 · 标记区域并检查三维几何','Step 2 · Mark regions and check 3D geometry'),
             fg='#e8eef5',bg='#0f141c',font=('Microsoft YaHei UI',16,'bold'),pady=12).pack(fill='x')
         self.status=tk.StringVar(value=pick(self.language, '正在读取参考照片与三维表面…','Loading reference RGB and surface…'))
         tk.Label(main,textvariable=self.status,fg='#9ae1cf',bg='#18303c',wraplength=680,justify='left',pady=8).pack(fill='x')
@@ -195,11 +195,12 @@ class FixedRGBViewer:
         self.action(self.planning_tools,'固定RGB蛇形覆盖','Fixed RGB serpentine coverage',self.plan_coverage_path)
         self.action(self.planning_tools,'三维表面间距规划','3D surface spacing',self.plan_surface_spacing)
         self.action(self.planning_tools,'播放路线 / 检查覆盖','Route diagram / export PNG',self.present_region_path)
+        self.action(plan_side,'确认路线并进入保存','Confirm route and continue to save',self.confirm_route)
         self.action(save_side if self.workspace_tabs else self.planning_tools,'导出分享包（模型＋路线）','Export region + path / diagram / ZIP',self.export_region_path)
         self.action(advanced_side if self.workspace_tabs else self.planning_tools,'回读并核验路径 JSON','Load / validate path JSON',self.load_region_path)
         self.action(advanced_side if self.workspace_tabs else self.planning_tools,'清除路径预览','Clear path preview',self.clear_path_preview)
-        tk.Label(side,text=pick(self.language, 'RGB 照片不代表每个像素有深度。\n绿色：几何支持；青色：首帧缺深度处获得几何支持。\n坐标为估计值，未做实物精度验证；仅用于研发。',
-            'RGB visibility does not guarantee depth.\nGreen: geometry support; cyan: support where reference depth is missing.\nEstimated coordinates; physical accuracy unverified. R&D only.'),
+        tk.Label(side,text=pick(self.language, 'RGB 画面用于标记区域；绿色表示已有三维支持，青色表示需要进一步核对。\n未覆盖或几何待确认的位置不会自动进入最终方案。',
+            'Use the RGB view to mark regions. Green indicates 3D support; cyan needs review.\nUncovered or unconfirmed geometry is not added to the final plan automatically.'),
             bg='#121b25',fg='#a4bdcf',wraplength=285,justify='left').pack(fill='x',pady=10)
         def scroll_side(e):
             self.side_canvas.yview_scroll(-1 if e.delta>0 else 1,'units');return 'break'
@@ -241,9 +242,14 @@ class FixedRGBViewer:
         b=ttk.Button(parent,text=pick(self.language, zh,en),command=fn,style=style)
         b.pack(fill='x',pady=3);self.widgets.append(b)
         name=getattr(fn,'__name__','')
-        if name in ('plan_region_path','plan_metric_path','plan_surface_spacing','plan_coverage_path','present_region_path','export_region_path','load_region_path','clear_path_preview','save_region_project'):
+        if name in ('plan_region_path','plan_metric_path','plan_surface_spacing','plan_coverage_path','present_region_path','export_region_path','load_region_path','clear_path_preview','save_region_project','confirm_route'):
             self._plan_buttons[name]=b
         return b
+
+    def select_workspace_stage(self, index: int) -> None:
+        """Move the clinician to the next stage without opening another window."""
+        if self.workspace_tabs:
+            self.workspace_tabs.select(index)
     def work(self,fn: Any,done: Any) -> None:
         if self.busy or self.closed:return
         if getattr(self,'_draft_ready',False):
@@ -608,7 +614,7 @@ class FixedRGBViewer:
             self.cancel_plan_button.configure(state='normal' if self.busy and self.operation=='path_preview' else 'disabled')
         for name,button in self._plan_buttons.items():
             enabled=(state['can_save'] if name.startswith('save_region_project') else
-                     state['can_use'] if name in ('present_region_path','export_region_path') else state['can_generate'])
+                     state['can_use'] if name in ('present_region_path','export_region_path','confirm_route') else state['can_generate'])
             button.configure(state='normal' if enabled else 'disabled')
         if hasattr(self,'cancel_task_button'):self.cancel_task_button.configure(state='normal' if self.busy and not getattr(self.task_cancel,'committed',False) else 'disabled')
         if getattr(self,'_draft_ready',False) and not self.busy:self._draft_due=time.monotonic()+.75
@@ -875,9 +881,10 @@ class FixedRGBViewer:
                     'work_only':'Single result submitted: work area only. Pink shows the result to save and export.',
                     'full_minus_forbidden':'Single result submitted: forbidden area only. Pink shows all remaining content.',
                     'work_minus_forbidden':'Single result submitted: work minus forbidden areas. Forbidden marks outside work are ignored.'}[method])
-                    +self.selection_summary(item))
-                if self.workspace_tabs:
-                    self.workspace_tabs.select(1)
+                    +self.selection_summary(item)
+                    +pick(self.language, ' 已进入路线步骤，请先核对三维支持状态。',
+                          ' The route step is ready; check 3D support before generating a path.'))
+                self.select_workspace_stage(1)
             self.draw()
         self.operation='region'
         self.work(lambda:model.region(polygon,name,note,cancel=self.operation_cancel(),
@@ -1152,6 +1159,7 @@ class FixedRGBViewer:
                 except OSError as error:self.draft_feedback.set('旧入口草稿清理失败：'+str(error))
             self.draft_journal=Journal(self.project_path);self._draft_signature=None;self._draft_due=0
         self.status.set(getattr(self.model,'last_save_warning',None) or '方案已保存（参考图、几何、禁区和有效路线）：'+str(path))
+        self.select_workspace_stage(2)
 
     def open_region_project(self) -> None:
         if self.busy:return
@@ -1198,6 +1206,7 @@ class FixedRGBViewer:
         self._plans[plan['region_id']]=plan;self._requests[plan['region_id']]=parameters(plan)
         self._plan_errors.pop(plan['region_id'],None)
         self.update_save_state();self.draw()
+        self.select_workspace_stage(1)
         count=summary['segment_count'];points=summary['sample_count']
         length=summary['total_segment_length_m']*1000
         self.status.set(pick(self.language, f'路径：{count}段 / {points}点 / 段内折线总长{length:.1f} mm。连续链内含换行连接；断链不跨越，仅预览。',
@@ -1234,7 +1243,10 @@ class FixedRGBViewer:
         from femto.planning.preview_settings_dialog import ask_surface_settings
         defaults = {key: self.parameter_default('surface_spacing', key, default)
                     for key, default in (('spacing_mm', 5.), ('sample_step_mm', 1.),
-                                         ('width_mm', 4.), ('boundary_margin_mm', 1.), ('tolerance_mm', 1.))}
+                                         ('width_mm', 4.), ('tolerance_mm', 1.))}
+        # Keep the active preview inset off by default.  Treatment-head
+        # housing clearance is recorded separately and never inferred here.
+        defaults['boundary_margin_mm'] = 0.
         values = ask_surface_settings(self.root, defaults)
         if values is None:return
         from femto.planning.surface_spacing import surface_spacing_plan
@@ -1281,10 +1293,10 @@ class FixedRGBViewer:
                 self.parameter_default('serpentine_v3', 'overlap_percent',
                 self.parameter_default('serpentine_v2', 'overlap_percent',
                 self.parameter_default('serpentine', 'overlap_percent', 20.))))),
-            'boundary_margin_mm': saved.get('boundary_margin_mm', self.parameter_default('serpentine_v4', 'boundary_margin_mm',
-                self.parameter_default('serpentine_v3', 'boundary_margin_mm',
-                self.parameter_default('serpentine_v2', 'boundary_margin_mm',
-                self.parameter_default('serpentine', 'boundary_margin_mm', 1.))))),
+            # Housing clearance is a deferred treatment-head record, not an
+            # active region inset.  The optional preview inset starts at zero
+            # so a previous research value cannot silently change coverage.
+            'boundary_margin_mm': 0.,
         }
         defaults.update(direction=saved.get('direction', 'horizontal'),
                         start_corner=saved.get('start_corner', 'top_left'))
@@ -1338,7 +1350,16 @@ class FixedRGBViewer:
         self.work(lambda:export_path(plan,model.store,model.reconstruction/'region_paths',region,
             presentation=(model.rgb,model.projection.ids),check=GeometryBudget(self.operation_cancel()).check,
             progress=self.operation_progress,commit=self.operation_commit),
-            lambda folder:self.status.set(pick(self.language, '路径已导出：','Path exported: ')+str(folder)))
+            lambda folder:(self.select_workspace_stage(2), self.status.set(
+                pick(self.language, '路径已导出：','Path exported: ')+str(folder))))
+
+    def confirm_route(self) -> None:
+        state = self.planning_state()
+        if not state['can_use']:
+            self.status.set('当前路线还不能确认：'+state['reason'])
+            return
+        self.select_workspace_stage(2)
+        self.status.set('路线已核对，请在“保存”步骤保存方案或导出分享包。')
 
     def present_region_path(self) -> None:
         if self.busy:return
