@@ -301,6 +301,14 @@ class LocalPanel:
         unit = tk.Label(side, bg='#121b25', fg='#9fb4c7', wraplength=260, justify='left')
         unit.pack(anchor='w'); self.labels.append((unit, 'unit'))
         ttk.Separator(side, orient='horizontal').pack(fill='x', pady=16)
+        tk.Label(side, text='采集信息', bg='#121b25', fg='#b8d2e2',
+                 font=('Microsoft YaHei UI', 11, 'bold')).pack(anchor='w')
+        self.device_summary = tk.StringVar(value='相机状态 · 等待连接')
+        tk.Label(side, textvariable=self.device_summary, bg='#121b25', fg='#78d9b2',
+                 font=('Microsoft YaHei UI', 9)).pack(anchor='w', pady=(5, 2))
+        self.surface_summary = tk.StringVar(value='三维表面 · 等待采集')
+        tk.Label(side, textvariable=self.surface_summary, bg='#121b25', fg='#9fb4c7',
+                 font=('Microsoft YaHei UI', 9)).pack(anchor='w', pady=(0, 8))
         tk.Label(side, text='当前采集', bg='#121b25', fg='#b8d2e2',
                  font=('Microsoft YaHei UI', 11, 'bold')).pack(anchor='w')
         self.age = tk.StringVar(value='—')
@@ -317,11 +325,17 @@ class LocalPanel:
         footer.grid_propagate(False)
         footer_status = tk.Frame(footer, bg='#111923')
         footer_status.pack(side='left', fill='both', expand=True, padx=(16, 10))
-        self.hint_label.pack_forget(); self.stability_label.pack_forget()
-        self.hint_label.configure(wraplength=720, padx=0, pady=3)
-        self.hint_label.pack(in_=footer_status, anchor='w', fill='x', pady=(8, 0))
-        self.stability_label.configure(wraplength=720, padx=0, pady=0)
-        self.stability_label.pack(in_=footer_status, anchor='w', fill='x')
+        # Tk widgets cannot be reparented with pack(in_=...).  Replace the
+        # temporary viewport labels with footer-owned labels once the dock
+        # exists, while keeping the same StringVars and state update hooks.
+        self.hint_label.destroy()
+        self.stability_label.destroy()
+        self.hint_label = tk.Label(footer_status, textvariable=self.hint, bg='#142738', fg='#d6e6ef',
+            anchor='w', justify='left', wraplength=720, padx=0, pady=3)
+        self.hint_label.pack(anchor='w', fill='x', pady=(8, 0))
+        self.stability_label = tk.Label(footer_status, textvariable=self.stability_text, bg='#142738', fg='#a4dccf',
+            anchor='w', justify='left', wraplength=720, padx=0, pady=0)
+        self.stability_label.pack(anchor='w', fill='x')
         actions = tk.Frame(footer, bg='#111923')
         actions.pack(side='right', padx=12, pady=9)
         actions.columnconfigure(0, weight=1, uniform='actions')
@@ -419,6 +433,13 @@ class LocalPanel:
         self.buttons['report'].configure(state='normal' if self.source and (not self.active or self.quality) else 'disabled')
         self.buttons['cloud'].configure(state='normal' if self.app.camera_ready else 'disabled')
         self.counter.set(self.text('count',n=self.count))
+        self.device_summary.set('相机状态 · 已连接' if self.app.camera_ready else '相机状态 · 等待连接')
+        if self.result and not self.active:
+            self.surface_summary.set('三维表面 · 已生成')
+        elif self.active:
+            self.surface_summary.set('三维表面 · 正在采集')
+        else:
+            self.surface_summary.set('三维表面 · 等待采集')
         lost = self.state in ('lost','tracking_lost','camera_error')
         stage=(1 if lost else 0 if self.state=='waiting' else 3 if self.state=='mark' else
                2 if self.result and not self.active else 1 if self.active else -1)
