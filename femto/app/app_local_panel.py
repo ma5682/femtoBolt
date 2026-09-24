@@ -114,9 +114,9 @@ TEXT = {
  'calibration_changed': ('标定文件发生变化，本次不发布模型。', 'Calibration changed; no model published.'),
  'camera_error': ('相机读取发生错误，采集已中断；原始证据已保留。请检查设备连接并重启相机。',
                   'Camera read failed; capture interrupted and evidence retained. Check the connection and restart the camera.'),
- 'pose': ('相对初始原点 · 估计值', 'Relative to initial origin · estimates'),
- 'unit': ('XYZ / mm；俯仰 Rx、偏航 Ry、滚转 Rz / °\n补采范围：距原点 ≤30 mm；相对初始朝向总旋转 ≤10°', 'XYZ / mm; pitch Rx, yaw Ry, roll Rz / °\nCapture: radius ≤30 mm; total rotation from W0 ≤10°'),
- 'note': ('补采后更新累计点云；结束后生成最终模型。\n原点固定；坐标仅用于研发可视化。', 'Accumulated cloud after each capture; final model after finishing.\nFixed origin; R&D coordinates only.'),
+ 'pose': ('空间位姿 · 估计值', 'Spatial pose · estimate'),
+ 'unit': ('XYZ / mm；俯仰 Rx、偏航 Ry、滚转 Rz / °\n补采范围：距参考位置 ≤30 mm；相对初始朝向总旋转 ≤10°', 'XYZ / mm; pitch Rx, yaw Ry, roll Rz / °\nCapture: radius ≤30 mm from reference; total rotation ≤10°'),
+ 'note': ('补采后更新累计点云；结束后生成最终模型。\n参考位置固定；坐标仅用于研发可视化。', 'Accumulated cloud after each capture; final model after finishing.\nReference position fixed; R&D coordinates only.'),
  'none': ('暂无当前任务模型', 'No current-session model'),
  'report': ('查看本次报告', 'Open session report'),
  'rejected': ('错误 / 拒绝原因：', 'Error / rejection: '),
@@ -217,6 +217,15 @@ class LocalPanel:
         header_actions.pack(side='right', fill='y', padx=16)
         tk.Label(header_actions, text='项目回放 · 只读', bg='#1b2a39', fg=palette['text'],
                  padx=14, pady=7, font=('Microsoft YaHei UI', 9)).pack(side='left', pady=15, padx=(0, 10))
+        if hasattr(self.app, 'workbench'):
+            tk.Button(
+                header_actions, text='高级工具', command=lambda: self.app.workbench.select(1),
+                bg='#1d2b39', activebackground='#294052', fg=palette['text'],
+                activeforeground=palette['text'], relief='flat', bd=0,
+                padx=12, pady=7, font=('Microsoft YaHei UI', 9), cursor='hand2',
+            ).pack(side='left', pady=15, padx=4)
+        self.button(header_actions, 'comparison', self.open_comparison).pack(side='left', padx=4, pady=15)
+        self.button(header_actions, 'history', self.open_history).pack(side='left', padx=4, pady=15)
 
         # Vertical workflow stepper ---------------------------------------------
         sidebar = tk.Frame(self.frame, bg='#121b25',

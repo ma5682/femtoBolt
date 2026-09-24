@@ -252,6 +252,21 @@ class FemtoControlApp:
             fg="#8fa8bf",
             font=("Microsoft YaHei UI", 10),
         ).pack(anchor="w", pady=(5, 0))
+        tk.Button(
+            header,
+            text="返回三维采集",
+            command=lambda: self.workbench.select(0),
+            bg="#1d2b39",
+            activebackground="#294052",
+            fg="#e8eef5",
+            activeforeground="#e8eef5",
+            relief=tk.FLAT,
+            bd=0,
+            padx=12,
+            pady=6,
+            cursor="hand2",
+            font=("Microsoft YaHei UI", 9),
+        ).pack(side="right", anchor="n", pady=(4, 0))
 
         preview_frame = tk.Frame(shell, bg="#05080c", highlightbackground="#26394d", highlightthickness=1)
         preview_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 16))

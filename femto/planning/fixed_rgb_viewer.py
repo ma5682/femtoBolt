@@ -49,10 +49,11 @@ class FixedRGBViewer:
     def _build_sidebar_shell(self,root):
         sidebar=tk.Frame(root,bg='#121b25',highlightbackground='#243042',highlightthickness=1);sidebar.pack(side='right',fill='y')
         scroll=ttk.Scrollbar(sidebar,orient='vertical');scroll.pack(side='right',fill='y')
-        self.side_canvas=tk.Canvas(sidebar,width=380 if self.result.is_file() else 320,bg='#121b25',highlightthickness=0,yscrollcommand=scroll.set)
+        side_width = 320 if self.result.is_file() else 300
+        self.side_canvas=tk.Canvas(sidebar,width=side_width,bg='#121b25',highlightthickness=0,yscrollcommand=scroll.set)
         self.side_canvas.pack(side='left',fill='y');scroll.configure(command=self.side_canvas.yview)
         side=tk.Frame(self.side_canvas,bg='#121b25',padx=14,pady=14)
-        self.side_canvas.create_window((0,0),window=side,anchor='nw',width=380 if self.result.is_file() else 320)
+        self.side_canvas.create_window((0,0),window=side,anchor='nw',width=side_width)
         side.bind('<Configure>',lambda e:self.side_canvas.configure(scrollregion=self.side_canvas.bbox('all')))
         self.save_state=tk.StringVar(value=pick(self.language, '没有未保存的更改','No unsaved changes'))
         tk.Label(side,textvariable=self.save_state,bg='#121b25',fg='#e7c27d',wraplength=285,justify='left').pack(fill='x',pady=4)
@@ -95,6 +96,10 @@ class FixedRGBViewer:
                         borderwidth=0, padding=(10, 7), font=('Microsoft YaHei UI', 9))
         style.map('TButton', background=[('active', '#294052'), ('disabled', '#17212b')],
                   foreground=[('disabled', '#617284')])
+        style.configure('Medical.Primary.TButton', background='#00b4d8', foreground='#07141b',
+                        borderwidth=0, padding=(10, 8), font=('Microsoft YaHei UI', 9, 'bold'))
+        style.map('Medical.Primary.TButton', background=[('active', '#0096c7'), ('disabled', '#1b3945')],
+                  foreground=[('disabled', '#6f8893')])
         style.configure('TNotebook', background='#121b25', borderwidth=0)
         style.configure('TNotebook.Tab', background='#1b2a39', foreground='#9fb2c4',
                         padding=(12, 7), font=('Microsoft YaHei UI', 9))
@@ -137,12 +142,12 @@ class FixedRGBViewer:
         self.overlay=tk.BooleanVar(value=False)
         self.display_mode=tk.StringVar(value='rgb')
         display_row=ttk.Frame(side);display_row.pack(fill='x',pady=5)
-        for value,zh,en in [('rgb','RGB','RGB'),('cloud','纯点云','Cloud'),('distance','距原点着色','W0 distance')]:
+        for value,zh,en in [('rgb','RGB','RGB'),('cloud','纯点云','Cloud'),('distance','距离着色','Distance')]:
             ttk.Radiobutton(display_row,text=pick(self.language, zh,en),value=value,variable=self.display_mode,command=self.draw).pack(side='left')
         ttk.Checkbutton(side,text=pick(self.language, '显示三维支持范围','Show geometry support'),variable=self.overlay,command=self.draw).pack(anchor='w',pady=5)
         self.show_axes=tk.BooleanVar(value=True)
         self.show_optical_axis=tk.BooleanVar(value=False)
-        ttk.Checkbutton(side,text=pick(self.language, '显示坐标方向（W0）','Show W0 directions'),variable=self.show_axes,command=self.draw).pack(anchor='w',pady=3)
+        ttk.Checkbutton(side,text=pick(self.language, '显示参考方向','Show reference directions'),variable=self.show_axes,command=self.draw).pack(anchor='w',pady=3)
         ttk.Checkbutton(side,text=pick(self.language, '显示光轴参考线','Show optical-axis guides'),variable=self.show_optical_axis,command=self.draw).pack(anchor='w',pady=3)
         self.action(side,'完成区域选择','Finish area selection',self.finish_polygon)
         self.exclusion_target=None
@@ -184,8 +189,8 @@ class FixedRGBViewer:
             self.action(save_side,'打开已有方案…','Open portable region workspace',self.open_region_project)
         self.planning_tools=tk.Frame(plan_side,bg='#121b25')
         if self.result.is_file():self.planning_tools.pack(fill='x')
-        self.action(advanced_side if self.workspace_tabs else self.planning_tools,'像素扫描路径（预览）','Pixel raster path preview',self.plan_region_path)
-        self.action(advanced_side if self.workspace_tabs else self.planning_tools,'毫米曲面路径（近似）','Metric surface contours (approx.)',self.plan_metric_path)
+        self.action(plan_side if self.workspace_tabs else self.planning_tools,'像素扫描路径（预览）','Pixel raster path preview',self.plan_region_path)
+        self.action(plan_side if self.workspace_tabs else self.planning_tools,'毫米曲面路径（近似）','Metric surface contours (approx.)',self.plan_metric_path)
         self.cancel_plan_button=ttk.Button(self.planning_tools,text='取消当前规划任务',command=self.cancel_planning)
         self.cancel_plan_button.pack(fill='x',pady=3)
         self.action(self.planning_tools,'固定RGB蛇形覆盖','Fixed RGB serpentine coverage',self.plan_coverage_path)
@@ -230,7 +235,14 @@ class FixedRGBViewer:
         }
         return pick(self.language, translations.get(error, error), error)
     def action(self,parent: Any,zh: str,en: str,fn: Any) -> Any:
-        b=ttk.Button(parent,text=pick(self.language, zh,en),command=fn);b.pack(fill='x',pady=3);self.widgets.append(b)
+        primary_names = {
+            'finish_polygon', 'plan_region_path', 'plan_metric_path',
+            'plan_coverage_path', 'plan_surface_spacing', 'present_region_path',
+            'save', 'export_region_path', 'save_region_project',
+        }
+        style = 'Medical.Primary.TButton' if getattr(fn, '__name__', '') in primary_names else 'TButton'
+        b=ttk.Button(parent,text=pick(self.language, zh,en),command=fn,style=style)
+        b.pack(fill='x',pady=3);self.widgets.append(b)
         name=getattr(fn,'__name__','')
         if name in ('plan_region_path','plan_metric_path','plan_surface_spacing','plan_coverage_path','present_region_path','export_region_path','load_region_path','clear_path_preview','save_region_project'):
             self._plan_buttons[name]=b
@@ -350,9 +362,9 @@ class FixedRGBViewer:
             tint[valid]=tint[valid]*.6+np.array([40,220,90])*.4
             tint[new]=model.rgb[new]*.5+np.array([40,210,240])*.5
             self.support_image=Image.fromarray(tint.astype(np.uint8))
-        self.info.set(pick(self.language, '固定初始彩色相机 W0','Initial color camera W0')+
+        self.info.set(pick(self.language, '空间基准已锁定','Spatial reference locked')+
             f"\n{model.reconstruction.parent.name}\n"+pick(self.language, '参考帧：','Reference frame: ')+str(model.view_reference['reference_frame_id'])+
-            '\nRDF · X '+pick(self.language, '右 / Y 下 / Z 前','right / Y down / Z forward')+
+            '\n参考方向 · X '+pick(self.language, '右 / Y 下 / Z 前','right / Y down / Z forward')+
             pick(self.language, '\n本模型接纳位姿最大半径：','\nMax accepted pose radius: ')+f'{model.max_radius_mm:.1f} mm')
         self.status.set(pick(self.language, '画面已锁定。请选择有三维支持的表面。','View locked. Select a supported surface.')+
             (pick(self.language, ' 此历史模型超出当前 30 mm 补采半径。',' This historical model exceeds the current 30 mm capture radius.') if model.max_radius_mm>30 else ''))
@@ -417,7 +429,7 @@ class FixedRGBViewer:
             label=pick(self.language, '网格顶点点云 · 固定视角 · 无 RGB 背景','Mesh vertex cloud · fixed view · no RGB background')
             if self.display_mode.get()=='distance':
                 low,high=self.cloud_view['limits']
-                label+=pick(self.language, f'\n距 W0：蓝 {low:.1f} → 红 {high:.1f} mm',f'\nW0 distance: blue {low:.1f} → red {high:.1f} mm')
+                label+=pick(self.language, f'\n距离着色：蓝 {low:.1f} → 红 {high:.1f} mm',f'\nDistance: blue {low:.1f} → red {high:.1f} mm')
             self.canvas.create_text(12,h-12,anchor='sw',text=label,fill='#ffffff',tags='cloud_legend')
         for i,p in enumerate(self.model.store.points):
             uv=self.model.display_for('point',p)
@@ -457,11 +469,11 @@ class FixedRGBViewer:
                 if left<=x<=right:self.canvas.create_line(x,top,x,bottom,fill='#70e1a2',dash=(6,4),tags='coordinate_guide')
                 if left<=x<=right and top<=y<=bottom:
                     self.canvas.create_oval(x-5,y-5,x+5,y+5,outline='#7fbdff',width=2,tags='coordinate_guide')
-                    self.canvas.create_text(x+9,y+9,anchor='nw',text=pick(self.language, '光轴中心（非原点）','Optical axis (not W0)'),fill='#ffffff',tags='coordinate_guide')
+                    self.canvas.create_text(x+9,y+9,anchor='nw',text=pick(self.language, '光轴中心（非参考点）','Optical axis (not reference point)'),fill='#ffffff',tags='coordinate_guide')
         if self.show_axes.get():
             c=self.canvas;tag='coordinate_guide'
             c.create_rectangle(12,12,268,142,fill='#0f141c',outline='#395268',tags=tag)
-            c.create_text(24,24,anchor='nw',text=pick(self.language, 'W0 坐标方向示意 · 无比例','W0 directions · not to scale'),fill='#dceaf4',tags=tag)
+            c.create_text(24,24,anchor='nw',text=pick(self.language, '参考方向示意 · 无比例','Reference directions · not to scale'),fill='#dceaf4',tags=tag)
             x,y=40,65
             c.create_line(x,y,x+65,y,arrow='last',fill='#ff7777',width=2,tags=tag)
             c.create_text(x+70,y,text='+X',anchor='w',fill='#ff7777',tags=tag)
@@ -471,7 +483,7 @@ class FixedRGBViewer:
             c.create_line(x-3,y-3,x+3,y+3,fill='#7fbdff',tags=tag)
             c.create_line(x-3,y+3,x+3,y-3,fill='#7fbdff',tags=tag)
             c.create_text(150,80,text=pick(self.language, '+Z 向前\n进入画面','+Z forward\ninto image'),anchor='w',fill='#7fbdff',tags=tag)
-            c.create_text(24,120,anchor='nw',text=pick(self.language, '原点在初始相机光心','W0: initial camera optical centre'),fill='#a4bdcf',tags=tag)
+            c.create_text(24,120,anchor='nw',text=pick(self.language, '参考点在初始相机光心','Reference point: initial camera optical centre'),fill='#a4bdcf',tags=tag)
 
     def image_pixel(self,x: Any,y: Any) -> Any:
         return (np.array([x,y])-self.offset)/self.scale
@@ -1023,7 +1035,7 @@ class FixedRGBViewer:
         if kind=='point':
             xyz,d=point_readout_mm(item['point_world_m'])
             text='\n'.join(f'{axis}: {value:.1f} mm' for axis,value in zip('XYZ',xyz))
-            text+='\n'+pick(self.language, '距初始原点：','Distance to W0: ')+f'{d:.1f} mm'
+            text+='\n'+pick(self.language, '距参考位置：','Distance to reference: ')+f'{d:.1f} mm'
             if len(self.model.store.points)>=2:
                 d2=distance_m(*self.model.store.points[-2:])*1000
                 text+='\n'+pick(self.language, '末两点距离：','Last pair: ')+f'{d2:.1f} mm'
@@ -1033,7 +1045,7 @@ class FixedRGBViewer:
             from femto.annotation.fixed_rgb_geometry import region_vertex_summary
             summary=region_vertex_summary(self.model.store.mesh,item['triangle_indices'])
             text+='\n'+pick(self.language, '区域顶点点云：','Region mesh vertices: ')+str(summary['vertex_count'])
-            text+='\n'+pick(self.language, '顶点距原点范围：','Vertex distance to W0: ')+f"{summary['minimum_distance_mm']:.1f}–{summary['maximum_distance_mm']:.1f} mm"
+            text+='\n'+pick(self.language, '顶点距参考位置范围：','Vertex distance to reference: ')+f"{summary['minimum_distance_mm']:.1f}–{summary['maximum_distance_mm']:.1f} mm"
             support=item.get('geometry_support')
             if support:
                 text+='\n'+pick(self.language, '图像几何支持：','Image geometry support: ')+f"{support['geometry_supported_pixels']} / {support['requested_pixels']} px"
