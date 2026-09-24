@@ -75,12 +75,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Connect, save one RGB-D photo and exit without opening the GUI",
     )
+    parser.add_argument("--ui-preview", action="store_true",
+                        help="Open the real UI without connecting to a camera")
     return parser.parse_args()
 
 
 class FemtoControlApp:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(self, root: tk.Tk, *, connect_camera: bool = True) -> None:
         self.root = root
+        self.ui_preview = not connect_camera
         self.language = load_language()
         self.root.title(tr(self.language, "app.window_title"))
         self.root.geometry("1600x900")
@@ -151,7 +154,13 @@ class FemtoControlApp:
         self._load_latest_paths()
         self._build_ui()
         self._set_action_state()
-        self._start_camera()
+        if connect_camera:
+            self._start_camera()
+        else:
+            self.status_var.set('界面预览 · 未连接设备')
+            self.detail_var.set('采集操作已禁用。退出后正常启动可连接相机。')
+            self.preview_label.configure(text='界面预览 · 未连接设备')
+            self.local_panel.preview.configure(text='界面预览 · 未连接设备')
         self.root.after(30, self._update_preview)
         self.root.after(80, self._poll_events)
 
@@ -192,35 +201,8 @@ class FemtoControlApp:
             self.latest_gsplat_model = None
 
     def _build_advanced_shell(self):
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure(
-            "TNotebook",
-            background="#0f141c",
-            borderwidth=0,
-            tabmargins=(0, 0, 0, 0),
-        )
-        style.configure(
-            "TNotebook.Tab",
-            background="#161d27",
-            foreground="#9fb2c4",
-            borderwidth=0,
-            padding=(18, 8),
-            font=("Microsoft YaHei UI", 9),
-        )
-        style.map(
-            "TNotebook.Tab",
-            background=[("selected", "#1d3547"), ("active", "#203c50")],
-            foreground=[("selected", "#eaf7fb"), ("active", "#eaf7fb")],
-        )
-        style.configure(
-            "Dark.Horizontal.TProgressbar",
-            troughcolor="#1b2734",
-            background="#06d6a0",
-            bordercolor="#1b2734",
-            lightcolor="#06d6a0",
-            darkcolor="#06d6a0",
-        )
+        from femto.ui_theme import apply_workstation_theme
+        apply_workstation_theme(self.root)
         self.workbench = ttk.Notebook(self.root)
         self.workbench.pack(fill=tk.BOTH, expand=True)
         local_host = tk.Frame(self.workbench, bg='#0f141c')
@@ -1005,7 +987,7 @@ def main() -> int:
         sys.stderr = (log_dir / "femto_control_stderr.log").open("a", encoding="utf-8", buffering=1)
     enable_windows_dpi_awareness()
     root = tk.Tk()
-    FemtoControlApp(root)
+    FemtoControlApp(root, connect_camera=not args.ui_preview)
     root.mainloop()
     return 0
 

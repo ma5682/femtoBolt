@@ -210,12 +210,14 @@ class LocalPanel:
                          text=self.text('title'), font=('Microsoft YaHei UI', 16, 'bold'))
         title.pack(anchor='w', pady=(14, 1))
         self.labels.append((title, 'title'))
+        self.reference_summary = tk.StringVar(value='')
         tk.Label(title_block, bg=palette['panel'], fg=palette['muted'],
-                 text='项目：当前采集会话  ·  空间基准已锁定',
+                 textvariable=self.reference_summary,
                  font=('Microsoft YaHei UI', 9)).pack(anchor='w')
         header_actions = tk.Frame(header, bg=palette['panel'])
         header_actions.pack(side='right', fill='y', padx=16)
-        tk.Label(header_actions, text='项目回放 · 只读', bg='#1b2a39', fg=palette['text'],
+        self.mode_summary = tk.StringVar(value='')
+        tk.Label(header_actions, textvariable=self.mode_summary, bg='#1b2a39', fg=palette['text'],
                  padx=14, pady=7, font=('Microsoft YaHei UI', 9)).pack(side='left', pady=15, padx=(0, 10))
         if hasattr(self.app, 'workbench'):
             tk.Button(
@@ -228,10 +230,15 @@ class LocalPanel:
         self.button(header_actions, 'history', self.open_history).pack(side='left', padx=4, pady=15)
 
         # Vertical workflow stepper ---------------------------------------------
-        sidebar = tk.Frame(self.frame, bg='#121b25',
+        sidebar = tk.Frame(self.frame, bg='#121b25', width=220,
                            highlightbackground=palette['border'], highlightthickness=1)
         sidebar.grid(row=1, column=0, sticky='nsew')
         sidebar.grid_propagate(False)
+        self.device_status = tk.StringVar(value='')
+        self.device_status_label = tk.Label(sidebar, textvariable=self.device_status,
+                 bg='#121b25', fg=palette['muted'], justify='left', anchor='w', wraplength=180,
+                 font=('Microsoft YaHei UI', 9), padx=18, pady=16)
+        self.device_status_label.pack(side='bottom', fill='x')
         tk.Label(sidebar, text='工作流程', bg='#121b25', fg=palette['muted'],
                  font=('Microsoft YaHei UI', 9, 'bold')).pack(anchor='w', padx=22, pady=(20, 8))
         steps = tk.Frame(sidebar, bg='#121b25')
@@ -242,9 +249,6 @@ class LocalPanel:
                              padx=18, pady=14, font=('Microsoft YaHei UI', 10, 'bold'))
             label.pack(fill='x', pady=(0, 7))
             self.labels.append((label, key)); self.steps.append(label)
-        tk.Label(sidebar, text='设备状态\n● 相机已连接\n● 标定文件已加载',
-                 bg='#121b25', fg='#78d9b2', justify='left', anchor='w',
-                 font=('Microsoft YaHei UI', 9), padx=22, pady=16).pack(side='bottom', fill='x')
 
         # Dominant viewport -------------------------------------------------------
         main = tk.Frame(self.frame, bg=palette['viewport'])
@@ -264,15 +268,7 @@ class LocalPanel:
         tk.Label(preview_options, textvariable=self.preview_status, bg=palette['viewport'], fg=palette['muted'],
                  anchor='w', justify='left', wraplength=600).pack(side='left', fill='x', expand=True)
         self.hint = tk.StringVar()
-        self.hint_label = tk.Label(main, textvariable=self.hint, bg='#142738', fg='#d6e6ef',
-            anchor='w', justify='left', wraplength=600, padx=12, pady=7)
-        self.hint_label.pack(fill='x')
         self.stability_text = tk.StringVar()
-        self.stability_label = tk.Label(main, textvariable=self.stability_text, bg='#142738', fg='#a4dccf',
-            anchor='w', justify='left', wraplength=600, padx=12, pady=4)
-        self.stability_label.pack(fill='x')
-        main.bind('<Configure>', lambda e: (self.hint_label.configure(wraplength=max(180, e.width-28)),
-                                            self.stability_label.configure(wraplength=max(180, e.width-28))))
         self.preview = tk.Label(main, bg=palette['viewport'], fg='#b2c4d5', text='RGB-D', anchor='center', width=1, height=1,
                                 highlightbackground=palette['border'], highlightthickness=1)
         self.preview.pack(fill='both', expand=True)
@@ -319,27 +315,28 @@ class LocalPanel:
         note.pack(anchor='w', pady=10); self.labels.append((note, 'note'))
 
         # Bottom action dock ------------------------------------------------------
-        footer = tk.Frame(self.frame, bg='#111923', height=64,
+        footer = tk.Frame(self.frame, bg='#111923', height=82,
                           highlightbackground=palette['border'], highlightthickness=1)
         footer.grid(row=2, column=0, columnspan=3, sticky='nsew')
         footer.grid_propagate(False)
+        footer.columnconfigure(0, weight=1)
+        footer.columnconfigure(1, weight=0)
+        footer.rowconfigure(0, weight=1)
         footer_status = tk.Frame(footer, bg='#111923')
-        footer_status.pack(side='left', fill='both', expand=True, padx=(16, 10))
-        # Tk widgets cannot be reparented with pack(in_=...).  Replace the
-        # temporary viewport labels with footer-owned labels once the dock
-        # exists, while keeping the same StringVars and state update hooks.
-        self.hint_label.destroy()
-        self.stability_label.destroy()
-        self.hint_label = tk.Label(footer_status, textvariable=self.hint, bg='#142738', fg='#d6e6ef',
-            anchor='w', justify='left', wraplength=720, padx=0, pady=3)
-        self.hint_label.pack(anchor='w', fill='x', pady=(8, 0))
-        self.stability_label = tk.Label(footer_status, textvariable=self.stability_text, bg='#142738', fg='#a4dccf',
-            anchor='w', justify='left', wraplength=720, padx=0, pady=0)
-        self.stability_label.pack(anchor='w', fill='x')
+        footer_status.grid(row=0, column=0, sticky='nsew', padx=(14, 12), pady=6)
+        footer_status.columnconfigure(0, weight=1)
+        footer_status.rowconfigure(0, weight=1)
+        self.footer_hint = tk.StringVar(value='')
+        self.hint_label = tk.Label(footer_status, textvariable=self.footer_hint, bg='#111923', fg='#d6e6ef',
+            anchor='w', justify='left', wraplength=540, width=1, height=2, padx=8, pady=3)
+        self.hint_label.grid(row=0, column=0, sticky='nsew')
+        self.details_button = tk.Button(footer_status, text=pick(self.app.language, '状态详情', 'Status details'),
+            command=self.show_status_details, bg='#1d2b39', fg='#edf5fa', activebackground='#294052',
+            activeforeground='white', relief='flat', bd=0, padx=9, pady=7, font=('Microsoft YaHei UI', 9))
+        self.details_button.grid(row=0, column=1, padx=(8, 0))
+        self.hint_label.bind('<Configure>', lambda e: self.hint_label.configure(wraplength=max(80, e.width-18)))
         actions = tk.Frame(footer, bg='#111923')
-        actions.pack(side='right', padx=12, pady=9)
-        actions.columnconfigure(0, weight=1, uniform='actions')
-        actions.columnconfigure(1, weight=1, uniform='actions')
+        actions.grid(row=0, column=1, sticky='e', padx=(0, 12), pady=9)
         # Keep the existing button registry.  The action dock is compact and
         # state updates still come from refresh(), so no command semantics move.
         self._footer_actions = {}
@@ -348,8 +345,16 @@ class LocalPanel:
                              ('finish', lambda: self.finish(True)), ('view', self.open_model),
                              ('cloud', app.toggle_point_cloud_preview), ('report', self.open_report)]:
             button = self.button(actions, key, command)
-            button.pack(side='left', padx=2)
             self._footer_actions[key] = button
+        self.more_button = tk.Menubutton(actions, text=pick(self.app.language, '更多 ▾', 'More ▾'),
+            bg='#1d2b39', fg='#edf5fa', activebackground='#294052', activeforeground='white',
+            relief='flat', bd=0, padx=12, pady=13, font=('Microsoft YaHei UI', 9))
+        self.more_menu = tk.Menu(self.more_button, tearoff=False, bg='#192431', fg='#edf5fa',
+            activebackground='#294052', activeforeground='white', font=('Microsoft YaHei UI', 10))
+        self.more_button.configure(menu=self.more_menu)
+        self._details_window = None
+        self._details_content = None
+        self._details_text = ''
         self.refresh(); self.tick()
 
     def text(self,key: str,**values: Any) -> Any:
@@ -377,19 +382,109 @@ class LocalPanel:
         """
         if not hasattr(self, '_footer_actions'):
             return
-        active = self.active
-        visible = {'start'} if not active else {'add', 'pause', 'cancel'}
-        if active and self.count >= 3 and self.state == 'tracking' and not self.finishing:
-            visible.add('finish')
-        if not active and self.result:
-            visible.update({'view', 'report'})
+        if self.active:
+            primary = 'finish' if self.finishing or (self.count >= 3 and self.state == 'tracking') else 'add'
+            visible = ('pause', 'cancel', primary)
+        else:
+            primary = 'view' if self.result else 'start'
+            visible = (primary,)
         for key, button in self._footer_actions.items():
-            if key in visible:
-                if not button.winfo_manager():
-                    button.pack(side='left', padx=2)
-            else:
-                if button.winfo_manager():
-                    button.pack_forget()
+            enabled = str(button.cget('state')) != 'disabled'
+            emphasized = key == primary and enabled
+            button.configure(bg='#00b4d8' if emphasized else '#1d2b39',
+                activebackground='#0096c7' if key == primary else '#294052',
+                fg='#07141b' if emphasized else '#edf5fa',
+                activeforeground='#07141b' if key == primary else 'white',
+                pady=13, font=('Microsoft YaHei UI', 9, 'bold' if key == primary else 'normal'))
+        if visible != getattr(self, '_footer_layout', None):
+            for button in self._footer_actions.values():button.pack_forget()
+            self.more_button.pack_forget()
+            self.more_button.pack(side='left', padx=(0, 6))
+            for key in visible:self._footer_actions[key].pack(side='left', padx=2)
+            self._footer_layout = visible
+        # Use the same buttons' invoke/state so overflow controls retain their
+        # existing command gates, including reports after a failed capture.
+        self.more_menu.delete(0, 'end')
+        for key in ('start', 'add', 'finish', 'report', 'cloud'):
+            if key in visible or (key in ('add', 'finish') and not self.active):continue
+            button = self._footer_actions[key]
+            self.more_menu.add_command(label=button.cget('text'), command=button.invoke,
+                                       state=button.cget('state'))
+
+    def _refresh_device_display(self) -> None:
+        """Present only observed device/session state; no synthetic quality metrics."""
+        zh = self.app.language == 'zh'
+        ready = bool(getattr(self.app, 'camera_ready', False))
+        intrinsics = getattr(self.app, 'camera_intrinsics', None)
+        distortion = getattr(self.app, 'camera_rgb_distortion', None)
+        camera = ('相机 · 已连接' if ready else '相机 · 未就绪') if zh else ('Camera · connected' if ready else 'Camera · not ready')
+        calibration = (('标定参数 · 已读取' if intrinsics is not None and distortion is not None else '标定参数 · 未读取')
+                       if zh else ('Calibration parameters · loaded' if intrinsics is not None and distortion is not None else 'Calibration parameters · unavailable'))
+        if not ready and intrinsics is not None:
+            calibration = '标定参数 · 待设备确认' if zh else 'Calibration parameters · awaiting device'
+        if self.count > 0 or self.result:
+            reference = '参考位置已建立' if zh else 'Reference position established'
+            if self.active and self.state != 'tracking':
+                reference = '参考位置已保留 · 当前定位待确认' if zh else 'Reference retained · current pose unconfirmed'
+            elif self.state in ('lost', 'tracking_lost', 'camera_error'):
+                reference = '本次参考位置已保留 · 跟踪已中断' if zh else 'Session reference retained · tracking stopped'
+        else:
+            reference = '参考位置尚未建立' if zh else 'Reference position not established'
+        if getattr(self.app, 'ui_preview', False):
+            mode = '界面预览 · 未连接设备' if zh else 'UI preview · no device'
+        elif self.active:
+            mode = ('正在处理' if self.finishing else '实时采集') if zh else ('Processing' if self.finishing else 'Live capture')
+        elif self.result:
+            mode = '模型检查' if zh else 'Model review'
+        else:
+            mode = '采集待命' if zh else 'Capture standby'
+        self.mode_summary.set(mode)
+        self.reference_summary.set(reference)
+        self.device_status.set(('设备状态\n' if zh else 'Device status\n')+camera+'\n'+calibration)
+        self.device_status_label.configure(fg=self.palette['muted'] if not ready else '#b8d2e2')
+        self.device_summary.set(camera)
+        if self.result and not self.active:
+            surface = '三维表面 · 已生成' if zh else '3D surface · generated'
+        elif self.active:
+            surface = '三维表面 · 正在处理' if self.finishing else '三维表面 · 正在采集'
+            if not zh:surface = '3D surface · processing' if self.finishing else '3D surface · capturing'
+        else:
+            surface = '三维表面 · 等待采集' if zh else '3D surface · awaiting capture'
+        self.surface_summary.set(surface)
+
+    def _refresh_status_details(self) -> None:
+        first_line = self.hint.get().split('\n', 1)[0]
+        self.footer_hint.set(first_line)
+        window = self._details_window
+        if window is None or not window.winfo_exists():return
+        content = '\n\n'.join(value for value in (self.hint.get(), self.stability_text.get(),
+            self.preview_status.get(), self.device_status.get()) if value)
+        if content == self._details_text:return
+        position = self._details_content.yview()[0]
+        self._details_content.configure(state='normal')
+        self._details_content.delete('1.0', 'end')
+        self._details_content.insert('end', content)
+        self._details_content.configure(state='disabled')
+        self._details_content.yview_moveto(position)
+        self._details_text = content
+
+    def show_status_details(self) -> None:
+        if self._details_window is not None and self._details_window.winfo_exists():
+            self._details_window.lift();return
+        window = self._details_window = tk.Toplevel(self.app.root)
+        window.title(pick(self.app.language, '采集状态详情', 'Capture status details'))
+        window.geometry('700x420');window.minsize(460, 260)
+        window.configure(bg='#161d27');window.transient(self.app.root)
+        body = tk.Frame(window, bg='#161d27', padx=12, pady=12);body.pack(fill='both', expand=True)
+        scroll = ttk.Scrollbar(body);scroll.pack(side='right', fill='y')
+        self._details_content = tk.Text(body, bg='#111923', fg='#e8eef5', insertbackground='#e8eef5',
+            wrap='word', relief='flat', padx=12, pady=12, font=('Microsoft YaHei UI', 10),
+            yscrollcommand=scroll.set, state='disabled')
+        self._details_content.pack(fill='both', expand=True)
+        scroll.configure(command=self._details_content.yview)
+        tk.Button(window, text=pick(self.app.language, '关闭', 'Close'), command=window.destroy,
+            bg='#1d2b39', fg='#e8eef5', relief='flat', padx=24, pady=8).pack(pady=(0, 12))
+        self._details_text = '';self._refresh_status_details()
 
     def refresh(self) -> None:
         for label,key in self.labels:label.configure(text=self.text(key))
@@ -433,13 +528,6 @@ class LocalPanel:
         self.buttons['report'].configure(state='normal' if self.source and (not self.active or self.quality) else 'disabled')
         self.buttons['cloud'].configure(state='normal' if self.app.camera_ready else 'disabled')
         self.counter.set(self.text('count',n=self.count))
-        self.device_summary.set('相机状态 · 已连接' if self.app.camera_ready else '相机状态 · 等待连接')
-        if self.result and not self.active:
-            self.surface_summary.set('三维表面 · 已生成')
-        elif self.active:
-            self.surface_summary.set('三维表面 · 正在采集')
-        else:
-            self.surface_summary.set('三维表面 · 等待采集')
         lost = self.state in ('lost','tracking_lost','camera_error')
         stage=(1 if lost else 0 if self.state=='waiting' else 3 if self.state=='mark' else
                2 if self.result and not self.active else 1 if self.active else -1)
@@ -512,6 +600,8 @@ class LocalPanel:
             from femto.tracking.local_tracking_diagnostics import feedback_text
             self.hint.set(self.hint.get()+'\n'+feedback_text(record,self.count,time.monotonic(),True,self.app.language))
         self.hint_label.configure(bg=color)
+        self._refresh_device_display()
+        self._refresh_status_details()
 
     def send(self,command: Any,payload: Any=None) -> None:
         message=dict(session_id=self.session_id,value=payload)

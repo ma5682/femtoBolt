@@ -71,12 +71,12 @@ class FixedRGBViewer:
         if self.result.is_file() or self.result.is_dir():
             self.workspace_tabs=ttk.Notebook(side);self.workspace_tabs.pack(fill='both',expand=True)
             tabs=[]
-            for title in ('1 区域与禁区','2 路线演示','3 保存分享','高级'):
+            for title in ('1 区域','2 路线','3 保存','高级'):
                 tab=tk.Frame(self.workspace_tabs,bg='#121b25');self.workspace_tabs.add(tab,text=title);tabs.append(tab)
             side,plan_side,save_side,advanced_side=tabs
             for tab, title, subtitle in (
-                (side, '区域与禁区', '标记治疗区域，设置需要避让的范围'),
-                (plan_side, '路线演示', '生成路径并检查覆盖结果'),
+                (side, '区域与禁区', '标记规划区域与禁止区域'),
+                (plan_side, '路线演示', '计算几何预览并检查覆盖'),
                 (save_side, '保存分享', '保存规划方案和导出文件'),
                 (advanced_side, '高级诊断', '仅供研发和质量核查使用'),
             ):
@@ -103,22 +103,8 @@ class FixedRGBViewer:
         self.mailbox=queue.Queue(maxsize=1);self.widgets=[]
         root.title(pick(self.language, 'Femto · 固定 RGB 选区与三维坐标','Femto · Fixed RGB annotation'))
         root.geometry('1280x820');root.minsize(1000,720);root.configure(bg='#0f141c')
-        style = ttk.Style(root)
-        style.theme_use('clam')
-        style.configure('TButton', background='#1d2b39', foreground='#e8eef5',
-                        borderwidth=0, padding=(10, 7), font=('Microsoft YaHei UI', 9))
-        style.map('TButton', background=[('active', '#294052'), ('disabled', '#17212b')],
-                  foreground=[('disabled', '#617284')])
-        style.configure('Medical.Primary.TButton', background='#00b4d8', foreground='#07141b',
-                        borderwidth=0, padding=(10, 8), font=('Microsoft YaHei UI', 9, 'bold'))
-        style.map('Medical.Primary.TButton', background=[('active', '#0096c7'), ('disabled', '#1b3945')],
-                  foreground=[('disabled', '#6f8893')])
-        style.configure('TNotebook', background='#121b25', borderwidth=0)
-        style.configure('TNotebook.Tab', background='#1b2a39', foreground='#9fb2c4',
-                        padding=(12, 7), font=('Microsoft YaHei UI', 9))
-        style.map('TNotebook.Tab', background=[('selected', '#1d3547'), ('active', '#203c50')],
-                  foreground=[('selected', '#e8eef5'), ('active', '#e8eef5')])
-        root.configure(bg='#0f141c')
+        from femto.ui_theme import apply_workstation_theme
+        apply_workstation_theme(root)
         root.protocol('WM_DELETE_WINDOW',self.close)
         self._build_main_area(root)
         side,plan_side,save_side,advanced_side=self._build_sidebar_shell(root)
@@ -158,7 +144,7 @@ class FixedRGBViewer:
         for value,zh,en in [('rgb','RGB','RGB'),('cloud','纯点云','Cloud'),('distance','距离着色','Distance')]:
             ttk.Radiobutton(display_row,text=pick(self.language, zh,en),value=value,variable=self.display_mode,command=self.draw).pack(side='left')
         ttk.Checkbutton(side,text=pick(self.language, '显示三维支持范围','Show geometry support'),variable=self.overlay,command=self.draw).pack(anchor='w',pady=5)
-        self.show_axes=tk.BooleanVar(value=True)
+        self.show_axes=tk.BooleanVar(value=False)
         self.show_optical_axis=tk.BooleanVar(value=False)
         ttk.Checkbutton(side,text=pick(self.language, '显示参考方向','Show reference directions'),variable=self.show_axes,command=self.draw).pack(anchor='w',pady=3)
         ttk.Checkbutton(side,text=pick(self.language, '显示光轴参考线','Show optical-axis guides'),variable=self.show_optical_axis,command=self.draw).pack(anchor='w',pady=3)
@@ -202,8 +188,8 @@ class FixedRGBViewer:
             self.action(save_side,'打开已有方案…','Open portable region workspace',self.open_region_project)
         self.planning_tools=tk.Frame(plan_side,bg='#121b25')
         if self.workspace_tabs:self.planning_tools.pack(fill='x')
-        self.action(plan_side if self.workspace_tabs else self.planning_tools,'像素扫描路径（预览）','Pixel raster path preview',self.plan_region_path)
-        self.action(plan_side if self.workspace_tabs else self.planning_tools,'毫米曲面路径（近似）','Metric surface contours (approx.)',self.plan_metric_path)
+        self.action(advanced_side if self.workspace_tabs else self.planning_tools,'像素扫描路径（预览）','Pixel raster path preview',self.plan_region_path)
+        self.action(advanced_side if self.workspace_tabs else self.planning_tools,'毫米曲面路径（近似）','Metric surface contours (approx.)',self.plan_metric_path)
         self.cancel_plan_button=ttk.Button(self.planning_tools,text='取消当前规划任务',command=self.cancel_planning)
         self.cancel_plan_button.pack(fill='x',pady=3)
         self.action(self.planning_tools,'固定RGB蛇形覆盖','Fixed RGB serpentine coverage',self.plan_coverage_path)
@@ -1048,7 +1034,10 @@ class FixedRGBViewer:
         if kind=='point':
             xyz,d=point_readout_mm(item['point_world_m'])
             text='\n'.join(f'{axis}: {value:.1f} mm' for axis,value in zip('XYZ',xyz))
-            text+='\n'+pick(self.language, '距参考位置：','Distance to reference: ')+f'{d:.1f} mm'
+            # This readout belongs to the Advanced diagnostics panel; retain
+            # the precise technical term there while the clinician path uses
+            # the plain-language labels in the main workflow.
+            text+='\n'+pick(self.language, '距初始原点：','Distance to W0: ')+f'{d:.1f} mm'
             if len(self.model.store.points)>=2:
                 d2=distance_m(*self.model.store.points[-2:])*1000
                 text+='\n'+pick(self.language, '末两点距离：','Last pair: ')+f'{d2:.1f} mm'
@@ -1058,7 +1047,7 @@ class FixedRGBViewer:
             from femto.annotation.fixed_rgb_geometry import region_vertex_summary
             summary=region_vertex_summary(self.model.store.mesh,item['triangle_indices'])
             text+='\n'+pick(self.language, '区域顶点点云：','Region mesh vertices: ')+str(summary['vertex_count'])
-            text+='\n'+pick(self.language, '顶点距参考位置范围：','Vertex distance to reference: ')+f"{summary['minimum_distance_mm']:.1f}–{summary['maximum_distance_mm']:.1f} mm"
+            text+='\n'+pick(self.language, '顶点距原点范围：','Vertex distance to W0: ')+f"{summary['minimum_distance_mm']:.1f}–{summary['maximum_distance_mm']:.1f} mm"
             support=item.get('geometry_support')
             if support:
                 text+='\n'+pick(self.language, '图像几何支持：','Image geometry support: ')+f"{support['geometry_supported_pixels']} / {support['requested_pixels']} px"
@@ -1242,13 +1231,12 @@ class FixedRGBViewer:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
             self.status.set('请单选一个已完成区域。');return
-        values={}
-        for key,label,default,minimum,maximum in [('spacing_mm','目标网格表面层间距 / mm（非精确测地等距）',5.,.1,100.),
-                ('sample_step_mm','沿扫描线最大采样步长 / mm',1.,.1,100.),('width_mm','模拟扫描宽度 / mm',4.,.2,100.),
-                ('boundary_margin_mm','额外边界预留 / mm',1.,0.,50.),('tolerance_mm','间距报告容差 / mm（超差会明确显示）',1.,.01,100.)]:
-            value=simpledialog.askfloat('三维表面间距模式',label,initialvalue=self.parameter_default('surface_spacing',key,default),minvalue=minimum,maxvalue=maximum,parent=self.root)
-            if value is None:return
-            values[key]=value
+        from femto.planning.preview_settings_dialog import ask_surface_settings
+        defaults = {key: self.parameter_default('surface_spacing', key, default)
+                    for key, default in (('spacing_mm', 5.), ('sample_step_mm', 1.),
+                                         ('width_mm', 4.), ('boundary_margin_mm', 1.), ('tolerance_mm', 1.))}
+        values = ask_surface_settings(self.root, defaults)
+        if values is None:return
         from femto.planning.surface_spacing import surface_spacing_plan
         model=self.model;region=model.store.regions[self.focus[1]];self.operation='path_preview'
         self._requests[region['annotation_id']]=dict(kind='surface_spacing',values=dict(pattern='surface_spacing_v1',**values))
@@ -1275,22 +1263,41 @@ class FixedRGBViewer:
         self.root.wait_window(window)
         return result[0] if result else None
 
+    def coverage_settings(self) -> Any:
+        from femto.planning.preview_settings_dialog import ask_coverage_settings
+        # Reopen the same clinician-facing form with the values from the
+        # latest route request.  Older request schemas remain readable, but
+        # must not overwrite newer values while looking for a fallback.
+        request = self._requests.get(self.planning_region_id(), {})
+        saved = request.get('values', {}) if request.get('kind') in {
+            'serpentine', 'serpentine_v2', 'serpentine_v3', 'serpentine_v4'
+        } else {}
+        defaults = {
+            'width_mm': saved.get('width_mm', self.parameter_default('serpentine_v4', 'width_mm',
+                self.parameter_default('serpentine_v3', 'width_mm',
+                self.parameter_default('serpentine_v2', 'width_mm',
+                self.parameter_default('serpentine', 'width_mm', 10.))))),
+            'overlap_percent': saved.get('overlap_percent', self.parameter_default('serpentine_v4', 'overlap_percent',
+                self.parameter_default('serpentine_v3', 'overlap_percent',
+                self.parameter_default('serpentine_v2', 'overlap_percent',
+                self.parameter_default('serpentine', 'overlap_percent', 20.))))),
+            'boundary_margin_mm': saved.get('boundary_margin_mm', self.parameter_default('serpentine_v4', 'boundary_margin_mm',
+                self.parameter_default('serpentine_v3', 'boundary_margin_mm',
+                self.parameter_default('serpentine_v2', 'boundary_margin_mm',
+                self.parameter_default('serpentine', 'boundary_margin_mm', 1.))))),
+        }
+        defaults.update(direction=saved.get('direction', 'horizontal'),
+                        start_corner=saved.get('start_corner', 'top_left'))
+        return ask_coverage_settings(self.root, defaults)
+
     def plan_coverage_path(self,after: Any=None) -> None:
         if self.busy or self.model is None:return
         if not self.focus or self.focus[0]!='region' or len(self.selected_annotations())!=1:
             self.status.set(pick(self.language, '请单选一个已完成的圈选区域。','Select one completed region.'));return
-        choice=self.route_preferences()
-        if choice is None:return
-        direction,start_corner=choice
-        width=simpledialog.askfloat('模拟扫描宽度','扫描带宽度（mm，模拟参数）：',
-            initialvalue=self.parameter_default('serpentine_v4','width_mm',self.parameter_default('serpentine_v3','width_mm',self.parameter_default('serpentine_v2','width_mm',self.parameter_default('serpentine','width_mm',10.)))),minvalue=.2,maxvalue=100.,parent=self.root)
-        if width is None:return
-        overlap=simpledialog.askfloat('相邻路线重叠率','重叠率（%，用于推算路线间距）：',
-            initialvalue=self.parameter_default('serpentine_v4','overlap_percent',self.parameter_default('serpentine_v3','overlap_percent',self.parameter_default('serpentine_v2','overlap_percent',self.parameter_default('serpentine','overlap_percent',20.)))),minvalue=0.,maxvalue=90.,parent=self.root)
-        if overlap is None:return
-        margin=simpledialog.askfloat('边界预留距离','除模拟扫描半径外，再向圈内预留多少毫米（研发参数）：',
-            initialvalue=self.parameter_default('serpentine_v4','boundary_margin_mm',self.parameter_default('serpentine_v3','boundary_margin_mm',self.parameter_default('serpentine_v2','boundary_margin_mm',self.parameter_default('serpentine','boundary_margin_mm',1.)))),minvalue=0.,maxvalue=50.,parent=self.root)
-        if margin is None:return
+        settings=self.coverage_settings()
+        if settings is None:return
+        direction=settings['direction'];start_corner=settings['start_corner']
+        width=settings['width_mm'];overlap=settings['overlap_percent'];margin=settings['boundary_margin_mm']
         from femto.planning.route_optimization import optimized_serpentine_plan as coverage_plan
         model=self.model;region=model.store.regions[self.focus[1]];self.operation='path_preview'
         def done(plan):
