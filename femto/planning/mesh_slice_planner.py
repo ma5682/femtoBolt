@@ -1089,7 +1089,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate a W0 measured-mesh surface trajectory")
     parser.add_argument("source", help="Region export directory or region_N.json")
     parser.add_argument("--output")
-    parser.add_argument("--row-mm", type=float, default=5.0)
+    parser.add_argument("--row-mm", type=float, default=None, help="Row spacing (default 5 mm)")
+    parser.add_argument("--head-width-mm", type=float, default=None,
+                        help="Effective treatment width; row spacing = width*(1-overlap/100). Excludes --row-mm")
+    parser.add_argument("--overlap-percent", type=float, default=None)
+    parser.add_argument("--treatment-depth-mm", type=float, default=None, help="Recorded only")
+    parser.add_argument("--head-diameter-mm", type=float, default=None, help="Recorded only")
+    parser.add_argument("--safety-margin-mm", type=float, default=None, help="Recorded only (housing clearance)")
     parser.add_argument("--step-mm", type=float, default=1.0)
     parser.add_argument("--direction", default="auto")
     parser.add_argument("--start-corner", default="top_left",
@@ -1112,8 +1118,35 @@ def main(argv: list[str] | None = None) -> int:
     from femto.planning.trajectory_export import export_blocked, export_trajectory
     output = Path(args.output).resolve() if args.output else (Path(args.source).resolve()
              if Path(args.source).is_dir() else Path(args.source).resolve().parent)
+    head_values = {key: value for key, value in (
+        ("effective_treatment_width_mm", args.head_width_mm), ("overlap_percent", args.overlap_percent),
+        ("treatment_depth_mm", args.treatment_depth_mm), ("head_diameter_mm", args.head_diameter_mm),
+        ("safety_margin_mm", args.safety_margin_mm)) if value is not None}
+    head = None
+    if args.head_width_mm is not None and args.row_mm is not None:
+        parser.error("--head-width-mm and --row-mm are mutually exclusive")
+    if args.overlap_percent is not None and args.head_width_mm is None:
+        parser.error("--overlap-percent requires --head-width-mm")
+    if head_values:
+        from femto.planning.treatment_head import head_parameters
+        try:
+            head = (head_parameters("from_effective_width", values_status="user_entered_unverified", **head_values)
+                    if args.head_width_mm is not None else
+                    head_parameters("direct_row_spacing", row_spacing_mm=5.0 if args.row_mm is None else args.row_mm,
+                                    values_status="user_entered_unverified", **head_values))
+        except ValueError as error:
+            parser.error(str(error))
+    row_mm = head["row_spacing_mm"] if head else (5.0 if args.row_mm is None else args.row_mm)
+    augment = None
+    if head is not None:
+        from femto.planning.trajectory_diagram import write_visual_outputs
+        from femto.planning.treatment_head import write_record
+
+        def augment(folder: Path, prepared: SurfaceTrajectory, check: Callable[[], None]) -> None:
+            write_visual_outputs(folder, prepared, check)
+            write_record(folder, prepared, head, check)
     try:
-        trajectory = plan_mesh_slice(args.source, row_spacing_mm=args.row_mm,
+        trajectory = plan_mesh_slice(args.source, row_spacing_mm=row_mm,
                                      sample_step_mm=args.step_mm, row_direction=direction,
                                      start_corner=args.start_corner, connect_rows=True,
                                      block_planning=True, selection_blocks=not args.mesh_blocks_v3,
@@ -1122,7 +1155,7 @@ def main(argv: list[str] | None = None) -> int:
                                                           else FACE_PORTAL_SELECTION_ALGORITHM if args.selection_v4_2
                                                           else BIDIRECTIONAL_SELECTION_ALGORITHM if args.selection_v4_3
                                                           else ORDERED_SELECTION_ALGORITHM))
-        folder = export_trajectory(trajectory, output)
+        folder = export_trajectory(trajectory, output, augment=augment)
     except (OSError, ValueError, TypeError, KeyError, IndexError) as error:
         folder = export_blocked(output, args.source, error, details=getattr(error, "details", None))
         print(folder)

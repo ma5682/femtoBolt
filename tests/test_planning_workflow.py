@@ -87,7 +87,10 @@ class PlanningWorkflowTests(unittest.TestCase):
         def pump():
             deadline=time.monotonic()+.3
             while time.monotonic()<deadline:self.root.update();time.sleep(.01)
+        from femto.planning.treatment_head import head_parameters
+        head=head_parameters('from_effective_width',effective_treatment_width_mm=5.,overlap_percent=20.)
         with mock.patch('femto.planning.trajectory_history.history_rows',return_value=[track,region]), \
+             mock.patch('femto.planning.treatment_head_dialog.ask_treatment_head',return_value=head) as ask, \
              mock.patch('femto.planning.trajectory_history.generate',return_value=dict(folder=self.folder,removed=[],warnings=[])) as generate, \
              mock.patch('femto.planning.trajectory_history.prepare_playback',return_value=('model','saved-region','plan')) as prepare, \
              mock.patch('femto.planning.trajectory_history.prepare_report',return_value='verified report') as inspect, \
@@ -105,6 +108,8 @@ class PlanningWorkflowTests(unittest.TestCase):
             self.assertEqual(str(buttons['查看规划检查']['state']),'disabled')
             generate_button.invoke();pump()
             self.assertEqual(generate.call_args.args[0]['source'],region['source'])
+            self.assertEqual(generate.call_args.args[2]['row_spacing_mm'],4.)
+            ask.assert_called_once()
             tree.selection_set('0');tree.event_generate('<<TreeviewSelect>>');pump()
             self.assertEqual(str(generate_button['state']),'disabled')
             self.assertEqual(str(buttons['播放三维轨迹']['state']),'normal')

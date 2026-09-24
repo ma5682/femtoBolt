@@ -64,17 +64,28 @@ def history_rows(reconstruction, check=lambda: None):
     return [row for row in rows if row.get('parent_manifest') is None or id(row) in keep]
 
 
-def generate(row, control):
+def generate(row, control, head=None):
+    """`head` is a `treatment_head.head_parameters` record; only its row spacing reaches the planner."""
     from femto.planning.mesh_slice_planner import plan_mesh_slice
     from femto.planning.surface_trajectory import ORDERED_SELECTION_ALGORITHM
     from femto.planning.trajectory_export import export_trajectory, load_trajectory
     manifest = region_manifest(row)
     old = previous_trajectories(manifest)
+    spacing = {} if head is None else {'row_spacing_mm': head['row_spacing_mm']}
     # v4.4: work blocks remain selection components; optimize visits only within each measured fragment.
     # Exports without selection intent are refused with an explicit message and keep old results.
     trajectory = plan_mesh_slice(manifest, connect_rows=True, block_planning=True, selection_blocks=True,
-                                 selection_algorithm=ORDERED_SELECTION_ALGORITHM, check=control.check)
-    folder = export_trajectory(trajectory, manifest.parent, check=control.check, commit=control.publish)
+                                 selection_algorithm=ORDERED_SELECTION_ALGORITHM, check=control.check, **spacing)
+    augment = None
+    if head is not None:
+        from femto.planning.trajectory_diagram import write_visual_outputs
+        from femto.planning.treatment_head import write_record
+
+        def augment(folder, prepared, check):
+            write_visual_outputs(folder, prepared, check)
+            write_record(folder, prepared, head, check)
+    folder = export_trajectory(trajectory, manifest.parent, check=control.check, commit=control.publish,
+                               augment=augment)
     load_trajectory(folder, reproduce=False)
     summary = block_summary(trajectory)
     if not result_complete(trajectory):
@@ -190,7 +201,7 @@ def remove_previous(manifest, candidates, current):
     permitted = set(previous_trajectories(manifest))
     allowed = {'trajectory.json', 'trajectory.csv', 'gaps.csv', 'blocks.csv', 'trajectory_files.json',
                'region_with_trajectory.glb', 'route_diagram.png', 'depth_diagram.png',
-               'trajectory_report.txt'}
+               'trajectory_report.txt', 'treatment_head.json'}
     removed = [];warnings = []
     for candidate in candidates:
         directory = Path(candidate)
@@ -221,6 +232,11 @@ def prepare_report(row, control):
                                  reproduce=False, allow_older_versions=True)
     control.check()
     text = report_text(trajectory)
+    from femto.planning.treatment_head import load_record, report_lines
+    folder = Path(row.get('target') or row['source']).resolve()
+    head = load_record(folder if folder.is_dir() else folder.parent, trajectory, check=control.check)
+    if head is not None:
+        text = text.rstrip('\n') + '\n' + '\n'.join(report_lines(head)) + '\n'
     notice = product_algorithm_notice(trajectory.planner.get('parameters', {}), trajectory.planner.get('algorithm_version'))
     control.check()
     return (notice + '\n\n' if notice else '') + text

@@ -227,6 +227,9 @@ def load_trajectory(path: str | Path, *, check: Callable[[], None] = lambda: Non
     # Selection-block files are also checked against the selection intent of their bound export.
     validate_trajectory(trajectory, mesh=mesh, expected_result_sha256=payload["result_sha256"],
                         region=manifest.get("region"))
+    # Optional treatment-head record: hash-listed above; its inputs and coverage must reproduce.
+    from femto.planning.treatment_head import load_record
+    load_record(path.parent, trajectory, mesh=mesh, check=check)
     if reproduce and trajectory.planner.get("kind") == "mesh_slice":
         saved_version = trajectory.planner.get("algorithm_version")
         current = current_algorithm_version(trajectory.planner.get("parameters", {}))

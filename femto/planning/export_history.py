@@ -461,7 +461,12 @@ def show_history(parent: Any,reconstruction: Any) -> Any:
             if blocks:notice+=' '+blocks['text']
             if result['warnings']:notice+=' 部分旧文件保留：'+'；'.join(result['warnings'])
             refresh(result['folder'],notice)
-        if row and row.get('export_manifest'):start('生成三维扫描轨迹',lambda c:generate(row,c),done)
+        if row and row.get('export_manifest'):
+            from femto.planning.treatment_head_dialog import ask_treatment_head
+            head=ask_treatment_head(window,getattr(window,'_treatment_head',None))
+            if head is None:return
+            window._treatment_head=head
+            start('生成三维扫描轨迹',lambda c:generate(row,c,head),done)
     def play_selected():
         from femto.planning.trajectory_history import prepare_playback
         from femto.planning.path_presentation import show_presentation
