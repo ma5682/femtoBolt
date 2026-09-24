@@ -49,7 +49,7 @@ class FixedRGBViewer:
     def _build_sidebar_shell(self,root):
         sidebar=tk.Frame(root,bg='#121b25',highlightbackground='#243042',highlightthickness=1);sidebar.pack(side='right',fill='y')
         scroll=ttk.Scrollbar(sidebar,orient='vertical');scroll.pack(side='right',fill='y')
-        side_width = 320 if self.result.is_file() else 300
+        side_width = 320
         self.side_canvas=tk.Canvas(sidebar,width=side_width,bg='#121b25',highlightthickness=0,yscrollcommand=scroll.set)
         self.side_canvas.pack(side='left',fill='y');scroll.configure(command=self.side_canvas.yview)
         side=tk.Frame(self.side_canvas,bg='#121b25',padx=14,pady=14)
@@ -68,7 +68,7 @@ class FixedRGBViewer:
         self.cancel_task_button.pack(fill='x',pady=3)
         self.workspace_tabs=None
         advanced_side=side;save_side=side;plan_side=side
-        if self.result.is_file():
+        if self.result.is_file() or self.result.is_dir():
             self.workspace_tabs=ttk.Notebook(side);self.workspace_tabs.pack(fill='both',expand=True)
             tabs=[]
             for title in ('1 区域与禁区','2 路线演示','3 保存分享','高级'):
@@ -201,7 +201,7 @@ class FixedRGBViewer:
             self.action(save_side,'恢复或放弃草稿…','Recover or discard draft…',self.offer_recovery)
             self.action(save_side,'打开已有方案…','Open portable region workspace',self.open_region_project)
         self.planning_tools=tk.Frame(plan_side,bg='#121b25')
-        if self.result.is_file():self.planning_tools.pack(fill='x')
+        if self.workspace_tabs:self.planning_tools.pack(fill='x')
         self.action(plan_side if self.workspace_tabs else self.planning_tools,'像素扫描路径（预览）','Pixel raster path preview',self.plan_region_path)
         self.action(plan_side if self.workspace_tabs else self.planning_tools,'毫米曲面路径（近似）','Metric surface contours (approx.)',self.plan_metric_path)
         self.cancel_plan_button=ttk.Button(self.planning_tools,text='取消当前规划任务',command=self.cancel_planning)
@@ -890,6 +890,8 @@ class FixedRGBViewer:
                     'full_minus_forbidden':'Single result submitted: forbidden area only. Pink shows all remaining content.',
                     'work_minus_forbidden':'Single result submitted: work minus forbidden areas. Forbidden marks outside work are ignored.'}[method])
                     +self.selection_summary(item))
+                if self.workspace_tabs:
+                    self.workspace_tabs.select(1)
             self.draw()
         self.operation='region'
         self.work(lambda:model.region(polygon,name,note,cancel=self.operation_cancel(),
