@@ -1,4 +1,6 @@
 """Measurements to preceding scan levels on the allowed mesh, not image spacing."""
+from typing import Any
+
 import heapq
 import numpy as np
 from femto.planning.region_coverage import point_segment_distance
@@ -92,28 +94,7 @@ def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None,bud
             '无实物治疗覆盖精度验证。'])
 
 
-def spacing_text(plan):
-    r=plan['spacing_report'];lines=['三维表面间距检查（研发）',f"目标 {r['target_spacing_mm']:g} mm；判断容差 ±{r['tolerance_mm']:g} mm。",
-      '状态：'+('采样上下界均在容差内' if r['status']=='within_sampled_bounds' else '未完全满足/无法证实：请检查偏差、缺层或上下界不确定，未切换模式'),
-      str(r['counts']),'测得网格距离分布（mm）：'+str(r['distribution']),r['method'],r['sampling'],*r['limitations']]
-    return '\n'.join(lines)
-
-def show_spacing_report(parent,plan,locate,is_current):
-    import tkinter as tk
-    from tkinter import ttk
-    w=tk.Toplevel(parent);w.title('表面间距分布与定位');w.geometry('1000x730')
-    text=tk.Text(w,height=16,wrap='word');text.pack(fill='x');text.insert('1.0',spacing_text(plan));text.configure(state='disabled')
-    frame=ttk.Frame(w);frame.pack(fill='both',expand=True)
-    keys=('chain','sample','distance','deviation','status');tree=ttk.Treeview(frame,columns=keys,show='headings')
-    for key,label in zip(keys,('链','点','网格上界 mm','上界偏差 mm','上下界判断')):tree.heading(key,text=label)
-    scroll=ttk.Scrollbar(frame,command=tree.yview);tree.configure(yscrollcommand=scroll.set);scroll.pack(side='right',fill='y');tree.pack(fill='both',expand=True)
-    labels={'within_bounds':'采样界内','outside_bounds':'超差','uncertain_bounds':'无法证实','unmeasurable':'无可达前层'}
-    rows=plan['spacing_report']['measurements']
-    for i,row in enumerate(rows):tree.insert('', 'end',iid=str(i),values=(row['chain_index']+1,row['sample_index']+1,
-        '未知' if row['surface_graph_distance_mm'] is None else f"{row['surface_graph_distance_mm']:.3f}",
-        '未知' if row['signed_deviation_mm'] is None else f"{row['signed_deviation_mm']:+.3f}",labels[row['status']]))
-    def select(_):
-        if not is_current():w.destroy();return
-        if tree.selection():locate(rows[int(tree.selection()[0])])
-    tree.bind('<<TreeviewSelect>>',select);w.measurement_tree=tree
-    return w
+from femto.planning.report_catalog import spacing_text
+def show_spacing_report(parent: Any, plan: Any, locate: Any, is_current: Any = lambda: True) -> Any:
+    from femto.planning.qt_reports import spacing_report
+    return spacing_report(parent, plan, locate, is_current)

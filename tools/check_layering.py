@@ -3,7 +3,7 @@ import ast, collections, pathlib, sys
 ROOT = pathlib.Path(__file__).resolve().parents[1] / 'femto'
 ORDER = ['femto', 'femto.depth', 'femto.dataset', 'femto.geometry', 'femto.hardware', 'femto.reports', 'femto.annotation',
          'femto.tracking', 'femto.temporal', 'femto.local', 'femto.planning', 'femto.viewer', 'femto.pipeline',
-         'femto.gsplat', 'femto.capture', 'femto.app']
+         'femto.gsplat', 'femto.capture', 'femto.execution', 'femto.app']
 LAYER = {p: i for i, p in enumerate(ORDER)}
 
 def pkg_of(dotted):

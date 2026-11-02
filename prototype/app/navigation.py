@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from app.app_state import AppState
 
-STAGES = ("三维采集", "区域标记", "轨迹规划", "运行预览")
+STAGES = ("三维采集", "区域标记", "轨迹规划", "规划确认")
 VIEWS = (("RGB", "深度", "点云", "模型"), ("固定 RGB", "三维模型"), ("三维模型", "RGB 路线图"), ("三维模型", "RGB 路线图"))
 
 

@@ -81,7 +81,7 @@ def temporal_summary(report: Any) -> dict[str, Any]:
 
 
 class LocalProcessing:
-    """One journal per job. All I/O is called by a worker, not Tk."""
+    """One journal per job; all I/O is called by a worker, not the UI thread."""
     def __init__(self, dataset, output, progress=None):
         self.dataset = Path(dataset).resolve()
         self.output = Path(output).resolve()

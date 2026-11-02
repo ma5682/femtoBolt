@@ -16,6 +16,7 @@ class ViewportScene:
     segments: list[RouteSegment] = field(default_factory=list)
     capture_phase: str = "idle"
     capture_progress: int = 0
+    reference_ready: bool = False
     scenario: str = "normal"
     region_complete: bool = False
     geometry_repaired: bool = False
@@ -32,6 +33,7 @@ def scene_from_state(s):
         strokes=deepcopy(s.region.strokes), segments=deepcopy(s.plan.segments),
         capture_phase={"passed": "quality_good", "failed": "quality_bad"}.get(s.capture.phase, s.capture.phase),
         capture_progress=s.capture.frames, scenario=s.scenario,
+        reference_ready=s.capture.reference_ready,
         region_complete=s.region.support in ("valid", "missing"),
         geometry_repaired=s.region.geometry_repaired,
         trajectory_generated=s.plan.phase in ("ready", "failed"),
@@ -49,6 +51,12 @@ class Medical3DViewport(QWidget):
         raise NotImplementedError
 
     def reset_view(self) -> None:
+        raise NotImplementedError
+
+    def set_navigation_tool(self, tool: str) -> None:
+        raise NotImplementedError
+
+    def zoom_in(self) -> None:
         raise NotImplementedError
 
 

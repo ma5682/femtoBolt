@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 from pathlib import Path
 import numpy as np
-from PIL import Image,ImageDraw,ImageFont,ImageTk
+from PIL import Image,ImageDraw,ImageFont
 
 LAYER_NAMES={'selection':'圈选范围','effective_geometry':'有效几何','forbidden':'禁区剔除','boundary_margin':'边界预留',
              'no_geometry':'无几何支持','selection_limit':'选区离散限制','covered':'采样覆盖','uncovered':'采样未覆盖'}
@@ -62,74 +62,6 @@ def render_map(rgb: Any,plan: Any,enabled: Any=None,item: Any=None,zoom: bool=Fa
     return canvas
 
 
-def show_inspector(parent: Any,model: Any,plan: Any,is_current: Callable[..., Any]=lambda:True) -> Any:
-    import tkinter as tk
-    from tkinter import ttk
-    from femto.planning.region_path_guard import coverage_report_text
-    window=tk.Toplevel(parent);window.title('覆盖检查报告 · 遗漏定位');window.geometry('1280x850')
-    report=plan.get('coverage_inspection')
-    tabs=ttk.Notebook(window);tabs.pack(fill='both',expand=True)
-    method=ttk.Frame(tabs);text=tk.Text(method,wrap='word');text.pack(fill='both',expand=True)
-    text.insert('1.0',coverage_report_text(plan));text.configure(state='disabled')
-    if report is None:
-        tabs.add(method,text='旧版报告（无遗漏明细）');return window
-    view=ttk.Frame(tabs);tabs.add(view,text='图层与遗漏定位');tabs.add(method,text='方法、分母与版本')
-    ttk.Label(view,text=f"采样覆盖 {plan['coverage']['sampled_coverage_percent']:.2f}% / 分母 {report['denominator']['sampled_allowed_supported_area_m2']*1e6:.2f} mm²（允许、可信采样代表面积）；禁区/无支持不计入，预留计入；无几何面积未知。",wraplength=1220).pack(fill='x',padx=8,pady=4)
-    toggles=ttk.Frame(view);toggles.pack(fill='x');variables={};active=[None]
-    body=ttk.Panedwindow(view,orient='horizontal');body.pack(fill='both',expand=True)
-    left=ttk.Frame(body);right=ttk.Frame(body);body.add(left,weight=1);body.add(right,weight=3)
-    ttk.Label(left,text='采样遗漏及排除范围（不混为同一面积）').pack(fill='x')
-    tree=ttk.Treeview(left,columns=('cause','area'),show='tree headings',selectmode='browse',height=18)
-    tree.heading('#0',text='编号');tree.column('#0',width=75,stretch=False)
-    tree.heading('cause',text='原因');tree.column('cause',width=160)
-    tree.heading('area',text='采样代表 mm² / 像素');tree.column('area',width=150)
-    scroll=ttk.Scrollbar(left,orient='vertical',command=tree.yview);tree.configure(yscrollcommand=scroll.set)
-    scroll.pack(side='right',fill='y');tree.pack(fill='both',expand=True)
-    feedback=tk.StringVar(value='选择条目以高亮并放大；无几何条目只有像素位置，不推算XYZ或面积。')
-    ttk.Label(right,textvariable=feedback,wraplength=780).pack(fill='x',padx=6,pady=6)
-    label=ttk.Label(right);label.pack(fill='both',expand=True)
-    lookup={entry['id']:entry for entry in report['omissions']}
-    for entry in report['omissions']:
-        amount=f"{entry['sampled_area_m2']*1e6:.3f} mm²" if entry['sampled_area_m2'] is not None else f"{entry['pixel_count']} px；面积未知"
-        tree.insert('', 'end', iid=entry['id'], text=entry['id'].split('_')[-1],values=(entry['label'],amount))
-    def redraw():
-        if timer[0]:window.after_cancel(timer[0]);timer[0]=None
-        if not window.winfo_exists():return
-        if not is_current():window.destroy();return
-        entry=active[0]
-        image=render_map(model.rgb,plan,[key for key,var in variables.items() if var.get()],entry,zoom=entry is not None,header=False)
-        factor=min(max(200,right.winfo_width()-12)/image.width,max(200,label.winfo_height())/image.height,8 if entry else 1)
-        image=image.resize((max(1,int(image.width*factor)),max(1,int(image.height*factor))),Image.Resampling.NEAREST if factor>1 else Image.Resampling.LANCZOS)
-        label.image=ImageTk.PhotoImage(image);label.configure(image=label.image)
-        window.focus_bbox=crop_bounds(report,entry);window.selected_omission=entry
-    def locate(entry_id):
-        if not is_current():window.destroy();return
-        active[0]=lookup[entry_id];entry=active[0]
-        position='XYZ（米）'+str(entry['focus_xyz_m']) if entry['focus_xyz_m'] is not None else 'XYZ与三维面积未知'
-        feedback.set(entry['label']+'：'+entry['evidence']+'\n像素范围 '+str(entry['bbox_pixel'])+'；'+position)
-        redraw()
-    def selection_changed(_):
-        if tree.selection():locate(tree.selection()[0])
-    tree.bind('<<TreeviewSelect>>',selection_changed)
-    for key,name in LAYER_NAMES.items():
-        variables[key]=tk.BooleanVar(value=True)
-        ttk.Checkbutton(toggles,text=name,variable=variables[key],command=redraw).pack(side='left')
-    def overview():active[0]=None;tree.selection_remove(tree.selection());feedback.set('总览：面积统计只采用报告中可参与分母的采样点。');redraw()
-    ttk.Button(toggles,text='返回总览',command=overview).pack(side='right')
-    window.locate_omission=locate;window.omission_tree=tree;window.plan_binding=plan['plan_binding']
-    timer=[None]
-    def delayed_redraw():
-        timer[0]=None;redraw()
-    def resized(event):
-        if event.widget is not window:return
-        if timer[0]:window.after_cancel(timer[0])
-        timer[0]=window.after(100,delayed_redraw)
-    def cleanup(event=None):
-        if event is not None and event.widget is not window:return
-        if timer[0]:
-            window.after_cancel(timer[0]);timer[0]=None
-    def close():
-        cleanup();window.destroy()
-    window.protocol('WM_DELETE_WINDOW',close);window.bind('<Configure>',resized);window.bind('<Destroy>',cleanup)
-    timer[0]=window.after(50,delayed_redraw)
-    return window
+def show_inspector(parent: Any, model: Any, plan: Any, is_current: Any = lambda: True) -> Any:
+    from femto.planning.qt_reports import CoverageInspector
+    return CoverageInspector(parent, model, plan, is_current)

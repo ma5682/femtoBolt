@@ -26,7 +26,7 @@
 
 `--start 20` 表示从第20个记录开始，要求真实不同且时间戳递增的帧。数据集必须已经声明fixed_camera=true，程序不把移动数据改标为固定。
 
-新采集：固定摄像头与场景，关闭占用相机的其他采集程序后双击 `start_temporal_fusion.cmd`，默认5帧。也可以执行：
+新采集属于研发命令行功能：固定摄像头与场景，关闭占用相机的其他采集程序后执行下列命令，默认5帧；根目录的旧快捷 CMD 已移除。
 
 ```powershell
 .venv/Scripts/python.exe -m femto.temporal.scene_temporal_fusion --capture --mode fast

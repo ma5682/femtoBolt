@@ -12,7 +12,7 @@
 
 `datasets/scene_20260909_103220/derived/fixed_keyframe_20260909_103230/derived/depth_quality_replay_20260909_172112_593738/`
 
-双击项目根目录 `start_depth_debug.cmd`，选择上述目录即可打开四模式查看器；绿=真实、黄=修复、红=未知，1:1与放大可检查小孔，鼠标悬停读取原始/修复毫米值和confidence。或者在项目根目录运行：
+根目录旧深度调试 CMD 已移除，在项目根目录运行下列命令打开四模式查看器；绿=真实、黄=修复、红=未知，1:1与放大可检查小孔，鼠标悬停读取原始/修复毫米值和confidence：
 
 ```powershell
 .venv/Scripts/python.exe -m femto.viewer.depth_debug_viewer datasets/scene_20260909_103220/derived/fixed_keyframe_20260909_103230/derived/depth_quality_replay_20260909_172112_593738
@@ -22,7 +22,7 @@
 
 quality完整CC及RANSAC复核；fast仅检测8个原始邻居均有效的孤立孔，保留所有真实性门禁。10次预热后内存处理计时中位：fast161.7ms、quality202.4ms，不含磁盘/XYZ；均不适合直接同步接入15FPS循环。当前采集循环不运行本模块，实拍FPS尚未复测。
 
-191项主环境测试：183通过、8跳过；独立PyTorch2项通过。测试含真实Open3D TSDF积分、PLY逐点confidence、50/51mm门禁、四模式颜色、Tk切换和缩放。五类材料实物验收仍未完成。
+191项主环境测试：183通过、8跳过；独立PyTorch2项通过。测试含真实Open3D TSDF积分、PLY逐点confidence、50/51mm门禁、四模式颜色、Qt页面切换和缩放。五类材料实物验收仍未完成。
 
 实际项目为 `E:\测试3D人体关节坐标`。审查时项目已有Depth质量模块和TSDF/3DGS confidence接入；本轮是在现有实现上加固，未重建采集架构。
 

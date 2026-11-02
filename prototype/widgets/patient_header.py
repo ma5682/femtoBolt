@@ -2,7 +2,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal, QSignalBlocker
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
-from widgets.status_panel import text_label
+from widgets.status_panel import text_label, tone
 from mock.mock_capture import SCENARIOS
 
 
@@ -34,31 +34,16 @@ class PatientHeader(QFrame):
         separator.setFrameShape(QFrame.VLine)
         row.addWidget(separator)
         brand = QVBoxLayout()
-        brand.setSpacing(1)
+        brand.setSpacing(4)
         brand.addWidget(text_label("三维采集与轨迹规划工作台", "brand"))
-        brand.addWidget(text_label("医疗三维工作站", "brandCaption"))
-        row.addLayout(brand)
-        patient = QVBoxLayout()
-        patient.setSpacing(4)
+        self.reference_status = text_label("参考位置未建立", "referenceStatus")
+        brand.addWidget(self.reference_status)
+        row.addLayout(brand, 1)
+        # Keep task metadata available on hover rather than adding a second
+        # title-sized information block to the header.
         self.patient = text_label("", "patientName")
         self.task = text_label("", "muted")
-        patient.addWidget(self.patient)
-        patient.addWidget(self.task)
-        row.addLayout(patient, 1)
-        device = QVBoxLayout()
-        device.setSpacing(4)
-        self.device_status = text_label("●  相机已连接", "deviceReady")
-        self.sensor_status = text_label("RGB 正常  ·  深度正常  /  模拟", "muted")
-        device.addWidget(self.device_status)
-        device.addWidget(self.sensor_status)
-        self.source = text_label("Mock 演示", "modeBadge")
-        device.addWidget(self.source)
-        # Connection/quality telemetry is shown once in the bottom status bar;
-        # repeating it in the title bar makes the header feel like a dashboard.
-        device_widget = QFrame()
-        device_widget.setLayout(device)
-        device_widget.setVisible(False)
-        row.addWidget(device_widget)
+        self.patient.hide(); self.task.hide()
         demo = QVBoxLayout()
         demo.setSpacing(4)
         demo.addWidget(text_label("研发场景模拟", "muted"))
@@ -66,15 +51,14 @@ class PatientHeader(QFrame):
         self.scenario.setObjectName("scenario")
         for key, name in SCENARIOS.items():
             self.scenario.addItem(name, key)
-        self.scenario.addItem("项目回放 · 只读", "replay")
-        self.scenario.setMinimumWidth(124)
+        self.scenario.setFixedSize(184, 42)
         self.scenario.currentIndexChanged.connect(lambda: self.scenario_requested.emit(self.scenario.currentData()))
         demo.addWidget(self.scenario)
         row.addLayout(demo)
-        for text, signal in (("历史", self.history_requested), ("设置", self.settings_requested)):
+        for text, signal in (("历史记录", self.history_requested), ("高级工具", self.settings_requested)):
             button = QPushButton(text)
             button.setObjectName("quietButton")
-            button.setMinimumSize(52, 40)
+            button.setFixedHeight(42)
             button.clicked.connect(signal.emit)
             row.addWidget(button)
 
@@ -86,8 +70,14 @@ class PatientHeader(QFrame):
             self.patient.setText(f"项目：{s.patient.identifier}")
             self.task.setText(f"本地路径：prototype/demo_records   ·   {s.patient.task}")
         with QSignalBlocker(self.scenario):
+            if s.replay_mode and self.scenario.findData("replay") < 0:
+                self.scenario.addItem("项目回放 · 只读", "replay")
             self.scenario.setCurrentIndex(self.scenario.findData("replay" if s.replay_mode else s.scenario))
+            if not s.replay_mode and self.scenario.findData("replay") >= 0:
+                self.scenario.removeItem(self.scenario.findData("replay"))
         self.scenario.setEnabled(not s.replay_mode)
-        self.source.setText("项目回放 · 只读" if s.replay_mode else "Mock 演示")
-        self.device_status.setText("●  已保存数据可读" if s.replay_mode else "●  相机已连接")
-        self.sensor_status.setText("RGB / 深度 / 网格 · 只读" if s.replay_mode else "RGB 正常  ·  深度正常  /  模拟")
+        established = s.capture.reference_ready
+        self.reference_status.setText("●  项目回放 · 参考位置已记录" if s.replay_mode else
+                                      "●  参考位置已建立 · 模拟采集" if established else "○  参考位置未建立 · 原型演示")
+        tone(self.reference_status, "good" if established else "warning")
+        self.reference_status.setToolTip(self.patient.text()+"\n"+self.task.text())

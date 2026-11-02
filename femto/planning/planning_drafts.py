@@ -60,6 +60,10 @@ def read(path: str | Path,model: Any) -> dict[Any, Any]:
     if not set(data['parameters'])<=set(ids):
         data['parameters']={key:value for key,value in data['parameters'].items() if key in ids}
     for request in data['parameters'].values():
+        if isinstance(request,dict) and request.get('kind')=='mesh_slice_selection_blocks_ordered':
+            from femto.planning.surface_workspace import checked_head
+            checked_head(request['values']['treatment_head'])
+            continue
         if not isinstance(request,dict) or request.get('kind') not in ('raster','metric','coverage','serpentine','serpentine_v2','serpentine_v3','serpentine_v4','surface_spacing') or not isinstance(request.get('values'),dict):raise ValueError('草稿规划参数类型无效')
         kind=request['kind'];values=request['values']
         specs=({'row_step_px':(1,500),'max_step_mm':(.01,100)} if kind=='raster' else
@@ -125,3 +129,18 @@ class Journal:
     def wait(self) -> None:
         worker=self.worker
         if worker:worker.join(5)
+
+    def status(self):
+        with self.lock:
+            if self.pending is not None or self.worker is not None and self.worker.is_alive():
+                return 'saving'
+            return 'error' if self.error else 'saved' if self.saved_at else 'empty'
+
+    def wait_saved(self, check=lambda:None):
+        while self.status() == 'saving':
+            check()
+            worker=self.worker
+            if worker:worker.join(.05)
+        check()
+        if self.status() != 'saved' or not self.path.is_file():
+            raise OSError('草稿保存失败：'+str(self.error or '未确认写入完成')+'。当前编辑已保留，请重试或另存可编辑方案。')

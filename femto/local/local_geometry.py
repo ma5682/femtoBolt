@@ -4,6 +4,7 @@ import numpy as np
 import open3d as o3d
 from femto.io_utils import imread_unicode
 from femto.geometry.rgbd_frames import prepare_rgbd
+from femto.geometry.reconstruction_reuse import depth_jump_mask
 
 
 def filter_small_components(mesh):
@@ -20,7 +21,7 @@ def filter_small_components(mesh):
 
 
 def retain_observed_triangles(mesh, dataset, frames, poses, maps, minimum, maximum, tolerance=.01,
-                              prepared_depths=None):
+                              prepared_depths=None, reconstruction_reuse=None):
     """All corners and centroid must be supported by one source view.
 
     This is a depth-consistency gate, not a physical-accuracy certificate.
@@ -46,14 +47,9 @@ def retain_observed_triangles(mesh, dataset, frames, poses, maps, minimum, maxim
             _, _, _, depth = prepare_rgbd(color, depth, mx, my, k, 1., minimum, maximum)
         else:
             depth=np.asarray(prepared_depths[ordinal])
-        jump=np.zeros(depth.shape,bool)
-        horizontal=(depth[:,1:]>0)&(depth[:,:-1]>0)&(np.abs(depth[:,1:].astype(np.int32)-depth[:,:-1].astype(np.int32))>30)
-        vertical=(depth[1:]>0)&(depth[:-1]>0)&(np.abs(depth[1:].astype(np.int32)-depth[:-1].astype(np.int32))>30)
-        # Mark both endpoints of every discontinuity.  A triangle touching
-        # either side of a foreground/background edge belongs in the same
-        # diagnostic bucket.
-        jump[:,1:]|=horizontal;jump[:,:-1]|=horizontal
-        jump[1:]|=vertical;jump[:-1]|=vertical
+        jump = reconstruction_reuse.get_jump(ordinal, depth) if reconstruction_reuse is not None else None
+        if jump is None:
+            jump = depth_jump_mask(depth)
         inverse = np.linalg.inv(pose)
         for start in range(0, len(triangles), 50000):
             ids = np.arange(start, min(start+50000, len(triangles)))

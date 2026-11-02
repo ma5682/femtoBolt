@@ -18,7 +18,9 @@ from femto.geometry.pose_geometry import Intrinsics, depth_to_points
 from femto.io_utils import write_json
 
 
-NATIVE_IO_CACHE = Path(os.environ["LOCALAPPDATA"]) / "FemtoPatientPose" / "native_io"
+from femto.paths import WORKSPACE_CACHE_ROOT
+
+NATIVE_IO_CACHE = WORKSPACE_CACHE_ROOT / "native_io"
 NATIVE_IO_CACHE.mkdir(parents=True, exist_ok=True)
 
 

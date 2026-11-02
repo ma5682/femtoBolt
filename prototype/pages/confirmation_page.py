@@ -4,7 +4,7 @@ from widgets.status_panel import StatusPanel
 class ConfirmationPage(StatusPanel):
     def __init__(self):
         super().__init__()
-        self.section("运行预览")
+        self.section("规划确认")
         self.patient = self.row("患者")
         self.task = self.row("目标区域")
         self.model = self.row("采集模型")
@@ -52,17 +52,17 @@ class ConfirmationPage(StatusPanel):
             self.warning.setText(f"存在 {gaps} 个路线缺口，查看轨迹端点  →" if gaps else "查看边缘未覆盖位置  →")
             self.warning.setVisible(bool(gaps or coverage == "partial"))
             self.checks.setText(
-                "✓ 规划区与三维支持记录已载入\n"
+                "● 规划区与三维支持记录已载入\n"
                 f"• 覆盖状态：{coverage}\n"
                 f"• 扫描缺口：{gaps} 个；路线仅供只读核对"
             )
         else:
             self.warning.setText("边缘未覆盖区域需核对  →")
             self.warning.setVisible(True)
-            self.checks.setText("✓ 规划区与三维支持已检查\n✓ 禁入区未进入（模拟）\n✓ 扫描段连续（模拟）" if s.plan_current else "当前规划需要重新检查。")
+            self.checks.setText("● 规划区与三维支持已检查\n● 禁入区未进入（模拟）\n● 扫描段连续（模拟）" if s.plan_current else "当前规划需要重新检查。")
         self.saved.setText(
             "项目回放为只读记录，不保存、不覆盖原始数据。"
             if s.replay_mode else
-            "✓ 本版本已保存，可在历史中查看。" if p.saved_id else
+            "● 本版本已保存，可在历史中查看。" if p.saved_id else
             "保存后保留当前模型来源、区域、参数与检查结果。"
         )

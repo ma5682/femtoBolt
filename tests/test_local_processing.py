@@ -82,36 +82,3 @@ class ProcessingTests(unittest.TestCase):
         rejected = result_quality(result)
         self.assertIn('binding mismatch', rejected['read_error'])
         self.assertEqual(rejected['refinement']['status'], 'not_recorded')
-
-    def test_quality_events_cannot_update_another_or_finished_session(self):
-        import gc
-        import tkinter as tk
-        import femto.app.femto_control_app as control
-        gc.collect()
-        with mock.patch.object(control.FemtoControlApp, '_start_camera'), \
-             mock.patch.object(control.FemtoControlApp, '_load_latest_paths'):
-            root=tk.Tk()
-            root.withdraw()
-            try:
-                app=control.FemtoControlApp(root)
-                app.camera_ready=True
-                panel=app.local_panel
-                panel.start()
-                report=dict(empty_report(), refinement=dict(status='running'))
-                payload=dict(session_id='old', quality=report)
-                panel.event('local_processing', payload)
-                self.assertIsNone(panel.quality)
-                payload['session_id']=panel.session_id
-                panel.event('local_processing', payload)
-                self.assertEqual(panel.quality, report)
-                panel.event('local_cancelled', dict(session_id=panel.session_id))
-                payload['quality']=dict(empty_report(), refinement=dict(status='adopted'))
-                panel.event('local_processing', payload)
-                self.assertEqual(panel.quality, report)
-            finally:
-                for timer in root.tk.call('after','info'):
-                    root.after_cancel(timer)
-                root.destroy()
-        del app,panel,root
-        gc.collect()
-

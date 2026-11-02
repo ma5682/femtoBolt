@@ -17,22 +17,28 @@ from femto.dataset.scene_dataset_validator import validate_pose
 from femto.tracking.moving_quality import rotation_deg,cycle_consistency
 
 
-def metrics(source: o3d.geometry.PointCloud,target: o3d.geometry.PointCloud,transform: np.ndarray) -> dict[str, float | None]:
+def metrics(source: o3d.geometry.PointCloud,target: o3d.geometry.PointCloud,transform: np.ndarray,
+            *, _target_tree=None) -> dict[str, float | None]:
     moved=copy.deepcopy(source).transform(transform)
-    tree=o3d.geometry.KDTreeFlann(target)
+    tree=o3d.geometry.KDTreeFlann(target) if _target_tree is None else _target_tree
     points=np.asarray(moved.points);target_colors=np.asarray(target.colors)
-    colors=np.asarray(moved.colors);dist=[];errors=[]
+    colors=np.asarray(moved.colors);dist=[];pairs=[]
+    has_colors=len(colors)==len(points) and len(target_colors)==len(target.points)
     for i,p in enumerate(points):
         count,ids,d=tree.search_knn_vector_3d(p,1)
         if count:
             dist.append(np.sqrt(d[0]))
-            if d[0] <= .015**2 and len(colors)==len(points) and len(target_colors)==len(target.points):
-                errors.append(float(np.mean(np.abs(colors[i]-target_colors[ids[0]]))))
+            if d[0] <= .015**2 and has_colors:
+                pairs.append((i,ids[0]))
+    if pairs:
+        indices=np.asarray(pairs,dtype=np.int64)
+        errors=np.mean(np.abs(colors[indices[:,0]]-target_colors[indices[:,1]]),axis=1)
+    else:errors=np.empty(0,dtype=np.float64)
     d=np.asarray(dist)
     return dict(median_m=float(np.median(d)) if len(d) else None,
                 p90_m=float(np.percentile(d,90)) if len(d) else None,
                 overlap=float(np.mean(d<=.015)) if len(d) else 0,
-                color_error=float(np.median(errors)) if errors else None)
+                color_error=float(np.median(errors)) if len(errors) else None)
 
 
 def stable_shape(cloud: o3d.geometry.PointCloud) -> bool:
@@ -48,11 +54,20 @@ def noise_floor(cloud: o3d.geometry.PointCloud) -> dict[str, float | None]:
     return metrics(a,b,np.eye(4)) if len(a.points) and len(b.points) else {}
 
 
-def solve(source: o3d.geometry.PointCloud,target: o3d.geometry.PointCloud,initial: np.ndarray) -> np.ndarray:
+def solve(source: o3d.geometry.PointCloud,target: o3d.geometry.PointCloud,initial: np.ndarray,
+          *, _reference_scales=None, _reference_is_target=True, _other_scales=None) -> np.ndarray:
     transform=initial.copy()
     for voxel,gate in ((.012,.03),(.006,.015),(.003,.008)):
-        a=source.voxel_down_sample(voxel);b=target.voxel_down_sample(voxel)
-        b.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel*3,max_nn=40))
+        if _reference_scales is None:
+            a=source.voxel_down_sample(voxel);b=target.voxel_down_sample(voxel)
+            b.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel*3,max_nn=40))
+        elif _reference_is_target:
+            a=(source.voxel_down_sample(voxel) if _other_scales is None else _other_scales[voxel])
+            b=_reference_scales[voxel]
+        else:
+            a=_reference_scales[voxel]
+            b=(target.voxel_down_sample(voxel) if _other_scales is None else _other_scales[voxel])
+            b.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel*3,max_nn=40))
         loss=o3d.pipelines.registration.TukeyLoss(k=gate/2)
         result=o3d.pipelines.registration.registration_icp(a,b,gate,transform,
             o3d.pipelines.registration.TransformationEstimationPointToPlane(loss),
@@ -111,21 +126,44 @@ def refine(dataset: str | Path,output: str | Path) -> tuple[Path, dict[str, Any]
         check=full.select_by_index(list(range(1,len(full.points),2))).voxel_down_sample(.005)
         clouds.append(fit.uniform_down_sample(max(1,(len(fit.points)+59999)//60000)))
         checks.append(check.uniform_down_sample(max(1,(len(check.points)+9999)//10000)))
+    # Per-call preparation only: the fixed reference is never transformed by
+    # ICP. All candidate/held-out metrics and adoption checks still run.
+    reference_scales=None;reference_tree=None;reference_floor=None
     rows=[];newposes=[p.copy() for p in poses]
     for i in range(1,len(frames)):
         row=dict(frame=frames[i]['frame'],accepted=False,reasons=[])
         if not stable_shape(clouds[0]) or not stable_shape(clouds[i]):row['reasons']=['insufficient_3d_structure']
         else:
             try:
-                t=solve(clouds[i],clouds[0],poses[i]);reverse=solve(clouds[0],clouds[i],np.linalg.inv(poses[i]))
-                before=dict(forward=metrics(checks[i],checks[0],poses[i]),reverse=metrics(checks[0],checks[i],np.linalg.inv(poses[i])))
-                after=dict(forward=metrics(checks[i],checks[0],t),reverse=metrics(checks[0],checks[i],np.linalg.inv(t)))
+                if reference_scales is None:
+                    prepared_scales={}
+                    for voxel in (.012,.006,.003):
+                        prepared=clouds[0].voxel_down_sample(voxel)
+                        prepared.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel*3,max_nn=40))
+                        prepared_scales[voxel]=prepared
+                    reference_tree=o3d.geometry.KDTreeFlann(checks[0])
+                    reference_scales=prepared_scales
+                current_tree=o3d.geometry.KDTreeFlann(checks[i])
+                # One view is the forward source and reverse target. Reuse its
+                # identical voxel samples only within this bidirectional pair;
+                # reverse target normals are still estimated by solve as before.
+                current_scales={voxel:clouds[i].voxel_down_sample(voxel) for voxel in (.012,.006,.003)}
+                t=solve(clouds[i],clouds[0],poses[i],_reference_scales=reference_scales,
+                        _other_scales=current_scales)
+                reverse=solve(clouds[0],clouds[i],np.linalg.inv(poses[i]),
+                              _reference_scales=reference_scales,_reference_is_target=False,
+                              _other_scales=current_scales)
+                before=dict(forward=metrics(checks[i],checks[0],poses[i],_target_tree=reference_tree),
+                            reverse=metrics(checks[0],checks[i],np.linalg.inv(poses[i]),_target_tree=current_tree))
+                after=dict(forward=metrics(checks[i],checks[0],t,_target_tree=reference_tree),
+                           reverse=metrics(checks[0],checks[i],np.linalg.inv(t),_target_tree=current_tree))
                 reasons=approve(poses[i],t,reverse,before,after,local.get('local_workspace_radius_m'))
                 if (local.get('local_workspace_rotation_deg') is not None and
                         rotation_deg(t)>float(local['local_workspace_rotation_deg'])+1e-9):
                     reasons.append('outside_local_rotation')
                 correction=np.linalg.inv(poses[i])@t
-                floors=dict(source=noise_floor(checks[i]),target=noise_floor(checks[0]))
+                if reference_floor is None:reference_floor=noise_floor(checks[0])
+                floors=dict(source=noise_floor(checks[i]),target=copy.deepcopy(reference_floor))
                 diagnostic=[]
                 if 'insufficient_heldout_improvement' in reasons:
                     medians=[value.get('median_m') for value in floors.values() if value.get('median_m') is not None]

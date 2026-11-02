@@ -43,6 +43,9 @@ nest-asyncio==1.6.0
 networkx==3.6.1
 numpy==2.2.6
 open3d==0.19.0
+PySide6==6.11.2
+PySide6_Addons==6.11.2
+PySide6_Essentials==6.11.2
 opencv-contrib-python==5.0.0.93
 packaging==26.3
 parso==0.8.7
@@ -67,6 +70,7 @@ requests==2.34.2
 retrying==1.4.2
 rpds-py==2026.6.3
 setuptools==84.0.0
+shiboken6==6.11.2
 six==1.17.0
 sounddevice==0.5.6
 stack-data==0.6.3
@@ -79,3 +83,4 @@ wcwidth==0.8.3
 Werkzeug==3.1.8
 widgetsnbextension==4.0.16
 zipp==4.1.0
+vtk==9.5.2

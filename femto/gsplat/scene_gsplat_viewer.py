@@ -9,8 +9,8 @@ what appears on screen is a real 3DGS render of the trained parameters.
 
 It therefore runs inside ``.venv-gsplat`` (PyTorch + CUDA + gsplat), not in the
 capture ``.venv``.  ``gsplat_backend.open_viewer`` launches it with that runtime.
-Only the Python standard library, NumPy, Pillow and gsplat are used; no new
-third-party dependency and no browser/WebGL stack is introduced.
+The desktop UI uses PySide6, pinned in the dedicated gsplat environment;
+no browser/WebGL stack is introduced.
 
 Coordinates: the trained Gaussians live in the source ``T_WC`` world frame in
 metres, using the Orbbec/OpenCV RDF camera convention (+X right, +Y down,
@@ -20,6 +20,7 @@ into gsplat ``viewmat`` world-to-camera matrices; nothing on disk is modified.
 from __future__ import annotations
 
 import argparse
+import os
 import hashlib
 from dataclasses import dataclass, field
 import json
@@ -29,6 +30,7 @@ import time
 from typing import Any
 
 import numpy as np
+from PySide6.QtCore import Qt
 
 from femto.io_utils import load_json, write_json
 from femto.gsplat.scene_gsplat_export import read_trained_gaussian_ply
@@ -665,261 +667,84 @@ def render_orbit(
 
 
 class GaussianViewerWindow:
-    """Minimal Tkinter shell around the gsplat rasterizer."""
+    """PySide6 shell around the gsplat rasterizer."""
 
-    def __init__(
-        self,
-        target: Path,
-        language: str = "zh",
-        *,
-        frame_timeout_s: float = DEFAULT_FRAME_TIMEOUT_S,
-    ) -> None:
-        import tkinter as tk
-        from PIL import Image, ImageTk
-
-        self._tk = tk
-        self._image_module = Image
-        self._imagetk = ImageTk
+    def __init__(self, target: Path, language: str = "zh", *, frame_timeout_s: float = DEFAULT_FRAME_TIMEOUT_S):
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QComboBox, QLabel, QMainWindow, QPushButton, QSlider, QVBoxLayout, QHBoxLayout, QWidget
         self.language = language if language in LANGUAGE_NAMES else "zh"
         self.model_ply, self.manifest, self.report = resolve_model(target)
         self.output_dir = _viewer_log_directory(Path(target))
         self.frame_timeout_s = max(0.0, float(frame_timeout_s))
         self.optics, first_c2w = training_optics(self.manifest)
         initial_height = int(round(DEFAULT_RENDER_WIDTH * (self.optics.height / self.optics.width))) if self.optics else int(DEFAULT_RENDER_WIDTH * 9 / 16)
-        self.renderer = TrainedGaussianRenderer(
-            self.model_ply, initial_width=DEFAULT_RENDER_WIDTH, initial_height=initial_height
-        )
+        self.renderer = TrainedGaussianRenderer(self.model_ply, initial_width=DEFAULT_RENDER_WIDTH, initial_height=initial_height)
         self.camera = initial_camera(self.renderer, first_c2w)
         self._sensor_viewmat = np.linalg.inv(first_c2w) if first_c2w is not None else None
         self.render_width = DEFAULT_RENDER_WIDTH
         self.aspect = (self.optics.height / self.optics.width) if self.optics else 9 / 16
-        self._pending = False
-        self._drag: tuple[int, int] | None = None
-        self._photo: Any = None
         self._last_render_s = 0.0
-
-        self.root = tk.Tk()
-        self.root.title(self._t("gsview.window_title", name=self.model_ply.parent.parent.name))
-        self.root.configure(bg="#0b1118")
-        self.root.geometry("1180x820")
-        self.root.minsize(720, 520)
-        self._build_ui()
-        self.root.after(60, self._request_render)
-
-    def _t(self, key: str, **values: Any) -> str:
-        return tr(self.language, key, **values)
-
-    def _build_ui(self) -> None:
-        tk = self._tk
-        header = tk.Frame(self.root, bg="#0b1118")
-        header.pack(fill=tk.X, padx=14, pady=(12, 6))
-        self.heading_label = tk.Label(
-            header, text=self._t("gsview.heading"), bg="#0b1118", fg="#e8f0f8",
-            font=("Microsoft YaHei UI", 15, "bold"),
-        )
-        self.heading_label.pack(side=tk.LEFT)
-        self.language_var = tk.StringVar(value=LANGUAGE_NAMES[self.language])
-        selector = tk.OptionMenu(header, self.language_var, *LANGUAGE_NAMES.values(), command=self._change_language)
-        selector.configure(bg="#1a2633", fg="#dbe7f2", highlightthickness=0, relief=tk.FLAT, activebackground="#26364a")
-        selector.pack(side=tk.RIGHT)
-
-        self.backend_label = tk.Label(
-            self.root, text=self._backend_text(), bg="#0b1118", fg="#7fd7a4",
-            font=("Microsoft YaHei UI", 9), justify=tk.LEFT, anchor="w",
-        )
-        self.backend_label.pack(fill=tk.X, padx=14)
-
-        self.canvas = tk.Label(self.root, bg="#05080c", text=self._t("gsview.rendering"), fg="#9cb1c7")
-        self.canvas.pack(fill=tk.BOTH, expand=True, padx=14, pady=10)
-        self.canvas.bind("<ButtonPress-1>", self._press)
-        self.canvas.bind("<B1-Motion>", self._orbit_drag)
-        self.canvas.bind("<ButtonRelease-1>", self._release)
-        self.canvas.bind("<ButtonPress-3>", self._press)
-        self.canvas.bind("<B3-Motion>", self._pan_drag)
-        self.canvas.bind("<ButtonRelease-3>", self._release)
-        self.canvas.bind("<MouseWheel>", self._wheel)
-        self.canvas.bind("<Configure>", lambda _event: self._request_render())
-
-        controls = tk.Frame(self.root, bg="#111a24", padx=12, pady=8)
-        controls.pack(fill=tk.X, padx=14, pady=(0, 12))
-        self.reset_button = tk.Button(
-            controls, text=self._t("gsview.reset_view"), command=self._reset_view,
-            bg="#6d48a8", activebackground="#8058c1", fg="white", relief=tk.FLAT, bd=0,
-            font=("Microsoft YaHei UI", 10, "bold"), cursor="hand2",
-        )
-        self.reset_button.pack(side=tk.LEFT)
-        self.quality_label = tk.Label(
-            controls, text=self._t("gsview.render_width"), bg="#111a24", fg="#dbe7f2",
-            font=("Microsoft YaHei UI", 9),
-        )
-        self.quality_label.pack(side=tk.LEFT, padx=(14, 6))
-        self.width_scale = tk.Scale(
-            controls, from_=320, to=1600, resolution=80, orient=tk.HORIZONTAL, showvalue=True,
-            bg="#111a24", fg="#dbe7f2", troughcolor="#1a2633", highlightthickness=0,
-            command=self._set_render_width, length=220,
-        )
-        self.width_scale.set(self.render_width)
-        self.width_scale.pack(side=tk.LEFT)
-        self.status_var = tk.StringVar(value="")
-        tk.Label(
-            controls, textvariable=self.status_var, bg="#111a24", fg="#a3b6c8",
-            font=("Microsoft YaHei UI", 9), anchor="e", justify=tk.RIGHT,
-        ).pack(side=tk.RIGHT, fill=tk.X, expand=True)
-        self.hint_label = tk.Label(
-            self.root, text=self._t("gsview.controls_hint"), bg="#0b1118", fg="#7d8fa3",
-            font=("Microsoft YaHei UI", 9), anchor="w", justify=tk.LEFT,
-        )
-        self.hint_label.pack(fill=tk.X, padx=14, pady=(0, 10))
-
-    def _backend_text(self) -> str:
-        evaluation = (self.report.get("evaluation") or {}).get("aggregate") or {}
-        psnr = evaluation.get("psnr")
-        kind = _report_data_kind(self.report, self.manifest)
-        budget = self.renderer.budget
-        return self._t(f"gsview.data.{kind}") + " · " + self._t(
-            "gsview.backend",
-            count=self.renderer.model_gaussian_count,
-            degree=self.renderer.sh_degree,
-            accepted=self._t("gsview.accepted" if self.report.get("accepted") else "gsview.not_accepted"),
-            psnr=f"{psnr:.2f}" if isinstance(psnr, (int, float)) else "-",
-        ) + " · " + self._t(
-            "gsview.degradation",
-            state=self._t(f"gsview.degradation.{budget['state']}"),
-            rendered=self.renderer.rendered_gaussian_count,
-        )
-
-    def _change_language(self, display: str) -> None:
-        for code, name in LANGUAGE_NAMES.items():
-            if name == display:
-                self.language = code
-                break
-        self.root.title(self._t("gsview.window_title", name=self.model_ply.parent.parent.name))
-        self.heading_label.configure(text=self._t("gsview.heading"))
-        self.backend_label.configure(text=self._backend_text())
-        self.reset_button.configure(text=self._t("gsview.reset_view"))
-        self.quality_label.configure(text=self._t("gsview.render_width"))
-        self.hint_label.configure(text=self._t("gsview.controls_hint"))
-        self._update_status()
-
-    def _set_render_width(self, value: str) -> None:
-        self.render_width = int(float(value))
-        self._request_render()
-
-    def _reset_view(self) -> None:
-        _, first_c2w = training_optics(self.manifest)
-        self.camera = initial_camera(self.renderer, first_c2w)
-        self._sensor_viewmat = np.linalg.inv(first_c2w) if first_c2w is not None else None
-        self._request_render()
-
-    def _press(self, event: Any) -> None:
-        self._drag = (event.x, event.y)
-
-    def _release(self, _event: Any) -> None:
         self._drag = None
-
-    def _orbit_drag(self, event: Any) -> None:
-        self._sensor_viewmat = None
-        if self._drag is None:
-            self._drag = (event.x, event.y)
-            return
-        dx, dy = event.x - self._drag[0], event.y - self._drag[1]
-        self._drag = (event.x, event.y)
-        self.camera.orbit(-dx * 0.35, dy * 0.35)
-        self._request_render()
-
-    def _pan_drag(self, event: Any) -> None:
-        self._sensor_viewmat = None
-        if self._drag is None:
-            self._drag = (event.x, event.y)
-            return
-        dx, dy = event.x - self._drag[0], event.y - self._drag[1]
-        self._drag = (event.x, event.y)
-        metres_per_pixel = self.camera.distance / max(self.render_width, 1) * 1.4
-        self.camera.pan(-dx * metres_per_pixel, -dy * metres_per_pixel)
-        self._request_render()
-
-    def _wheel(self, event: Any) -> None:
-        self._sensor_viewmat = None
-        self.camera.zoom(0.9 if event.delta > 0 else 1.0 / 0.9)
-        self._request_render()
-
-    def _request_render(self) -> None:
-        if self._pending:
-            return
-        self._pending = True
-        self.root.after_idle(self._render_now)
-
-    def _render_now(self) -> None:
         self._pending = False
-        width = int(self.render_width)
-        height = max(1, int(round(width * self.aspect)))
-        optics = self.optics or default_optics(self.renderer, width, height)
-        started = time.time()
-        try:
-            viewmat = self._sensor_viewmat if self._sensor_viewmat is not None else self.camera.viewmat()
-            image = self.renderer.render(viewmat, optics.scaled(width, height), width, height)
-        except Exception as error:  # keep the window usable and name the failure
-            self.status_var.set(f"{type(error).__name__}: {error}")
-            try:
-                _append_viewer_log(
-                    self.output_dir,
-                    {
-                        "status": "blocked",
-                        "phase": "interactive_render",
-                        "error": f"{type(error).__name__}: {error}",
-                    },
-                )
-            except OSError:
-                pass
-            return
-        self._last_render_s = time.time() - started
-        rerender_degraded = False
-        if self.frame_timeout_s and self._last_render_s > self.frame_timeout_s:
-            rerender_degraded = self.renderer.degrade_for_timeout(width, height)
-            try:
-                _append_viewer_log(
-                    self.output_dir,
-                    {
-                        "status": "degraded",
-                        "phase": "interactive_render",
-                        "reason": "frame timeout",
-                        "elapsed_ms": self._last_render_s * 1000.0,
-                        "frame_timeout_s": self.frame_timeout_s,
-                        "degradation": self.renderer.budget,
-                    },
-                )
-            except OSError:
-                pass
-        available_width = max(self.canvas.winfo_width(), 200)
-        available_height = max(self.canvas.winfo_height(), 150)
-        picture = self._image_module.fromarray(image)
-        scale = min(available_width / width, available_height / height)
-        if scale > 0 and abs(scale - 1.0) > 0.02:
-            picture = picture.resize(
-                (max(1, int(width * scale)), max(1, int(height * scale))),
-                self._image_module.Resampling.BILINEAR,
-            )
-        self._photo = self._imagetk.PhotoImage(picture)
-        self.canvas.configure(image=self._photo, text="")
-        self._update_status()
-        if rerender_degraded:
-            self._request_render()
 
+        self.window = QMainWindow()
+        self.window.setWindowTitle(self._t("gsview.window_title", name=self.model_ply.parent.parent.name))
+        self.window.resize(1180, 820); self.window.setMinimumSize(720, 520)
+        root = QWidget(); self.window.setCentralWidget(root); layout = QVBoxLayout(root)
+        header = QHBoxLayout(); layout.addLayout(header)
+        self.heading_label = QLabel(self._t("gsview.heading")); header.addWidget(self.heading_label)
+        header.addStretch()
+        selector = QComboBox(); selector.addItems(list(LANGUAGE_NAMES.values())); selector.setCurrentText(LANGUAGE_NAMES[self.language]); selector.currentTextChanged.connect(self._change_language); header.addWidget(selector)
+        self.backend_label = QLabel(self._backend_text()); self.backend_label.setWordWrap(True); layout.addWidget(self.backend_label)
+        self.canvas = QLabel(self._t("gsview.rendering")); self.canvas.setAlignment(Qt.AlignmentFlag.AlignCenter); self.canvas.setMinimumSize(320, 240); layout.addWidget(self.canvas, 1)
+        self.canvas.setMouseTracking(True)
+        self.controls = QHBoxLayout(); layout.addLayout(self.controls)
+        reset = QPushButton(self._t("gsview.reset_view")); reset.clicked.connect(self._reset_view); self.controls.addWidget(reset)
+        self.quality_label = QLabel(self._t("gsview.render_width")); self.controls.addWidget(self.quality_label)
+        self.width_scale = QSlider(Qt.Orientation.Horizontal); self.width_scale.setRange(320, 1600); self.width_scale.setValue(self.render_width); self.width_scale.valueChanged.connect(self._set_render_width); self.controls.addWidget(self.width_scale)
+        self.status_label = QLabel(); self.controls.addWidget(self.status_label, 1)
+        self.hint_label = QLabel(self._t("gsview.controls_hint")); self.hint_label.setWordWrap(True); layout.addWidget(self.hint_label)
+        self.timer = QTimer(self.window); self.timer.timeout.connect(self._render_now); self.timer.setSingleShot(True)
+        self.canvas.installEventFilter(self)
+        self._request_render()
+
+    def _t(self, key: str, **values: Any) -> str: return tr(self.language, key, **values)
+    def _backend_text(self) -> str:
+        evaluation=(self.report.get("evaluation") or {}).get("aggregate") or {}; psnr=evaluation.get("psnr"); kind=_report_data_kind(self.report,self.manifest); budget=self.renderer.budget
+        return self._t(f"gsview.data.{kind}")+" · "+self._t("gsview.backend",count=self.renderer.model_gaussian_count,degree=self.renderer.sh_degree,accepted=self._t("gsview.accepted" if self.report.get("accepted") else "gsview.not_accepted"),psnr=f"{psnr:.2f}" if isinstance(psnr,(int,float)) else "-")+" · "+self._t("gsview.degradation",state=self._t(f"gsview.degradation.{budget['state']}"),rendered=self.renderer.rendered_gaussian_count)
+    def _change_language(self, display: str) -> None:
+        self.language=next((code for code,name in LANGUAGE_NAMES.items() if name==display),self.language)
+        self.window.setWindowTitle(self._t("gsview.window_title",name=self.model_ply.parent.parent.name)); self.heading_label.setText(self._t("gsview.heading")); self.backend_label.setText(self._backend_text()); self.quality_label.setText(self._t("gsview.render_width")); self.hint_label.setText(self._t("gsview.controls_hint")); self._update_status()
+    def _set_render_width(self, value: int) -> None: self.render_width=int(value); self._request_render()
+    def _reset_view(self) -> None:
+        _, first_c2w=training_optics(self.manifest); self.camera=initial_camera(self.renderer,first_c2w); self._sensor_viewmat=np.linalg.inv(first_c2w) if first_c2w is not None else None; self._request_render()
+    def _request_render(self) -> None:
+        if not self.timer.isActive(): self.timer.start(0)
+    def _render_now(self) -> None:
+        width=int(self.render_width); height=max(1,int(round(width*self.aspect))); optics=self.optics or default_optics(self.renderer,width,height); started=time.time()
+        try: image=self.renderer.render(self._sensor_viewmat if self._sensor_viewmat is not None else self.camera.viewmat(),optics.scaled(width,height),width,height)
+        except Exception as error:
+            self.status_label.setText(f"{type(error).__name__}: {error}"); _append_viewer_log(self.output_dir,{"status":"blocked","phase":"interactive_render","error":f"{type(error).__name__}: {error}"}); return
+        self._last_render_s=time.time()-started
+        if self.frame_timeout_s and self._last_render_s>self.frame_timeout_s: self.renderer.degrade_for_timeout(width,height)
+        from PySide6.QtGui import QImage, QPixmap
+        pixels=np.ascontiguousarray(image); qimage=QImage(pixels.data,width,height,pixels.strides[0],QImage.Format.Format_RGB888).copy()
+        self.canvas.setPixmap(QPixmap.fromImage(qimage).scaled(self.canvas.size(),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation)); self._update_status()
     def _update_status(self) -> None:
-        budget = self.renderer.budget
-        self.status_var.set(
-            self._t(
-                "gsview.status",
-                width=int(self.render_width),
-                ms=self._last_render_s * 1000.0,
-                distance=self.camera.distance,
-                state=self._t(f"gsview.degradation.{budget['state']}"),
-            )
-        )
-
+        budget=self.renderer.budget; self.status_label.setText(self._t("gsview.status",width=int(self.render_width),ms=self._last_render_s*1000.0,distance=self.camera.distance,state=self._t(f"gsview.degradation.{budget['state']}")))
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj is self.canvas and event.type()==QEvent.Type.MouseButtonPress: self._drag=(event.position().x(),event.position().y()); return True
+        if obj is self.canvas and event.type()==QEvent.Type.MouseMove and self._drag is not None:
+            dx=event.position().x()-self._drag[0]; dy=event.position().y()-self._drag[1]; self._drag=(event.position().x(),event.position().y()); self._sensor_viewmat=None; self.camera.orbit(-dx*.35,dy*.35); self._request_render(); return True
+        if obj is self.canvas and event.type()==QEvent.Type.MouseButtonRelease: self._drag=None; return True
+        if obj is self.canvas and event.type()==QEvent.Type.Wheel:
+            self._sensor_viewmat=None; self.camera.zoom(.9 if event.angleDelta().y()>0 else 1/.9); self._request_render(); return True
+        return False
     def run(self) -> None:
-        self.root.mainloop()
-
+        self.window.show()
+        from PySide6.QtWidgets import QApplication
+        return QApplication.instance().exec()
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render a trained direct-gsplat model with gsplat")
@@ -934,6 +759,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    from femto.paths import workspace_runtime_environment
+    os.environ.update(workspace_runtime_environment())
     args = parse_args()
     try:
         if args.orbit:

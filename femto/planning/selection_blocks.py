@@ -147,20 +147,28 @@ def _plan_fragment(vertices: np.ndarray, faces: np.ndarray, ids: np.ndarray, mes
                    components: np.ndarray, params: dict[str, Any], region: dict[str, Any], intrinsic: np.ndarray,
                    image_size: np.ndarray, check: Callable[[], None], budget: dict[str, int], row_offset: int,
                    block_index: int, labels: np.ndarray, classes: np.ndarray | None,
-                   allowed: np.ndarray, algorithm_version: str = SELECTION_ALGORITHM) -> dict[str, Any]:
+                   allowed: np.ndarray, algorithm_version: str = SELECTION_ALGORITHM, *, row_layout=None) -> dict[str, Any]:
     from femto.planning.mesh_slice_planner import _build_items, _eligible_turns, _prepare_block
     from femto.planning.surface_row_turns import SurfaceLinks, connect_links
     prepared = _prepare_block(vertices, faces, ids, mesh_component, components, params, region, intrinsic,
-                              image_size, check, budget, row_offset, block_index, allowed)
+                              image_size, check, budget, row_offset, block_index, allowed, row_layout=row_layout)
     step_m = params["sample_step_mm"] / 1000
     # Preserve canonical slices for row/spacing measurement. Only the connector
     # traversal gets a reordered, independently copied set of scan records.
     records, segments, gaps = prepared["ordered_records"], prepared["segments"], prepared["gaps"]
-    if algorithm_version == ORDERED_SELECTION_ALGORITHM:
+    if algorithm_version == ORDERED_SELECTION_ALGORITHM and not prepared.get('local_patch_order'):
         from femto.planning.surface_scan_order import order_scan_records
         records = order_scan_records(records, prepared["frame"], check)
         segments, gaps = _build_items(records, region, intrinsic, image_size, step_m, *prepared["gap_context"])
     gaps = _refine_gap_causes(gaps, segments, labels, classes, intrinsic, image_size, step_m)
+    if prepared.get('local_patch_order'):
+        # These are unconnected candidates, not a failed-path diagnosis.
+        # All transitions are decided later by the quality-checked visit graph.
+        kept=[replace(g,detail=dict(g.detail,link_failure_reason='connection_deferred',
+              **({'row_turn_failure_reason':'connection_deferred'} if g.reason=='row_turn' else {}))) for g in gaps]
+        return dict(prepared,gaps=kept,chains=[[dict(p) for p in s.points] for s in segments],
+                    kept=kept,connected=Counter(),methods=Counter(),
+                    failures=Counter(connection_deferred=len(kept)),length=0.,added=0)
     from femto.planning.surface_trajectory import OPTIMIZED_SELECTION_ALGORITHM
     from femto.planning.surface_link_optimization import OptimizedSurfaceLinks
     router_class = OptimizedSurfaceLinks if algorithm_version == OPTIMIZED_SELECTION_ALGORITHM else SurfaceLinks
@@ -278,204 +286,139 @@ def _depth(points: np.ndarray) -> dict[str, float]:
             "depth_span_m": float(points.max() - points.min())}
 
 
-def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: trimesh.Trimesh,
-                          params: dict[str, Any], check: Callable[[], None], *,
-                          algorithm_version: str = SELECTION_ALGORITHM) -> SurfaceTrajectory:
-    from femto.planning.mesh_slice_planner import (
-        Unplannable, _depth_statistics, _direction, _gap_detail, _level_segments, _merge_spacing, _pca_frame,
-        _row_report, _source_record)
+def _selection_block_contract(
+    corner: str, intent: dict, support: dict | None, blocks: list[dict],
+) -> dict:
+    block_record = {
+        "schema": SELECTION_BLOCKS_SCHEMA,
+        "block_definition": "one block per 4-connected component of the physician selection mask; region faces "
+                            "assigned by centroid pixel; mesh connectivity is only a fragment diagnosis",
+        "order_rule": {"visit_order": "selection_mask_bbox_reading_order_from_start_corner",
+                       "start_corner": corner,
+                       "keys": "top: bbox y0 ascending / bottom: bbox y1 descending, then left: x0 ascending / right: x1 descending",
+                       "tie_break": "selection component id ascending (raster order of first selected pixel)"},
+        "fragment_rule": "mesh fragments of one block are visited in reference-image reading order; the seam "
+                         "between two measured fragments is a disconnected_surface gap, never bridged",
+        "link_rule": {"first": "frozen v2/v3.1 boundary-band turn for adjacent rows, accepted only if every edge stays on the block's selected pixels",
+                      "then": "shortest path along the fragment's own mesh edges; every edge lies on one selected "
+                              "triangle, stays inside the reference image, never touches a painted forbidden polygon and "
+                              "projects only onto this block's selected pixels (sampled at least once per pixel)",
+                      "never": "across mesh gaps, explicit unselected pixels, other fragments or other blocks"},
+        "scan_rule": "scan samples projecting onto pixels outside the block's selection component are dropped; "
+                     "no scan or connector edge enters explicitly unselected pixels",
+        "selection_binding": {"intent_sha256": intent["selected_mask_sha256"],
+                              "support_sha256": None if support is None else support["class_sha256"],
+                              "component_count": len(intent["components"]),
+                              "hole_count": len(intent["explicit_unselected_holes"]),
+                              "missing_geometry_policy": intent["missing_geometry_policy"]},
+        "items": blocks,
+    }
+    return block_record
+
+
+def _initial_selection_block(
+    block_index: int, cid: int, ids: np.ndarray, vertices: np.ndarray,
+    faces: np.ndarray, component: dict, labels: np.ndarray, pixel_counts: dict | None,
+) -> dict:
+    record: dict[str, Any] = {
+        "block_index": block_index, "component_id": cid, "face_count": int(len(ids)),
+        "face_index_min": int(ids.min()) if len(ids) else 0, "face_index_max": int(ids.max()) if len(ids) else 0,
+        "face_indices_sha256": face_list_sha256(ids), "area_m2": _area(vertices, faces, ids),
+        "pixel_bounds": [float(v) for v in component["bbox"]], "center_pixel": _mask_centre(labels, cid),
+        "selection": {"selected_pixels": component["pixel_count"], "hole_count": len(component["hole_ids"]),
+                      "support": pixel_counts},
+    }
+    return record
+
+
+def _initial_selection_fragment(
+    fragment_index: int, descriptor: dict, fragment_ids: np.ndarray,
+) -> dict:
+    fragment = {"fragment_index": fragment_index, "mesh_component_id": descriptor["mesh_component_id"],
+                "face_count": int(len(fragment_ids)), "face_index_min": int(fragment_ids.min()),
+                "face_index_max": int(fragment_ids.max()), "face_indices_sha256": face_list_sha256(fragment_ids),
+                "area_m2": descriptor["area_m2"], "pixel_bounds": descriptor["pixel_bounds"],
+                "center_pixel": descriptor["center_pixel"]}
+    return fragment
+
+
+def _update_selection_block_coverage(
+    fragment_records: list[dict], record: dict, pixel_counts: dict | None, block_dropped: int,
+) -> None:
+    uncovered = [fragment for fragment in fragment_records if fragment["status"] != "planned"]
+    record["fragments"] = fragment_records
+    record["mesh_fragment_count"] = len(fragment_records)
+    record["planned_fragment_count"] = len(fragment_records) - len(uncovered)
+    record["coverage"] = {
+        "status": ("complete" if fragment_records and not uncovered and (pixel_counts or {}).get("geometry_unconfirmed_pixels", 0) == 0
+                   else "partial" if (fragment_records and len(uncovered) < len(fragment_records)) else "none"),
+        "fragment_status": "complete" if fragment_records and not uncovered else "partial" if len(uncovered) < len(fragment_records) else "none",
+        "uncovered_fragment_count": len(uncovered),
+        "uncovered_face_count": int(sum(fragment["face_count"] for fragment in uncovered)),
+        "uncovered_area_m2": float(sum(fragment["area_m2"] for fragment in uncovered)),
+        "geometry_unconfirmed_pixels": None if pixel_counts is None else pixel_counts["geometry_unconfirmed_pixels"],
+        "dropped_fragment_count": block_dropped,
+        "treatment_coverage_claim": "none_without_effective_head_width",
+    }
+
+
+def _mark_selection_block_unplannable(
+    fragment_records: list[dict], record: dict, block_dropped: int,
+) -> None:
+    reason = "no_supported_geometry" if not fragment_records else "all_fragments_unplannable"
+    message = ("选区内没有任何有 Mesh 支持的三角面（几何待确认 / 需要补采）" if not fragment_records else
+               "块内每个网格碎片都无法规划：" + "; ".join(
+                   f"碎片 {f['fragment_index'] + 1}（{f['face_count']} 面）{f['reason']}" for f in fragment_records))
+    record.update(status="unplannable", reason=reason, message=message,
+                  continuity={"status": "none", "chain_count": 0, "internal_gap_count": 0,
+                              "link_failure_counts": {}},
+                  revisit=None, dropped_fragment_count=block_dropped)
+
+
+def _append_selection_chains(
+    items: list[ScanSegment | Gap], offsets: dict, block_chains: list[list[dict]],
+    block_kept: list[Gap], block_index: int, algorithm_version: str, final_gaps: list[Gap],
+) -> tuple[list[ScanSegment], list[Gap], int]:
     from femto.planning.surface_row_turns import chain_items
-    from femto.planning.surface_spacing_report import spacing_report as measure_spacing
-    vertices = np.asarray(mesh.vertices, dtype=np.float64)
-    faces = np.asarray(mesh.faces, dtype=np.int64)
-    region = manifest["region"]
-    intrinsic = np.asarray(region["view_reference"]["undistorted_intrinsic"], dtype=np.float64)
-    image_size = np.asarray(region["view_reference"]["image_size"], dtype=np.int64)
-    intent, support, labels, owners = selection_face_assignment(region, vertices, faces)
-    classes = None if support is None else support_classes(support)
-    components = face_components(faces)
-    corner = params["start_corner"]
-    spacing_m = params["row_spacing_mm"] / 1000
-    ordered = sorted(intent["components"], key=lambda item: _reading_key(item["bbox"], item["component_id"], corner))
-    budget = {"points": 0}
-    spacing_budget = {"expansions": 0, "distance_pairs": 0}
-    offsets = {"row": 0, "route": 0, "segment": 0, "gap": 0, "pre_segment": 0}
-    items: list[ScanSegment | Gap] = []
-    blocks: list[dict[str, Any]] = []
-    dropped_fragments: list[dict[str, Any]] = []
-    row_report: list[dict[str, Any]] = []
-    spacing_reports: list[dict[str, Any]] = []
-    scan_rows: list[int] = []
-    final_gaps: list[Gap] = []
-    spacing_mesh = SimpleNamespace(vertices=vertices, triangles=faces)
-    for block_index, component in enumerate(ordered):
-        check()
-        cid = component["component_id"]
-        ids = np.flatnonzero(owners == cid)
-        pixel_counts = component_support_counts(support, labels, cid)
-        record: dict[str, Any] = {
-            "block_index": block_index, "component_id": cid, "face_count": int(len(ids)),
-            "face_index_min": int(ids.min()) if len(ids) else 0, "face_index_max": int(ids.max()) if len(ids) else 0,
-            "face_indices_sha256": face_list_sha256(ids), "area_m2": _area(vertices, faces, ids),
-            "pixel_bounds": [float(v) for v in component["bbox"]], "center_pixel": _mask_centre(labels, cid),
-            "selection": {"selected_pixels": component["pixel_count"], "hole_count": len(component["hole_ids"]),
-                          "support": pixel_counts},
-        }
-        fragments = (_fragment_descriptors(vertices, faces, ids, components, intrinsic, image_size, corner)
-                     if len(ids) else [])
-        fragment_records: list[dict[str, Any]] = []
-        allowed = labels == cid + 1  # every sample and every edge must project onto this block's own pixels
-        block_chains: list[list[dict[str, Any]]] = []
-        block_kept: list[Gap] = []
-        totals = Counter()
-        lengths_scan = 0.0
-        connector_length = 0.0
-        turn_failures: Counter = Counter()
-        link_failures: Counter = Counter()
-        depth_values: list[np.ndarray] = []
-        block_row_first = offsets["row"]
-        block_dropped = 0
-        block_segments: list[ScanSegment] = []
-        block_reports: list[dict[str, Any]] = []
-        for fragment_index, descriptor in enumerate(fragments):
-            check()
-            fragment_ids = descriptor["face_ids"]
-            fragment = {"fragment_index": fragment_index, "mesh_component_id": descriptor["mesh_component_id"],
-                        "face_count": int(len(fragment_ids)), "face_index_min": int(fragment_ids.min()),
-                        "face_index_max": int(fragment_ids.max()), "face_indices_sha256": face_list_sha256(fragment_ids),
-                        "area_m2": descriptor["area_m2"], "pixel_bounds": descriptor["pixel_bounds"],
-                        "center_pixel": descriptor["center_pixel"]}
-            try:
-                planned = _plan_fragment(vertices, faces, fragment_ids, descriptor["mesh_component_id"], components,
-                                         params, region, intrinsic, image_size, check, budget, offsets["row"],
-                                         block_index, labels, classes, allowed, algorithm_version)
-            except Unplannable as error:
-                fragment.update(status="unplannable", reason=error.reason, message=str(error))
-                if error.details:
-                    extra = [dict(item, fragment_index=fragment_index) for item in error.details.get("dropped_fragments", [])]
-                    dropped_fragments.extend(extra)
-                    block_dropped += len(extra)
-                    fragment["dropped_fragment_count"] = len(extra)
-                fragment_records.append(fragment)
-                continue
-            if block_chains:
-                block_kept.append(_seam_gap(block_chains[-1], planned["chains"][0],
-                                            ordered_rows=algorithm_version == ORDERED_SELECTION_ALGORITHM))
-                link_failures["disconnected_measured_surface"] += 1
-            block_chains.extend(planned["chains"])
-            block_kept.extend(planned["kept"])
-            row_count = len({segment.row_index for segment in planned["segments"]})
-            scan_length = float(sum(planned["lengths"]))
-            lengths_scan += scan_length
-            connector_length += planned["length"]
-            totals.update(planned["connected"])
-            for gap in planned["kept"]:
-                link_failures[gap.detail["link_failure_reason"]] += 1
-                if gap.reason == "row_turn":
-                    turn_failures[gap.detail["row_turn_failure_reason"]] += 1
-            depth_values.append(np.asarray([point["xyz_m"][2] for chain in planned["chains"] for point in chain]))
-            row_report.extend(_row_report(planned["segments"], planned["lengths"], [], block_index))
-            check()
-            report = measure_spacing(spacing_mesh, {"triangle_indices": [int(v) for v in fragment_ids]},
-                                     {"segments": _level_segments(planned["ordered_records"], planned["segments"])},
-                                     params["row_spacing_mm"], params["row_spacing_mm"] * params["spacing_tolerance"],
-                                     check, budget=spacing_budget,
-                                     target_limited=algorithm_version == ORDERED_SELECTION_ALGORITHM)
-            report["measurements"] = [dict(row, chain_index=row["chain_index"] + offsets["pre_segment"],
-                                           block_index=block_index, fragment_index=fragment_index)
-                                      for row in report["measurements"]]
-            report.update(block_index=block_index, fragment_index=fragment_index)
-            block_reports.append(report)
-            scan_rows.extend(segment.row_index for segment in planned["segments"])
-            extra = [dict(item, fragment_index=fragment_index) for item in planned["dropped_fragments"]]
-            dropped_fragments.extend(extra)
-            block_dropped += len(extra)
-            block_segments.extend(planned["segments"])
-            fragment.update(status="planned", sweep_frame=planned["frame"], row_index_first=offsets["row"],
-                            row_count=row_count, chain_count=len(planned["chains"]),
-                            internal_gap_count=len(planned["kept"]), scan_length_m=scan_length,
-                            connector_length_m=planned["length"],
-                            connected_row_turns=int(planned["connected"]["row_turn"]),
-                            connected_detours=int(planned["connected"]["detour"]),
-                            link_methods=dict(sorted(planned["methods"].items())),
-                            dropped_fragment_count=len(extra))
-            fragment_records.append(fragment)
-            offsets["row"] += row_count
-            offsets["pre_segment"] += len(planned["segments"])
-        uncovered = [fragment for fragment in fragment_records if fragment["status"] != "planned"]
-        record["fragments"] = fragment_records
-        record["mesh_fragment_count"] = len(fragment_records)
-        record["planned_fragment_count"] = len(fragment_records) - len(uncovered)
-        record["coverage"] = {
-            "status": ("complete" if fragment_records and not uncovered and (pixel_counts or {}).get("geometry_unconfirmed_pixels", 0) == 0
-                       else "partial" if (fragment_records and len(uncovered) < len(fragment_records)) else "none"),
-            "fragment_status": "complete" if fragment_records and not uncovered else "partial" if len(uncovered) < len(fragment_records) else "none",
-            "uncovered_fragment_count": len(uncovered),
-            "uncovered_face_count": int(sum(fragment["face_count"] for fragment in uncovered)),
-            "uncovered_area_m2": float(sum(fragment["area_m2"] for fragment in uncovered)),
-            "geometry_unconfirmed_pixels": None if pixel_counts is None else pixel_counts["geometry_unconfirmed_pixels"],
-            "dropped_fragment_count": block_dropped,
-            "treatment_coverage_claim": "none_without_effective_head_width",
-        }
-        if not block_chains:
-            reason = "no_supported_geometry" if not fragment_records else "all_fragments_unplannable"
-            message = ("选区内没有任何有 Mesh 支持的三角面（几何待确认 / 需要补采）" if not fragment_records else
-                       "块内每个网格碎片都无法规划：" + "; ".join(
-                           f"碎片 {f['fragment_index'] + 1}（{f['face_count']} 面）{f['reason']}" for f in fragment_records))
-            record.update(status="unplannable", reason=reason, message=message,
-                          continuity={"status": "none", "chain_count": 0, "internal_gap_count": 0,
-                                      "link_failure_counts": {}},
-                          revisit=None, dropped_fragment_count=block_dropped)
-            blocks.append(record)
-            continue
-        revisit = _mark_revisits(block_chains, spacing_m, check)
-        if items:
-            inter_gap = offsets["gap"]
-            offsets["gap"] += 1
-        else:
-            inter_gap = None
-        block_items, route_end = chain_items(block_chains, block_kept, route_start=offsets["route"],
-                                             segment_start=offsets["segment"], gap_start=offsets["gap"],
-                                             block_index=block_index)
-        segments_final = [item for item in block_items if isinstance(item, ScanSegment)]
-        kept = [item for item in block_items if isinstance(item, Gap)]
-        if inter_gap is not None:
-            previous = items[-1]
-            assert isinstance(previous, ScanSegment)
-            first = segments_final[0]
-            before, after = previous.points[-1], first.points[0]
-            gap = Gap(inter_gap, "selection_break", _gap_detail("not_applicable"),
-                      {"route_index": before["route_index"], "xyz_m": before["xyz_m"]},
-                      {"route_index": after["route_index"], "xyz_m": after["xyz_m"]},
-                      _direction(previous.points),
-                      before["row_index"] if algorithm_version == ORDERED_SELECTION_ALGORITHM else previous.row_index,
-                      first.row_index,
-                      float(np.linalg.norm(np.asarray(after["xyz_m"]) - before["xyz_m"])))
-            items.append(gap)
-            final_gaps.append(gap)
-        items.extend(block_items)
-        final_gaps.extend(kept)
-        spacing_reports.extend(block_reports)
-        depth = np.concatenate(depth_values)
-        row_count = offsets["row"] - block_row_first
-        record.update(
-            status="planned" if len(segments_final) == 1 else "incomplete",
-            sweep_frame=dict(next(f["sweep_frame"] for f in fragment_records if f["status"] == "planned"),
-                             role="first_planned_fragment_frame"),
-            segment_index_first=segments_final[0].segment_index, segment_count=len(segments_final),
-            gap_count=len(kept), gap_counts=dict(sorted(Counter(g.reason for g in kept).items())),
-            point_count=route_end - offsets["route"], row_index_first=block_row_first, row_count=row_count,
-            scan_length_m=lengths_scan, connector_length_m=connector_length,
-            connected_row_turns=int(totals["row_turn"]), connected_detours=int(totals["detour"]),
-            row_turn_failure_counts=dict(sorted(turn_failures.items())),
-            link_failure_counts=dict(sorted(link_failures.items())),
-            dropped_fragment_count=block_dropped,
-            continuity={"status": "single_chain" if len(segments_final) == 1 else "broken",
-                        "chain_count": len(segments_final), "internal_gap_count": len(kept),
-                        "link_failure_counts": dict(sorted(link_failures.items()))},
-            revisit=revisit, **_depth(depth))
-        blocks.append(record)
-        offsets.update(route=route_end, segment=segments_final[-1].segment_index + 1, gap=offsets["gap"] + len(kept))
+    from femto.planning.mesh_slice_planner import _gap_detail, _direction
+    if items:
+        inter_gap = offsets["gap"]
+        offsets["gap"] += 1
+    else:
+        inter_gap = None
+    block_items, route_end = chain_items(block_chains, block_kept, route_start=offsets["route"],
+                                         segment_start=offsets["segment"], gap_start=offsets["gap"],
+                                         block_index=block_index)
+    segments_final = [item for item in block_items if isinstance(item, ScanSegment)]
+    kept = [item for item in block_items if isinstance(item, Gap)]
+    if inter_gap is not None:
+        previous = items[-1]
+        assert isinstance(previous, ScanSegment)
+        first = segments_final[0]
+        before, after = previous.points[-1], first.points[0]
+        gap = Gap(inter_gap, "selection_break", _gap_detail("not_applicable"),
+                  {"route_index": before["route_index"], "xyz_m": before["xyz_m"]},
+                  {"route_index": after["route_index"], "xyz_m": after["xyz_m"]},
+                  _direction(previous.points),
+                  before["row_index"] if algorithm_version == ORDERED_SELECTION_ALGORITHM else previous.row_index,
+                  first.row_index,
+                  float(np.linalg.norm(np.asarray(after["xyz_m"]) - before["xyz_m"])))
+        items.append(gap)
+        final_gaps.append(gap)
+    items.extend(block_items)
+    final_gaps.extend(kept)
+    return segments_final, kept, route_end
+
+
+def _finish_selection_trajectory(
+    blocks: list[dict], row_report: list[dict], final_gaps: list[Gap],
+    items: list[ScanSegment | Gap], support: dict | None, mesh: trimesh.Trimesh,
+    params: dict, offsets: dict, intent: dict, corner: str, dropped_fragments: list[dict],
+    algorithm_version: str, manifest_path: Path, manifest: dict,
+    spacing_reports: list[dict], spacing_budget: dict, scan_rows: list[int], region: dict,
+) -> SurfaceTrajectory:
+    from femto.planning.mesh_slice_planner import (
+        Unplannable, _depth_statistics, _pca_frame, _merge_spacing, _source_record)
     with_chain = [block for block in blocks if block["status"] != "unplannable"]
     if not with_chain:
         raise Unplannable("all_blocks_unplannable",
@@ -531,30 +474,7 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
         "treatment_coverage_claim": "none_without_effective_head_width",
     }
     statistics["total_length_m"] = statistics["scan_length_m"] + statistics["connector_length_m"]
-    block_record = {
-        "schema": SELECTION_BLOCKS_SCHEMA,
-        "block_definition": "one block per 4-connected component of the physician selection mask; region faces "
-                            "assigned by centroid pixel; mesh connectivity is only a fragment diagnosis",
-        "order_rule": {"visit_order": "selection_mask_bbox_reading_order_from_start_corner",
-                       "start_corner": corner,
-                       "keys": "top: bbox y0 ascending / bottom: bbox y1 descending, then left: x0 ascending / right: x1 descending",
-                       "tie_break": "selection component id ascending (raster order of first selected pixel)"},
-        "fragment_rule": "mesh fragments of one block are visited in reference-image reading order; the seam "
-                         "between two measured fragments is a disconnected_surface gap, never bridged",
-        "link_rule": {"first": "frozen v2/v3.1 boundary-band turn for adjacent rows, accepted only if every edge stays on the block's selected pixels",
-                      "then": "shortest path along the fragment's own mesh edges; every edge lies on one selected "
-                              "triangle, stays inside the reference image, never touches a painted forbidden polygon and "
-                              "projects only onto this block's selected pixels (sampled at least once per pixel)",
-                      "never": "across mesh gaps, explicit unselected pixels, other fragments or other blocks"},
-        "scan_rule": "scan samples projecting onto pixels outside the block's selection component are dropped; "
-                     "no scan or connector edge enters explicitly unselected pixels",
-        "selection_binding": {"intent_sha256": intent["selected_mask_sha256"],
-                              "support_sha256": None if support is None else support["class_sha256"],
-                              "component_count": len(intent["components"]),
-                              "hole_count": len(intent["explicit_unselected_holes"]),
-                              "missing_geometry_policy": intent["missing_geometry_policy"]},
-        "items": blocks,
-    }
+    block_record = _selection_block_contract(corner, intent, support, blocks)
     gap_report = {
         "counts": dict(sorted(gap_counts.items())), "dropped_fragments": dropped_fragments,
         "dropped_fragment_count": len(dropped_fragments),
@@ -604,6 +524,151 @@ def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: t
         manifest.get("data_layers"), None, block_record)
     validate_trajectory(trajectory, mesh=mesh, region=region)
     return trajectory
+
+
+def plan_selection_blocks(manifest_path: Path, manifest: dict[str, Any], mesh: trimesh.Trimesh,
+                          params: dict[str, Any], check: Callable[[], None], *,
+                          algorithm_version: str = SELECTION_ALGORITHM, row_layout=None) -> SurfaceTrajectory:
+    from femto.planning.mesh_slice_planner import Unplannable, _level_segments, _row_report
+    from femto.planning.surface_spacing_report import spacing_report as measure_spacing
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    region = manifest["region"]
+    intrinsic = np.asarray(region["view_reference"]["undistorted_intrinsic"], dtype=np.float64)
+    image_size = np.asarray(region["view_reference"]["image_size"], dtype=np.int64)
+    intent, support, labels, owners = selection_face_assignment(region, vertices, faces)
+    classes = None if support is None else support_classes(support)
+    components = face_components(faces)
+    corner = params["start_corner"]
+    spacing_m = params["row_spacing_mm"] / 1000
+    ordered = sorted(intent["components"], key=lambda item: _reading_key(item["bbox"], item["component_id"], corner))
+    budget = {"points": 0}
+    spacing_budget = {"expansions": 0, "distance_pairs": 0}
+    offsets = {"row": 0, "route": 0, "segment": 0, "gap": 0, "pre_segment": 0}
+    items: list[ScanSegment | Gap] = []
+    blocks: list[dict[str, Any]] = []
+    dropped_fragments: list[dict[str, Any]] = []
+    row_report: list[dict[str, Any]] = []
+    spacing_reports: list[dict[str, Any]] = []
+    scan_rows: list[int] = []
+    final_gaps: list[Gap] = []
+    spacing_mesh = SimpleNamespace(vertices=vertices, triangles=faces)
+    for block_index, component in enumerate(ordered):
+        check()
+        cid = component["component_id"]
+        ids = np.flatnonzero(owners == cid)
+        pixel_counts = component_support_counts(support, labels, cid)
+        record = _initial_selection_block(block_index, cid, ids, vertices, faces, component, labels, pixel_counts)
+        fragments = (_fragment_descriptors(vertices, faces, ids, components, intrinsic, image_size, corner)
+                     if len(ids) else [])
+        fragment_records: list[dict[str, Any]] = []
+        allowed = labels == cid + 1  # every sample and every edge must project onto this block's own pixels
+        block_chains: list[list[dict[str, Any]]] = []
+        block_kept: list[Gap] = []
+        totals = Counter()
+        lengths_scan = 0.0
+        connector_length = 0.0
+        turn_failures: Counter = Counter()
+        link_failures: Counter = Counter()
+        depth_values: list[np.ndarray] = []
+        block_row_first = offsets["row"]
+        block_dropped = 0
+        block_segments: list[ScanSegment] = []
+        block_reports: list[dict[str, Any]] = []
+        for fragment_index, descriptor in enumerate(fragments):
+            check()
+            fragment_ids = descriptor["face_ids"]
+            fragment = _initial_selection_fragment(fragment_index, descriptor, fragment_ids)
+            try:
+                planned = _plan_fragment(vertices, faces, fragment_ids, descriptor["mesh_component_id"], components,
+                                         params, region, intrinsic, image_size, check, budget, offsets["row"],
+                                         block_index, labels, classes, allowed, algorithm_version, row_layout=row_layout)
+            except Unplannable as error:
+                fragment.update(status="unplannable", reason=error.reason, message=str(error))
+                if error.details:
+                    extra = [dict(item, fragment_index=fragment_index) for item in error.details.get("dropped_fragments", [])]
+                    dropped_fragments.extend(extra)
+                    block_dropped += len(extra)
+                    fragment["dropped_fragment_count"] = len(extra)
+                fragment_records.append(fragment)
+                continue
+            if block_chains:
+                block_kept.append(_seam_gap(block_chains[-1], planned["chains"][0],
+                                            ordered_rows=algorithm_version == ORDERED_SELECTION_ALGORITHM))
+                link_failures["disconnected_measured_surface"] += 1
+            block_chains.extend(planned["chains"])
+            block_kept.extend(planned["kept"])
+            row_count = len({segment.row_index for segment in planned["segments"]})
+            scan_length = float(sum(planned["lengths"]))
+            lengths_scan += scan_length
+            connector_length += planned["length"]
+            totals.update(planned["connected"])
+            for gap in planned["kept"]:
+                link_failures[gap.detail["link_failure_reason"]] += 1
+                if gap.reason == "row_turn":
+                    turn_failures[gap.detail["row_turn_failure_reason"]] += 1
+            depth_values.append(np.asarray([point["xyz_m"][2] for chain in planned["chains"] for point in chain]))
+            row_report.extend(_row_report(planned["segments"], planned["lengths"], [], block_index))
+            check()
+            report = measure_spacing(spacing_mesh, {"triangle_indices": [int(v) for v in fragment_ids]},
+                                     {"segments": _level_segments(planned["ordered_records"], planned["segments"])},
+                                     params["row_spacing_mm"], params["row_spacing_mm"] * params["spacing_tolerance"],
+                                     check, budget=spacing_budget,
+                                     target_limited=algorithm_version == ORDERED_SELECTION_ALGORITHM)
+            report["measurements"] = [dict(row, chain_index=row["chain_index"] + offsets["pre_segment"],
+                                           block_index=block_index, fragment_index=fragment_index)
+                                      for row in report["measurements"]]
+            report.update(block_index=block_index, fragment_index=fragment_index)
+            block_reports.append(report)
+            scan_rows.extend(segment.row_index for segment in planned["segments"])
+            extra = [dict(item, fragment_index=fragment_index) for item in planned["dropped_fragments"]]
+            dropped_fragments.extend(extra)
+            block_dropped += len(extra)
+            block_segments.extend(planned["segments"])
+            fragment.update(status="planned", sweep_frame=planned["frame"], row_index_first=offsets["row"],
+                            row_count=row_count, chain_count=len(planned["chains"]),
+                            internal_gap_count=len(planned["kept"]), scan_length_m=scan_length,
+                            connector_length_m=planned["length"],
+                            connected_row_turns=int(planned["connected"]["row_turn"]),
+                            connected_detours=int(planned["connected"]["detour"]),
+                            link_methods=dict(sorted(planned["methods"].items())),
+                            dropped_fragment_count=len(extra))
+            fragment_records.append(fragment)
+            offsets["row"] += row_count
+            offsets["pre_segment"] += len(planned["segments"])
+        _update_selection_block_coverage(fragment_records, record, pixel_counts, block_dropped)
+        if not block_chains:
+            _mark_selection_block_unplannable(fragment_records, record, block_dropped)
+            blocks.append(record)
+            continue
+        revisit = _mark_revisits(block_chains, spacing_m, check)
+        segments_final, kept, route_end = _append_selection_chains(
+            items, offsets, block_chains, block_kept, block_index, algorithm_version, final_gaps)
+        spacing_reports.extend(block_reports)
+        depth = np.concatenate(depth_values)
+        row_count = offsets["row"] - block_row_first
+        record.update(
+            status="planned" if len(segments_final) == 1 else "incomplete",
+            sweep_frame=dict(next(f["sweep_frame"] for f in fragment_records if f["status"] == "planned"),
+                             role="first_planned_fragment_frame"),
+            segment_index_first=segments_final[0].segment_index, segment_count=len(segments_final),
+            gap_count=len(kept), gap_counts=dict(sorted(Counter(g.reason for g in kept).items())),
+            point_count=route_end - offsets["route"], row_index_first=block_row_first, row_count=row_count,
+            scan_length_m=lengths_scan, connector_length_m=connector_length,
+            connected_row_turns=int(totals["row_turn"]), connected_detours=int(totals["detour"]),
+            row_turn_failure_counts=dict(sorted(turn_failures.items())),
+            link_failure_counts=dict(sorted(link_failures.items())),
+            dropped_fragment_count=block_dropped,
+            continuity={"status": "single_chain" if len(segments_final) == 1 else "broken",
+                        "chain_count": len(segments_final), "internal_gap_count": len(kept),
+                        "link_failure_counts": dict(sorted(link_failures.items()))},
+            revisit=revisit, **_depth(depth))
+        blocks.append(record)
+        offsets.update(route=route_end, segment=segments_final[-1].segment_index + 1, gap=offsets["gap"] + len(kept))
+    return _finish_selection_trajectory(
+        blocks, row_report, final_gaps, items, support, mesh, params, offsets, intent,
+        corner, dropped_fragments, algorithm_version, manifest_path, manifest,
+        spacing_reports, spacing_budget, scan_rows, region)
 
 
 def _edge_state(p: np.ndarray, q: np.ndarray, intrinsic: np.ndarray, image_size: np.ndarray,

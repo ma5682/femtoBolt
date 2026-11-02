@@ -258,8 +258,8 @@ def train_latest(
         raise ValueError("3DGS input blocked: " + "; ".join(data["reasons"]))
     if not runtime["ready"]:
         raise RuntimeError(
-            "3DGS CUDA runtime is not installed. Run setup_3dgs_environment.cmd after "
-            "installing the documented Windows CUDA/C++ prerequisites."
+            "The legacy Nerfstudio runtime is unavailable and its setup launcher has been retired. "
+            "Use the maintained direct gsplat workflow documented in doc/使用说明/启动入口说明.md."
         )
     stamp = time.strftime("%Y%m%d_%H%M%S")
     output = OUTPUTS_ROOT / f"trained_3dgs_{stamp}"

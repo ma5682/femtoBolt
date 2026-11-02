@@ -4,6 +4,7 @@ import re
 
 ROOT = Path(__file__).resolve().parent
 MODULES = [
+    "styles/tokens.py", "widgets/icons.py",
     "models/capture_state.py", "models/task_state.py", "models/planning_state.py",
     "app/app_state.py", "mock/mock_patient.py", "mock/mock_capture.py", "mock/mock_planning.py", "mock/plan_store.py",
     "app/navigation.py", "app/controller.py",
@@ -15,7 +16,7 @@ MODULES = [
 parts = ['"""Generated standalone mock workstation. Run: python standalone.py"""']
 for filename in MODULES:
     source = (ROOT / filename).read_text(encoding="utf-8")
-    lines = [line for line in source.splitlines() if not re.match(r"\s*from (app|models|mock|pages|widgets|adapters)\.", line) and not line.startswith("from __future__")]
+    lines = [line for line in source.splitlines() if not re.match(r"\s*from (app|models|mock|pages|widgets|adapters|styles)\.", line) and not line.startswith("from __future__")]
     parts.append("\n".join(lines))
 parts.append("MEDICAL_QSS = " + repr((ROOT / "styles/medical.qss").read_text(encoding="utf-8")))
 entry = (ROOT / "main.py").read_text(encoding="utf-8")

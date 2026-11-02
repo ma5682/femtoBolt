@@ -174,7 +174,7 @@ E:\测试3D人体关节坐标
 
 后续将创建独立的 `.venv-gsplat` 产品训练环境，并直接安装 PyTorch CUDA 12.8、Apache-2.0 `gsplat` 和评测依赖。它与现有 Femto `.venv` 分开，不影响相机 SDK、Open3D、采集和 TSDF。
 
-现有 `setup_3dgs_environment.cmd` 是 Nerfstudio 内部开发验证环境，含需要单独评估的传递依赖，不应打包进闭源商用客户端。正式产品训练器使用直接 `gsplat` 的最小环境。
+旧 Nerfstudio 内部验证环境的安装 CMD 已于 2026-09-30 移除，其环境与历史模型不删除，也不纳入产品分发。正式产品训练器使用 `setup_direct_gsplat_environment.cmd` 配置工作区专属 `gsplat` 环境。
 
 ## 9. 常见问题
 

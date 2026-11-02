@@ -51,8 +51,9 @@ from femto.gsplat.scene_gsplat_metrics import (
 
 from femto.paths import REPO_ROOT as ROOT
 OUTPUTS_ROOT = ROOT / "outputs"
-RUNTIME_ROOT = ROOT / ".venv-gsplat"
-ASCII_RUNTIME_ROOT = Path(r"C:\FemtoGsplatRuntime") if os.name == "nt" else RUNTIME_ROOT
+from femto.paths import ASCII_GSPLAT_RUNTIME_ROOT
+RUNTIME_ROOT = ASCII_GSPLAT_RUNTIME_ROOT
+ASCII_RUNTIME_ROOT = ASCII_GSPLAT_RUNTIME_ROOT
 LATEST_MARKER = OUTPUTS_ROOT / "latest_direct_gsplat.txt"
 SH_C0 = 0.28209479177387814
 
@@ -117,18 +118,14 @@ def _json_dump(path: Path, payload: Any) -> None:
 
 
 def runtime_python() -> Path:
-    """Interpreter of the product 3DGS runtime, preferring the ASCII junction.
-
-    CUDA JIT compilation fails under this repository's non-ASCII path, so
-    ``setup_direct_gsplat_environment.cmd`` creates ``C:\\FemtoGsplatRuntime`` as
-    a directory junction to ``.venv-gsplat``; every launcher goes through it.
-    """
+    """Return only this checkout's ASCII-safe product runtime."""
     relative = "Scripts/python.exe" if os.name == "nt" else "bin/python"
     ascii_executable = ASCII_RUNTIME_ROOT / relative
-    return ascii_executable if ascii_executable.is_file() else RUNTIME_ROOT / relative
+    return ascii_executable
 
 
 def runtime_status() -> dict[str, Any]:
+    from femto.paths import WORKSPACE_CACHE_ROOT, workspace_subprocess_environment
     executable = runtime_python()
     result: dict[str, Any] = {
         "ready": False,
@@ -139,28 +136,39 @@ def runtime_status() -> dict[str, Any]:
         "graphdeco_dependency": False,
         "nerfstudio_dependency": False,
         "pymeshlab_dependency": False,
-        "lpips_backbone": lpips_backbone_status(),
+        "lpips_backbone": lpips_backbone_status(checkpoint_dir=WORKSPACE_CACHE_ROOT / 'torch/hub/checkpoints'),
     }
     result["lpips_ready"] = bool(result["lpips_backbone"]["ready"])
     if not executable.is_file():
         result["error"] = "Run setup_direct_gsplat_environment.cmd"
         return result
+    if executable.parent.parent.resolve() != executable.parent.parent.absolute():
+        result['error'] = 'Runtime directory points outside this checkout-owned environment'
+        return result
     command = [
-        str(executable), "-c",
-        "import json,torch,gsplat; print(json.dumps({'torch':torch.__version__,'cuda':torch.version.cuda,'cuda_ready':torch.cuda.is_available(),'gpu':torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,'gsplat':gsplat.__version__}))",
+        str(executable), "-I", "-B", "-c",
+        "import sys,json,torch,gsplat; print(json.dumps({'prefix':sys.prefix,'torch_path':torch.__file__,'gsplat_path':gsplat.__file__,'torch':torch.__version__,'cuda':torch.version.cuda,'cuda_ready':torch.cuda.is_available(),'gpu':torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,'gsplat':gsplat.__version__}))",
     ]
     try:
         completed = subprocess.run(
             command, cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", timeout=45,
+            env=workspace_subprocess_environment(),
         )
         if completed.returncode == 0:
             details = json.loads(completed.stdout.strip().splitlines()[-1])
+            if not isinstance(details,dict):raise ValueError('Invalid runtime status payload')
+            expected=executable.parent.parent.absolute()
+            if (Path(details.get('prefix','')).resolve()!=expected or
+                    any(not details.get(key) or not Path(details[key]).resolve().is_relative_to(expected)
+                        for key in ('torch_path','gsplat_path'))):
+                result['error']='Runtime interpreter or packages belong to another environment'
+                return result
             result.update(details)
             result["ready"] = bool(details.get("cuda_ready"))
         else:
             result["error"] = completed.stderr.strip() or completed.stdout.strip()
-    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, IndexError) as error:
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, IndexError) as error:
         result["error"] = str(error)
     return result
 
@@ -921,6 +929,8 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    from femto.paths import workspace_runtime_environment
+    os.environ.update(workspace_runtime_environment())
     args = parse_args()
     try:
         if args.action == "status":

@@ -6,7 +6,6 @@ import threading
 import unittest
 from unittest import mock
 from types import SimpleNamespace
-import tkinter as tk
 import numpy as np
 import open3d as o3d
 from femto.annotation.fixed_rgb_geometry import FixedProjection, FixedRGBModel
@@ -117,62 +116,3 @@ class EnvelopeTests(unittest.TestCase):
             self.assertTrue(c._select(r,10.2))
             self.assertTrue(r['local_workspace']['within_limit'])
         np.testing.assert_array_equal(c.accepted[0]['T_WC'],np.eye(4))
-
-
-class FixedViewerTests(unittest.TestCase):
-    def test_zoom_pan_point_region_save_load_and_miss(self):
-        gc.collect()
-        from femto.planning.fixed_rgb_viewer import FixedRGBViewer
-        with tempfile.TemporaryDirectory() as td:
-            model=FixedRGBModel.__new__(FixedRGBModel);model.mesh=plane()
-            model.reconstruction=Path(td)/'reconstruction';model.reconstruction.mkdir()
-            model.rgb=np.full((100,100,3),150,np.uint8)
-            model.projection=FixedProjection(model.mesh,np.array([[100.,0,50],[0,100,50],[0,0,1]]),np.full((100,100),500,np.uint16))
-            model.store=AnnotationStore(model.mesh,model.reconstruction/'mesh.ply')
-            model.view_reference={'reference_frame_id':0};model.max_radius_mm=0
-            root=tk.Tk()
-            try:
-                with mock.patch.object(FixedRGBViewer,'work'):
-                    v=FixedRGBViewer(root,model.reconstruction)
-                v.loaded(model);v.mode.set('point');v.active_mode='point';root.update();v.draw()
-                pixel=np.array([70.,40.]);xy=pixel*v.scale+v.offset
-                v.click(SimpleNamespace(x=xy[0],y=xy[1]));self.assertEqual(len(model.store.points),1)
-                before=model.store.points[0]['point_world_m'][:]
-                v.wheel(SimpleNamespace(x=xy[0],y=xy[1],delta=120))
-                np.testing.assert_allclose(v.image_pixel(*xy),pixel,atol=.2)
-                v.pan_start(SimpleNamespace(x=0,y=0));v.pan_move(SimpleNamespace(x=20,y=10))
-                xy=pixel*v.scale+v.offset;v.click(SimpleNamespace(x=xy[0],y=xy[1]))
-                np.testing.assert_allclose(model.store.points[-1]['point_world_m'],before)
-                # A background click clears the reading without adding a point.
-                v.click(SimpleNamespace(x=-10000,y=-10000))
-                self.assertIsNone(v.focus);self.assertEqual(len(model.store.points),2)
-                path=model.store.save(Path(td)/'saved');model.load(path)
-                v.refresh_items();self.assertEqual(v.items.size(),2)
-                root.geometry('1000x720');root.update();root.update()
-                # Planning controls are intentionally hidden in the capture viewer.
-                visible=[widget for widget in v.widgets if widget.winfo_viewable()]
-                self.assertTrue(visible)
-                for widget in visible:self.assertGreaterEqual(widget.winfo_height(),widget.winfo_reqheight())
-                v.side_canvas.yview_moveto(1);root.update()
-                last=visible[-1]
-                self.assertLessEqual(last.winfo_rooty()+last.winfo_height(),root.winfo_rooty()+720)
-                with mock.patch.object(v,'work',side_effect=lambda fn,done:done(fn())):
-                    v.polygon=[[0,0],[99,0],[99,99],[0,99]];v.finish_polygon()
-                    self.assertEqual(len(model.store.regions),1)
-                    self.assertNotIn('X:',v.readout.get())
-                    v.name.set('Region A');v.edit()
-                    self.assertEqual(model.store.regions[0]['name'],'Region A')
-                    v.delete();self.assertEqual(model.store.regions,[])
-                    v.undo();self.assertEqual(len(model.store.regions),1)
-                    v.save()
-                    saved=list((model.reconstruction/'annotations').glob('*/annotations.json'))
-                    self.assertEqual(len(saved),1)
-                    with mock.patch('femto.planning.fixed_rgb_viewer.filedialog.askopenfilename',return_value=str(saved[0])):v.load()
-                    self.assertEqual(v.items.size(),3)
-            finally:
-                v.close()
-            del v,root
-            gc.collect()
-
-
-if __name__=='__main__':unittest.main()

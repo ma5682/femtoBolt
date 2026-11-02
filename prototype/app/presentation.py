@@ -1,7 +1,7 @@
 def current_notice(s):
     if s.replay_mode:
         if s.stage == 2 and s.plan.phase == "failed":
-            return "项目回放 · 只读核对：原始扫描路线存在局部断开，请查看粉色端点。", "warning"
+            return "项目回放 · 只读核对：原始扫描路线存在局部断开，请查看高亮端点。", "warning"
         if s.stage == 3 and s.plan.phase == "failed":
             return "项目回放 · 只读结果：当前规划存在断开段，不能作为执行路线。", "error"
         if s.stage == 1:
@@ -25,7 +25,7 @@ def current_notice(s):
         return {
             "unchecked": ("标出规划区与禁入区，完成后确认标记并检查三维几何。", "normal"),
             "checking": ("正在检查选区对应的三维几何，已画标记会保留。", "normal"),
-            "missing": ("紫色区域缺少可靠三维数据，请返回补采。", "error"),
+            "missing": ("高亮区域缺少可靠三维数据，请返回补采。", "error"),
             "valid": ("三维支持已确认。可继续修改标记或生成规划预览。", "normal"),
             "partial": ("部分三维支持未确认。可查看规划预览，但不能视为治疗覆盖已确认。", "warning"),
         }[s.region.support]

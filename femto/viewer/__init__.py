@@ -1,1 +1,1 @@
-"""Open3D / Tk viewers launched as separate processes."""
+"""Open3D and Qt viewers launched as separate processes."""

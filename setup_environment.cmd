@@ -2,10 +2,16 @@
 setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
+set "PYTHONHOME="
+set "PYTHONPATH="
+set "PYTHONNOUSERSITE=1"
 if not exist ".venv\Scripts\python.exe" py -3.12 -m venv .venv
+if errorlevel 1 goto :failed
+call "%~dp0_resolve_femto_python.cmd"
+if errorlevel 1 goto :failed
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
 if errorlevel 1 goto :failed
-".venv\Scripts\python.exe" -m pip install mediapipe==1.0.1 numpy==2.2.6 open3d==0.19.0 opencv-contrib-python==5.0.0.93 pillow==12.3.0 trimesh==5.1.0 setuptools==84.0.0
+".venv\Scripts\python.exe" -m pip install mediapipe==1.0.1 numpy==2.2.6 open3d==0.19.0 opencv-contrib-python==5.0.0.93 pillow==12.3.0 trimesh==5.1.0 setuptools==84.0.0 PySide6==6.11.2 vtk==9.5.2
 if errorlevel 1 goto :failed
 rem pyorbbecsdk2 declares opencv-python, while MediaPipe declares the contrib
 rem build. The contrib wheel is a superset and both distributions share cv2,

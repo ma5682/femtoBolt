@@ -279,6 +279,8 @@ def launch(photo, *, iterations=500, on_progress=None):
 
 
 if __name__ == '__main__':
+    from femto.paths import workspace_runtime_environment
+    os.environ.update(workspace_runtime_environment())
     parser=argparse.ArgumentParser()
     parser.add_argument('mode',choices=['train','build'])
     parser.add_argument('path',type=Path)

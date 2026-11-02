@@ -114,7 +114,8 @@ def sha256(path: Path) -> str:
 
 def media_pipe_model_path(project_model: Path) -> Path:
     """Copy the task model to ASCII-only storage for MediaPipe on Windows."""
-    cache = Path(os.environ["LOCALAPPDATA"]) / "FemtoPatientPose" / "models"
+    from femto.paths import WORKSPACE_CACHE_ROOT
+    cache = WORKSPACE_CACHE_ROOT / "models"
     cache.mkdir(parents=True, exist_ok=True)
     runtime_model = cache / project_model.name
     source_hash = sha256(project_model)

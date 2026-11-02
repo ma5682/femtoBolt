@@ -12,9 +12,9 @@ owns that process boundary and nothing else:
 
 Training, densification, evaluation, acceptance and export logic stay in
 ``scene_gsplat_trainer`` / ``scene_gsplat_export``; none of it is duplicated here
-or in the UI.  ``scene_3dgs`` remains the internal Nerfstudio/Splatfacto
-comparison backend, reachable through its own CLI and ``start_3dgs_*.cmd``
-entries; it is no longer the default backend of the operator page.
+or in the UI.  The Qt workstation does not expose training controls; use this
+module's CLI or the direct-gsplat launchers.  ``scene_3dgs`` remains an internal
+Nerfstudio/Splatfacto comparison CLI; its legacy CMD launchers were retired.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ import tempfile
 import time
 from typing import Any, Callable
 
-from femto.io_utils import load_json
+from femto.io_utils import load_json, load_json_object
 from femto.gsplat.scene_gsplat_trainer import (
     ASCII_RUNTIME_ROOT,
     LATEST_MARKER,
@@ -158,7 +158,8 @@ def _visual_studio_environment() -> dict[str, str]:
 
 def runtime_environment() -> dict[str, str]:
     """Build the trainer subprocess environment (mirrors start_direct_gsplat_train.cmd)."""
-    environment = dict(os.environ)
+    from femto.paths import workspace_subprocess_environment
+    environment = workspace_subprocess_environment()
     environment.update(_visual_studio_environment())
     cuda_home = _cuda_home()
     prefix = [str(ASCII_RUNTIME_ROOT / "Scripts"), str(cuda_home / "bin")]
@@ -183,7 +184,21 @@ def resolve_training_input(demo_root: Path | None) -> Path:
         return candidate
     summary = candidate / "demo_summary.json"
     if summary.is_file():
-        return Path(load_json(summary).get("nerfstudio", candidate / "nerfstudio")).resolve()
+        details = load_json_object(summary, message="Reconstruction summary must be a JSON object")
+        if "nerfstudio" not in details:
+            return (candidate / "nerfstudio").resolve()
+        training_path = details["nerfstudio"]
+        if training_path is None:
+            raise ValueError(
+                "Nerfstudio training input was not generated for this reconstruction; "
+                "local captures with fewer than 12 qualified views skip conversion"
+            )
+        if not isinstance(training_path, str) or not training_path.strip():
+            raise ValueError("Reconstruction summary nerfstudio must be a non-empty path string")
+        input_dir = Path(training_path)
+        if not input_dir.is_absolute():
+            input_dir = candidate / input_dir
+        return input_dir.resolve()
     nested = candidate / "nerfstudio"
     if (nested / "transforms.json").is_file():
         return nested

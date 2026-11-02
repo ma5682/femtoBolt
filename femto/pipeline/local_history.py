@@ -6,11 +6,15 @@ import json
 import math
 from pathlib import Path
 import time
-from femto.io_utils import load_json_object, write_json
+from femto.io_utils import load_json_object
+from femto.history_store import HistoryStore
 from femto.local.local_processing import result_quality, empty_report
 
 
 def deleted_records(outputs: str | Path) -> Any:
+    store=HistoryStore(outputs)
+    if store.path.exists():
+        return store.deletions()
     path=Path(outputs)/'local_history_deleted.json'
     if not path.exists():return {}
     data=load_json_object(path)
@@ -19,7 +23,8 @@ def deleted_records(outputs: str | Path) -> Any:
     return data['records']
 
 
-def set_records_deleted(rows: Any,datasets: Any,outputs: str | Path,deleted: bool=True) -> None:
+def set_records_deleted(rows: Any,datasets: Any,outputs: str | Path,deleted: bool=True,
+                        *,check: Callable[..., Any]=lambda:None) -> None:
     """Atomically change catalogue visibility for one or more records.
 
     This never moves or erases capture/model evidence.  Validating the whole
@@ -34,21 +39,7 @@ def set_records_deleted(rows: Any,datasets: Any,outputs: str | Path,deleted: boo
         pattern='complete_demo_*' if row.get('result') else 'scene_*_local_*'
         if key.parent!=root or not key.match(pattern):
             raise ValueError('Record is outside the history directory')
-    records=deleted_records(outputs)
-    if deleted:
-        now=time.time()
-        for row in rows:
-            key=str(Path(row['key']).resolve())
-            records[key]={'name':row['name'],'deleted_at':now}
-    else:
-        for row in rows:records.pop(str(Path(row['key']).resolve()),None)
-    root=Path(outputs);root.mkdir(parents=True,exist_ok=True)
-    write_json(
-        root/'local_history_deleted.json',
-        {'schema':'local-history-deleted-v1','records':records},
-        unique_temporary=True,
-        temporary_prefix='.history-',
-    )
+    HistoryStore(outputs).set_hidden(rows, deleted, check=check)
 
 
 def set_record_deleted(row: Any,datasets: Any,outputs: Any,deleted: bool=True) -> None:
@@ -126,8 +117,9 @@ def comparison_source_files(report: Any,raw_source: str | Path,check: Callable[.
     return sorted({str(path) for path in files})
 
 
-def scan_history(datasets: str | Path,outputs: str | Path,*,cancel: Any=None,seconds: float=30) -> Any:
-    deleted=deleted_records(outputs)
+def scan_history(datasets: str | Path,outputs: str | Path,*,cancel: Any=None,seconds: float=30,
+                 include_hidden: bool=False) -> Any:
+    deleted={} if include_hidden else deleted_records(outputs)
     deadline=time.monotonic()+seconds
     def check():
         if cancel is not None and cancel.is_set():raise RuntimeError('History scan cancelled')

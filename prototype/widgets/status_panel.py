@@ -27,8 +27,7 @@ class StatusPanel(QWidget):
         self.column.setSpacing(8)
 
     def section(self, title):
-        icons = {"采集信息": "▣", "数据质量": "▥", "空间数据": "◇", "采集状态": "▣", "三维模型检查": "◇", "规划参数": "⌘", "规划预览": "□", "运行预览": "□"}
-        label = text_label(f"{icons.get(title, '·')}  {title}", "sectionTitle")
+        label = text_label(title, "sectionTitle")
         self.column.addWidget(label)
         return label
 
@@ -40,6 +39,7 @@ class StatusPanel(QWidget):
 
     def row(self, title):
         item = QWidget()
+        item.setMinimumHeight(36)
         layout = QHBoxLayout(item)
         layout.setContentsMargins(0, 3, 0, 3)
         layout.setSpacing(8)

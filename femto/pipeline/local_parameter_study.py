@@ -1,7 +1,7 @@
 """Bounded TSDF parameter studies using the existing isolated A/B/C replay.
 
 No SDK, geometry mutation, default-parameter change or latest publication occurs
-here. The synchronous APIs belong on a worker thread or in the CLI, never on Tk.
+here. The synchronous APIs belong on a worker thread or in the CLI, never on the UI thread.
 Existing reports are reusable only while their source and implementation hashes
 still agree. Numerical consistency is never an independent accuracy certificate.
 """

@@ -1,9 +1,10 @@
 # Direct product trainer only. Do not add Nerfstudio or PyMeshLab here.
 # PyTorch and torchvision are installed separately from the official cu128 index.
 gsplat==1.5.3
+PySide6==6.11.2
 imageio==2.37.0
 numpy==2.2.6
 Pillow==11.3.0
 torchmetrics==1.9.0
 tqdm==4.67.1
-
+vtk==9.5.2

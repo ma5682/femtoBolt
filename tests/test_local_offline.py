@@ -128,7 +128,7 @@ class OfflineTests(unittest.TestCase):
 
     def test_application_shutdown_cancels_even_before_sdk_owner_returns(self):
         from test_local_capture import make_camera
-        from femto.app.femto_control_app import FemtoControlApp
+        from femto.app.qt_capture import CameraHost
         from types import SimpleNamespace
         stop=threading.Event()
         session_cancel=threading.Event()
@@ -136,13 +136,11 @@ class OfflineTests(unittest.TestCase):
             capture=LocalCapture(make_camera('wide_detail',10),self.root/'data',self.root/'outputs',queue.Queue(),
                                  shutdown_event=stop,cancel_event=session_cancel)
             capture.thread.join(2)
-        app=SimpleNamespace(capturing=False,processing=True,stop_event=stop,command_queue=queue.Queue(),
-            temporal_collecting=False,point_cloud_preview=None,root=mock.Mock(),_t=lambda key:key)
-        with mock.patch('femto.app.femto_control_app.messagebox.askyesno',return_value=True):
-            FemtoControlApp.close(app)
-        self.assertFalse(session_cancel.is_set())  # SDK owner has not handled its finally/queue yet.
+        host=CameraHost()
+        host.stop_event=stop
+        self.assertTrue(host.stop())
+        self.assertFalse(session_cancel.is_set())  # SDK owner has not handled its queue yet.
         self.assertTrue(capture._cancelled())
-        self.assertTrue(app.root.destroy.called)
         _,outputs,result,_=result_fixture(self.root/'model')
         from femto.pipeline.local_comparison import StageStopped
         with self.assertRaises(StageStopped):
@@ -268,44 +266,6 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual(publication['status'], 'published')
         self.assertEqual(latest.read_text(), str(result / 'reconstruction'))
 
-    def test_live_processing_cancel_control_and_late_events_are_session_bound(self):
-        import gc
-        import tkinter as tk
-        import femto.app.femto_control_app as control
-        gc.collect()
-        with mock.patch.object(control.FemtoControlApp, '_start_camera'), \
-             mock.patch.object(control.FemtoControlApp, '_load_latest_paths'):
-            root = tk.Tk()
-            root.withdraw()
-            try:
-                app = control.FemtoControlApp(root)
-                app.camera_ready = True
-                panel = app.local_panel
-                panel.start()
-                start_command=next(payload for command,payload in list(app.command_queue.queue) if command=='local_start')
-                self.assertIs(start_command['cancel_event'],panel.cancel_event)
-                panel.count = 3
-                panel.finish(True)
-                panel.event('local_processing', dict(session_id=panel.session_id))
-                self.assertEqual(panel.buttons['cancel'].cget('state'), 'normal')
-                old_session = panel.session_id
-                panel.finish(False)
-                self.assertTrue(panel.cancelling)
-                self.assertTrue(start_command['cancel_event'].is_set())
-                self.assertEqual(panel.buttons['cancel'].cget('state'), 'disabled')
-                panel.event('local_cancelled', dict(session_id=old_session))
-                panel.start()
-                self.assertIsNot(start_command['cancel_event'],panel.cancel_event)
-                self.assertFalse(panel.cancel_event.is_set())
-                panel.event('local_finished', dict(session_id=old_session, result='stale'))
-                self.assertTrue(panel.active)
-                self.assertIsNone(panel.result)
-            finally:
-                for timer in root.tk.call('after', 'info'):
-                    root.after_cancel(timer)
-                root.destroy()
-        del app, panel, root
-        gc.collect()
 
 
 if __name__ == '__main__':

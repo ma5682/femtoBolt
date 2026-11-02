@@ -2,11 +2,11 @@
 from __future__ import annotations
 from typing import Any, Callable
 
-import heapq
 import cv2
 import numpy as np
 from femto.planning.region_path import signature
 from femto.planning.region_exclusions import allowed_region
+from femto.planning.surface_pixel_graph import SurfacePixelRouter
 
 
 def _finish_plan(projection,mesh,region,allowed,removed,chains,runs,breaks,faces,xx,yy,
@@ -91,7 +91,6 @@ def serpentine_plan(projection: Any,mesh: Any,region: Any,width_mm: float=10.,ov
     safe=mask & (distance>pixel_radius)
     ys,xs=np.nonzero(safe)
     if not len(ys):raise ValueError('扫描宽度与边界余量约束后无可用路线，请调整模拟参数。')
-    if len(ys)>800000:raise ValueError('Serpentine grid exceeds 800000 nodes; reduce selected region')
     # Neighbor connections require same or edge-adjacent source faces, and no depth jump.
     faces=np.asarray(mesh.triangles);n=len(faces)
     edges={};pairs=[]
@@ -106,6 +105,7 @@ def serpentine_plan(projection: Any,mesh: Any,region: Any,width_mm: float=10.,ov
     ids=projection.ids;depth=projection.z
     right=connected(ids[:,:-1],ids[:,1:],safe[:,:-1],safe[:,1:],depth[:,:-1],depth[:,1:])
     down=connected(ids[:-1],ids[1:],safe[:-1],safe[1:],depth[:-1],depth[1:])
+    router=SurfacePixelRouter(safe,right,down,check)
     vertical=direction=='vertical'
     row_step=max(1,int(round(width_mm*(1-overlap_percent/100)/1000*k[0 if vertical else 1,0 if vertical else 1]/float(np.median(z)))))
     grid=safe.T if vertical else safe
@@ -115,7 +115,7 @@ def serpentine_plan(projection: Any,mesh: Any,region: Any,width_mm: float=10.,ov
     reverse_first=('bottom' in start_corner) if vertical else ('right' in start_corner)
     low,high=int(across.min()),int(across.max())
     rows=range(high,low-1,-row_step) if reverse_rows else range(low,high+1,row_step)
-    runs=[]
+    runs=[];minimum_samples=0
     for ordinal,row_index in enumerate(rows):
         check();columns=np.flatnonzero(grid[row_index]);current=[];row=[]
         for column in columns:
@@ -125,34 +125,13 @@ def serpentine_plan(projection: Any,mesh: Any,region: Any,width_mm: float=10.,ov
             current.append(int(column))
         if len(current)>1:row.append(current)
         if bool(ordinal%2)^reverse_first:row=[list(reversed(run)) for run in reversed(row)]
+        # Every sweep contributes at least len(run)-1 samples, independently
+        # of how its endpoints connect. Reject guaranteed overflow before
+        # materialising all sweep tuples or any world-coordinate samples.
+        minimum_samples+=sum(len(run)-1 for run in row)
+        if minimum_samples>200000:raise ValueError('Serpentine path exceeds 200000 samples')
         runs.extend([[(c,row_index) if vertical else (row_index,c) for c in run] for run in row])
     if not runs:raise ValueError('No usable sweep under selected direction and surface constraints')
-    expanded=0
-    def connect(start,goal):
-        nonlocal expanded
-        queue=[(0,0,start)];cost={start:0};previous={}
-        while queue:
-            _,g,node=heapq.heappop(queue)
-            if g!=cost[node]:continue
-            expanded+=1
-            if expanded%2048==0:check()
-            if expanded>4000000:raise ValueError('Serpentine connection search budget exceeded')
-            if node==goal:
-                route=[node]
-                while route[-1]!=start:route.append(previous[route[-1]])
-                return route[::-1]
-            y,x=node
-            neighbours=[]
-            if x<w-1 and right[y,x]:neighbours.append((y,x+1))
-            if x>0 and right[y,x-1]:neighbours.append((y,x-1))
-            if y<h-1 and down[y,x]:neighbours.append((y+1,x))
-            if y>0 and down[y-1,x]:neighbours.append((y-1,x))
-            for nxt in neighbours:
-                ng=g+1
-                if ng<cost.get(nxt,float('inf')):
-                    cost[nxt]=ng;previous[nxt]=node
-                    heapq.heappush(queue,(ng+abs(nxt[0]-goal[0])+abs(nxt[1]-goal[1]),ng,nxt))
-        return None
     chains=[];current=[];turn_edges=0;total=0;breaks=[]
     def sample(node,kind):
         y,x=node;hit=projection.pixel(x,y);tid=hit['triangle_index'];tri=np.asarray(mesh.vertices)[faces[tid]]
@@ -161,7 +140,7 @@ def serpentine_plan(projection: Any,mesh: Any,region: Any,width_mm: float=10.,ov
     for run in runs:
         check()
         if current:
-            route=connect((current[-1]['pixel'][1],current[-1]['pixel'][0]),run[0])
+            route=router.connect((current[-1]['pixel'][1],current[-1]['pixel'][0]),run[0])
             if route is None:
                 breaks.append(dict(from_chain=len(chains),to_chain=len(chains)+1,
                     from_pixel=current[-1]['pixel'],to_pixel=[run[0][1],run[0][0]],
@@ -171,8 +150,10 @@ def serpentine_plan(projection: Any,mesh: Any,region: Any,width_mm: float=10.,ov
                     transition_planned=False,transition_time_s=None))
                 chains.append(current);current=[]
             else:
+                if total+len(route)-1>200000:raise ValueError('Serpentine path exceeds 200000 samples')
                 current.extend(sample(node,'connector') for node in route[1:]);turn_edges+=len(route)-1;total+=len(route)-1
         start=1 if current else 0
+        if total+len(run)-start>200000:raise ValueError('Serpentine path exceeds 200000 samples')
         current.extend(sample(node,'scan') for node in run[start:]);total+=len(run)-start
         if total>200000:raise ValueError('Serpentine path exceeds 200000 samples')
     if current:chains.append(current)

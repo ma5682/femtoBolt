@@ -42,6 +42,8 @@ def publish_result(result: str | Path, outputs: str | Path, session_id: str, *, 
             from femto.pipeline.local_comparison import StageStopped
             raise StageStopped('cancelled','Cancelled before publication commit',{})
     check_cancel()
+    from femto.dataset.acquisition_completion import read_completion
+    read_completion(result, check=check_cancel)
     summary = load_json_object(result / 'demo_summary.json')
     receipt_path = result / 'publication.json'
     receipt = load_json_object(receipt_path)

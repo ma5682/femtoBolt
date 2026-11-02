@@ -344,6 +344,15 @@ class FixedRGBModel:
             raise ValueError('Fixed RGB mesh exceeds the 4000000 triangle memory budget')
         self.store=AnnotationStore(self.mesh,mesh_path)
         reference=self.store.origin_reference
+        if reference['kind']!='initial_color_camera' and not (self.reconstruction/'local_geometry.json').exists():
+            from femto.annotation.odometry_reference import sequential_reference
+            try:
+                verified=sequential_reference(mesh_path,check=budget.check)
+            except (OSError,KeyError,TypeError,IndexError) as error:
+                raise ValueError('通用场景参考来源缺失或格式无效，请检查采集与重建报告。') from error
+            if verified is not None:
+                reference=verified
+                self.store.origin_reference=reference
         if reference['kind']!='initial_color_camera':
             raise ValueError('Initial color-camera origin cannot be verified; use the advanced viewer for this model.')
         dataset=Path(reference['source_dataset'])
@@ -354,6 +363,8 @@ class FixedRGBModel:
         if min(width,height)<=0 or width*height>MAX_IMAGE_PIXELS:
             raise ValueError('Fixed RGB mapping exceeds the image / mesh memory budget')
         mx,my,k,w,h=distortion_maps(dataset)
+        if 'undistorted_intrinsic' in reference and not np.allclose(k,reference['undistorted_intrinsic'],rtol=0,atol=1e-8):
+            raise ValueError('参考图标定与生成模型时的标定不一致')
         rgb_path,depth_path=dataset/frame['rgb'],dataset/frame['depth']
         bgr=imread_unicode(rgb_path,cv2.IMREAD_COLOR);depth=imread_unicode(depth_path,cv2.IMREAD_UNCHANGED)
         if bgr.shape!=(h,w,3) or depth.shape!=(h,w):raise ValueError('Reference image dimensions mismatch')
@@ -379,6 +390,9 @@ class FixedRGBModel:
         poses=[np.asarray(json.loads((dataset/r['pose']).read_text(encoding='utf-8-sig'))['T_WC']) for r in rows]
         self.max_radius_mm=max(float(np.linalg.norm(t[:3,3])*1000) for t in poses)
         self._overlay_cache={}
+        if reference.get('provenance')=='sequential_rgbd_odometry_reference_pose':
+            from femto.annotation.odometry_reference import verify_reference_unchanged
+            verify_reference_unchanged(reference,check=budget.check)
         budget.check()
 
     def _overlay(self,kind,item,check=None):

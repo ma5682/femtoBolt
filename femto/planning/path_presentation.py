@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 from pathlib import Path
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from PIL import Image, ImageDraw, ImageFont
 from femto.planning.region_path import path_summary
 from femto.planning.route_motion import MotionPlayer, statistics
 
@@ -100,6 +100,10 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
         lines += ['实际网格距离上界分布 mm：'+(f"P05 {dist['p05_mm']:.3f} / 中位 {dist['median_mm']:.3f} / P95 {dist['p95_mm']:.3f}" if dist else '无可测样本'),
             '间距状态：'+('采样上下界在容差内' if sr['status']=='within_sampled_bounds' else '未完全满足或无法证实；详见间距报告'),
             '网格方向、粗细、孔洞/禁区及边界裁剪可造成偏差；不保证真实治疗覆盖精度。']
+        if plan['surface_mode'].get('algorithm', '').startswith('mesh-slice'):
+            lines[0]='三维蛇形扫描 · 块内含换行与绕行连接'
+            lines[1]=f"切片平面行距 {plan['spacing_mm']:g} mm | {summary['segment_count']} 条连续链 | 非曲面等距"
+            lines[2]='黄线：扫描；青线：换行/绕行连接；绿/红点：每条链起点与终点'
     if plan.get('boundary_check'):
         guard=plan['boundary_check']
         lines[0]+=f" · 模拟宽度 {guard['width_mm']:g} mm / 边界余量 {guard['margin_mm']:g} mm"
@@ -143,7 +147,8 @@ def render_diagram(rgb: Any, ids: Any, region: Any, plan: Any, show_region: bool
             draw.line([tuple(p) for p in points],fill='#ffd52b',width=2)
             for j in range(1,len(segment)):
                 if segment[j].get('motion_kind')=='connector':
-                    draw.line([tuple(points[j-1]),tuple(points[j])],fill='#ff4fd8' if segment[j].get('revisit') else '#ff9138',width=2)
+                    connector_color=('#48cae4' if plan.get('surface_mode',{}).get('algorithm','').startswith('mesh-slice') else '#ff9138')
+                    draw.line([tuple(points[j-1]),tuple(points[j])],fill='#ff4fd8' if segment[j].get('revisit') else connector_color,width=2)
             # Regular direction markers along continuous chains.
             lengths=np.linalg.norm(np.diff(points,axis=0),axis=1)
             valid=np.flatnonzero(lengths>1e-8)
@@ -215,185 +220,7 @@ def _block_state_label(item: dict[str, Any], selection_blocks: bool) -> str:
     return '未规划：'+str(item.get('reason'))
 
 
-def show_presentation(parent: Any,model: Any,region: Any,plan: Any,is_current: Callable[..., Any]=lambda:True) -> None:
-    import tkinter as tk
-    import time
-    from tkinter import ttk,filedialog,messagebox
-    previous=getattr(parent,'_route_demo_window',None)
-    if previous is not None and previous.winfo_exists():previous.close_demo()
-    window=tk.Toplevel(parent);window.title('圈选区域 · 扫描路线图');window.geometry('1100x850')
-    parent._route_demo_window=window
-    window.plan_is_current=is_current
-    controls=ttk.Frame(window);controls.pack(fill='x',padx=10,pady=8)
-    playback=ttk.Frame(window);playback.pack(fill='x',padx=10,pady=2)
-    show_region=tk.BooleanVar(value=True);show_path=tk.BooleanVar(value=True)
-    show_coverage=tk.BooleanVar(value=bool(plan.get('coverage')))
-    show_turns=tk.BooleanVar(value=bool(plan.get('route_quality')))
-    selection=tk.StringVar(value='全部路径段')
-    blocks=plan.get('blocks');block_selection=tk.StringVar(value='全部块')
-    block_labels=[f"{item['label']}（{_block_state_label(item, bool(blocks.get('selection_blocks')))}）"
-                  for item in blocks['items']] if blocks else []
-    def chosen_block():
-        if not blocks or block_selection.get()=='全部块':return None
-        return blocks['items'][block_labels.index(block_selection.get())]
-    selecting_block=[False]
-    label=ttk.Label(window);label.pack(fill='both',expand=True)
-    current=[None];timer=[None];animation=[None];cursor=[None];last_tick=[0.]
-    player=MotionPlayer(plan);window.motion_player=player
-    state=tk.StringVar();speed=tk.DoubleVar(value=20.);progress=tk.DoubleVar(value=0.)
-    updating=[False];notice=['']
-    ttk.Label(window,textvariable=state,wraplength=1050).pack(side='bottom',fill='x')
-    def update_state():
-        pos=player.position();window.motion_state=pos;cursor[0]=pos['pixel']
-        updating[0]=True;progress.set(pos['progress']*100);updating[0]=False
-        xyz=', '.join(f'{v:.6f}' for v in pos['xyz_m']);direction=', '.join(f'{v:.3f}' for v in pos['direction_W0'])
-        info=statistics(plan,player.speed)
-        block=chosen_block()
-        if block is not None and not selecting_block[0] and player.chain not in block['chain_indices']:
-            # Playback left the filtered block: widen the display so the cursor stays visible.
-            block_selection.set('全部块')
-        gap='';block_info=''
-        if blocks:
-            block_info=f" · 块 {blocks['chain_blocks'][player.chain]+1}/{blocks['summary']['block_count']}"
-        if player.at_break:
-            breaks=plan.get('chain_breaks',[])
-            reason=breaks[player.chain]['explanation'] if player.chain<len(breaks) else '不同链之间没有已规划连接'
-            if player.chain<len(breaks) and breaks[player.chain].get('inter_block'):
-                gap=('块间停止（选择分离）：' if breaks[player.chain].get('reason')=='selection_break' else '块间停止：')+reason+'；点击继续仅定位下一块起点，不播放跨块运动。'
-            else:gap='断点停止：'+reason+'；点击继续仅定位下一链起点。'
-        state.set(f"{'播放结束' if player.finished else '播放中' if player.running else '已暂停'} · 链 {player.chain+1}/{len(player.xyz)}{block_info} · {'连接' if pos['motion_kind']=='connector' else '扫描'} · W0/RDF XYZ（米）({xyz}) · 方向单位向量 ({direction})\n"
-            f"进度 {pos['progress']*100:.1f}% / 对应恒速时间 {pos['known_time_s']:.1f} s；扫描 {info['scan_length_m']*1000:.1f} / 连接 {info['connector_length_m']*1000:.1f} / 总长 {info['total_length_m']*1000:.1f} mm；{player.speed:g} mm/s 已规划运动 {info['known_motion_time_s']:.1f} s（仅链内，不含暂停、加减速或未知跨链移动）。\n"+gap+notice[0])
-    def seek(value):
-        if updating[0]:return
-        pause();player.seek(float(value)/100);notice[0]='进度定位；该定位不是已规划运动。'
-        if selection.get()!='全部路径段':selection.set(f'第 {player.chain+1} 段')
-        update_state();redraw()
-    window.seek_progress=seek
-    ttk.Scale(window,variable=progress,from_=0,to=100,command=seek).pack(side='bottom',fill='x',padx=10)
-    def redraw():
-        if not is_current():closed();return
-        value=selection.get();index=None if value=='全部路径段' else int(value.split()[1])-1
-        block=chosen_block()
-        current[0]=render_diagram(model.rgb,model.projection.ids,region,plan,show_region.get(),show_path.get(),index,
-            show_coverage.get(),cursor[0],show_turns.get(),None if block is None else block['chain_indices'])
-        display=current[0].copy();display.thumbnail((max(200,window.winfo_width()-20),max(200,window.winfo_height()-70)))
-        label.image=ImageTk.PhotoImage(display);label.configure(image=label.image)
-    def resized(event):
-        if event.widget is not window:return
-        if timer[0]:window.after_cancel(timer[0])
-        timer[0]=window.after(100,redraw)
-    def save():
-        if not is_current():closed();return
-        path=filedialog.asksaveasfilename(parent=window,title='导出路线图 PNG',defaultextension='.png',
-            initialdir=str(model.reconstruction),initialfile='区域扫描路线图.png',filetypes=[('PNG','*.png')])
-        if path and is_current():
-            try:current[0].save(path)
-            except OSError as error:messagebox.showerror('导出失败',str(error),parent=window)
-    ttk.Checkbutton(controls,text='显示区域',variable=show_region,command=redraw).pack(side='left')
-    ttk.Checkbutton(controls,text='显示路径',variable=show_path,command=redraw).pack(side='left')
-    ttk.Checkbutton(controls,text='覆盖检查',variable=show_coverage,command=redraw,
-        state='normal' if plan.get('coverage') else 'disabled').pack(side='left')
-    def tick():
-        animation[0]=None
-        if not is_current():closed();return
-        if not player.running:return
-        now=time.monotonic();player.advance(now-last_tick[0]);last_tick[0]=now
-        update_state();redraw()
-        if player.running:animation[0]=window.after(100,tick)
-    def play():
-        if not is_current():closed();return
-        if player.running:return
-        previous_chain=player.chain
-        switched=player.play()
-        if switched:
-            breaks=plan.get('chain_breaks',[])
-            inter=previous_chain<len(breaks) and breaks[previous_chain].get('inter_block')
-            notice[0]='已定位下一块起点；块间动作未规划，未播放任何跨块运动。' if inter else '已定位下一链起点；跨链动作未规划。'
-        else:notice[0]=''
-        if selection.get()!='全部路径段':selection.set(f'第 {player.chain+1} 段')
-        last_tick[0]=time.monotonic();tick()
-    def pause():
-        if player.running:player.advance(time.monotonic()-last_tick[0])
-        player.pause()
-        if animation[0]:window.after_cancel(animation[0]);animation[0]=None
-        update_state()
-    def reset():
-        pause();player.reset();notice[0]='已复位。';selection.set('全部路径段');update_state();redraw()
-    for text,command in [('播放',play),('暂停',lambda:(pause(),redraw())),('继续',play),('复位',reset)]:
-        ttk.Button(playback,text=text,command=command,width=5).pack(side='left')
-    ttk.Label(playback,text='模拟速度 mm/s').pack(side='left',padx=8)
-    speed_box=ttk.Combobox(playback,textvariable=speed,values=[5,10,20,40],state='readonly',width=5)
-    def change_speed(_):
-        pause();player.set_speed(speed.get());notice[0]='速度已更新，点击继续。';update_state();redraw()
-    speed_box.pack(side='left');speed_box.bind('<<ComboboxSelected>>',change_speed)
-    def report():
-        if not is_current():closed();return
-        from femto.planning.coverage_inspector import show_inspector
-        pause()
-        show_inspector(window,model,plan,is_current)
-    ttk.Button(playback,text='查看覆盖报告',command=report).pack(side='right')
-    if plan.get('spacing_report'):
-        def locate_spacing(row):
-            if not is_current():closed();return
-            location=row.get('player_location')
-            if location is not None and location.get('status')!='unique':
-                notice[0]=location['explanation'];update_state();redraw();return
-            ci=(location or row)['chain_index'];index=(location or row)['sample_index']
-            selection.set('全部路径段')
-            seek(100*(player.offsets[ci]+player.distances[ci][index])/max(player.offsets[-1],1e-15))
-        window.locate_spacing=locate_spacing
-        def spacing_dialog():
-            if not is_current():closed();return
-            pause()
-            from femto.planning.surface_spacing_report import show_spacing_report
-            show_spacing_report(window,plan,locate_spacing,is_current)
-        ttk.Button(playback,text='表面间距报告',command=spacing_dialog).pack(side='right')
-
-    if plan.get('route_quality'):
-        ttk.Checkbutton(controls,text='急转点',variable=show_turns,command=redraw).pack(side='left')
-        def locate_turn(turn):
-            if not is_current():closed();return
-            ci=turn['chain_index'];index=turn['sample_index']
-            selection.set('全部路径段')
-            seek(100*(player.offsets[ci]+player.distances[ci][index])/max(player.offsets[-1],1e-15))
-            notice[0]=f"急转点：链 {ci+1} / 点 {index+1}，方向变化 {turn['deflection_degrees']:.2f}°；未平滑。"
-            update_state();redraw()
-        window.locate_turn=locate_turn
-        def inspect_quality():
-            if not is_current():closed();return
-            from femto.planning.route_quality import show_quality
-            pause();show_quality(window,plan,locate_turn,is_current)
-        ttk.Button(playback,text='路线质量/急转角',command=inspect_quality).pack(side='right')
-
-    combo=ttk.Combobox(controls,textvariable=selection,state='readonly',width=18,
-        values=['全部路径段']+[f'第 {i+1} 段' for i in range(len(plan['segments']))])
-    def select(_):
-        pause()
-        if selection.get()!='全部路径段':player.select_chain(int(selection.get().split()[1])-1)
-        notice[0]='逐链定位；不表示跨链运动。';update_state();redraw()
-    combo.pack(side='left',padx=10);combo.bind('<<ComboboxSelected>>',select)
-    if blocks:
-        ttk.Label(controls,text='块').pack(side='left')
-        block_combo=ttk.Combobox(controls,textvariable=block_selection,state='readonly',width=26,values=['全部块']+block_labels)
-        def select_block(_=None):
-            selecting_block[0]=True
-            try:
-                pause();block=chosen_block()
-                if block is None:notice[0]='显示全部块；块间只有 gap，没有连线。'
-                elif block['chain_indices']:
-                    player.select_chain(block['chain_indices'][0]);selection.set('全部路径段')
-                    notice[0]=f"仅显示 {block['label']}（访问顺序第 {block['block_index']+1}，{block['segment_count']} 段 / {block['point_count']} 点）；显示过滤不修改保存的轨迹。"
-                else:notice[0]=f"{block['label']} 未规划（{block.get('reason')}），没有可显示或播放的扫描段；轨迹未覆盖该块。"
-                update_state();redraw()
-            finally:selecting_block[0]=False
-        block_combo.pack(side='left',padx=4);block_combo.bind('<<ComboboxSelected>>',select_block)
-        window.block_selection=block_selection;window.select_block=select_block
-    ttk.Button(controls,text='导出路线图 PNG',command=save).pack(side='right')
-    def closed():
-        pause()
-        if timer[0]:window.after_cancel(timer[0])
-        window.destroy()
-    update_state()
-    window.close_demo=closed
-    window.protocol('WM_DELETE_WINDOW',closed)
-    window.bind('<Configure>',resized);timer[0]=window.after(50,redraw)
+def show_presentation(parent: Any, model: Any, region: Any, plan: Any, is_current: Callable[..., Any] = lambda: True) -> Any:
+    """Open the Qt route player; kept as a compatibility entry point."""
+    from femto.planning.qt_path_presentation import RoutePresentation
+    return RoutePresentation(parent, model, region, plan, is_current)

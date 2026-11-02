@@ -51,7 +51,7 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(all(r['note']=='note' for r in scan_exports(self.root)))
         with self.assertRaises(ValueError):edit_records(self.root,rows+[{'key':'outside'}],hidden=True)
         old=read_index(self.root)
-        with patch('femto.planning.region_library.os.replace',side_effect=OSError('disk')):
+        with patch('femto.asset_storage.os.replace',side_effect=OSError('disk')):
             with self.assertRaises(OSError):edit_records(self.root,rows,hidden=True)
         self.assertEqual(read_index(self.root),old)
         self.assertEqual(before,{p:digest(p) for p in before})
@@ -97,33 +97,6 @@ class LibraryTests(unittest.TestCase):
         self.project();edit_records(self.root,scan_exports(self.root),note='old revision')
         self.project(revision='new')
         self.assertEqual(scan_exports(self.root)[0]['note'],'')
-    def test_gui_reuse_filters_and_selection(self):
-        import tkinter as tk
-        from tkinter import ttk
-        import time
-        from femto.planning.export_history import show_history
-        self.project()
-        exported=self.root/'annotations'/'exported';exported.mkdir(parents=True)
-        (exported/'area.glb').write_bytes(b'fixture')
-        (exported/'annotations.json').write_text(json.dumps({'regions':[{
-            'name':'Exported area','annotation_id':'r1','glb_file':'area.glb'}]}),encoding='utf-8')
-        root=tk.Tk();root.withdraw()
-        try:
-            window=show_history(root,self.root)
-            self.assertIs(show_history(root,self.root),window)
-            def descendants(w):
-                result=list(w.winfo_children())
-                for c in list(result):result.extend(descendants(c))
-                return result
-            tree=next(w for w in descendants(window) if isinstance(w,ttk.Treeview))
-            deadline=time.monotonic()+10
-            while not tree.get_children() and time.monotonic()<deadline:root.update();time.sleep(.01)
-            self.assertEqual(len(tree.get_children()),1)
-            entry=next(w for w in descendants(window) if isinstance(w,ttk.Entry) and not isinstance(w,ttk.Combobox))
-            entry.insert(0,'unmatched');root.update();self.assertEqual(tree.get_children(),())
-            entry.delete(0,'end');root.update();self.assertEqual(len(tree.get_children()),1)
-            tree.selection_set('0');root.update()
-        finally:root.destroy()
     def test_route_export_uses_own_manifest_not_annotation_dependency(self):
         self.project();project=scan_exports(self.root)[0]
         folder=self.root/'region_paths'/'route';folder.mkdir(parents=True)

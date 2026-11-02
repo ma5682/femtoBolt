@@ -7,7 +7,6 @@ import queue
 import tempfile
 import threading
 import time
-import tkinter as tk
 import unittest
 from unittest import mock
 import uuid
@@ -15,7 +14,7 @@ import uuid
 import numpy as np
 import open3d as o3d
 
-import femto.app.app_local_panel as app_local_panel
+from femto.app.qt_capture import read_review
 import test_scene_annotation_origin as origin
 from femto.capture.local_capture import LocalCapture
 from femto.dataset.local_reference import calibration_identity, validate_reference_provenance
@@ -25,8 +24,6 @@ from test_segmented_capture import make_frame, make_camera
 
 class ReferenceProvenanceTests(unittest.TestCase):
     def setUp(self):
-        # Earlier Tk tests destroy windows; release their cycles on the Tk thread
-        # before a capture worker can trigger Python's cyclic garbage collector.
         gc.collect()
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -140,121 +137,6 @@ class ReferenceProvenanceTests(unittest.TestCase):
             other.load(saved)
 
 
-class WorkbenchSessionTests(unittest.TestCase):
-    def setUp(self):
-        gc.collect()
-        import femto.app.femto_control_app as control
-        with mock.patch.object(control.FemtoControlApp, '_start_camera'), \
-                mock.patch.object(control.FemtoControlApp, '_load_latest_paths'):
-            self.root = tk.Tk()
-            self.root.withdraw()
-            self.app = control.FemtoControlApp(self.root)
-        self.panel = self.app.local_panel
-        self.app.camera_ready = True
-        self.addCleanup(self.close)
-
-    def close(self):
-        for timer in self.root.tk.call('after', 'info'):
-            self.root.after_cancel(timer)
-        self.root.destroy()
-        del self.app, self.panel, self.root
-        gc.collect()
-
-    def test_start_binds_id_before_any_event_and_old_sessions_cannot_hijack_it(self):
-        panel = self.panel
-        panel.start()
-        current = panel.session_id
-        self.assertTrue(current)
-        for kind, extra in [('local_started', dict(preview_mailbox=queue.Queue())),
-                            ('local_pose', dict(record=dict(state='lost'), accepted=999)),
-                            ('local_finished', dict(result='old_model')),
-                            ('local_error', dict(error='tracking_lost'))]:
-            panel.event(kind, dict(session_id='old-session', source='old-source', **extra))
-        self.assertEqual(panel.session_id, current)
-        self.assertTrue(panel.active)
-        self.assertIsNone(panel.source)
-        self.assertIsNone(panel.preview_mailbox)
-        panel.event('local_error', dict(session_id=current, source=None, error='origin_timeout'))
-        self.assertFalse(panel.active)
-        panel.event('local_started', dict(session_id=current, source='late-source'))
-        self.assertIsNone(panel.source)
-        panel.start()
-        self.assertNotEqual(panel.session_id, current)
-        panel.event('local_error', dict(session_id=current, source=None, error='tracking_lost'))
-        self.assertTrue(panel.active)
-
-    def test_conflicting_photo_and_finishing_state_guard_commands(self):
-        panel = self.panel
-        self.app.photo_saving = True
-        panel.start()
-        self.assertFalse(panel.active)
-        self.assertTrue(self.app.command_queue.empty())
-        self.app.photo_saving = False
-        panel.start()
-        panel.pause()
-        panel.count = 3  # Finishing requires three accepted views.
-        panel.finish(True)
-        count = self.app.command_queue.qsize()
-        panel.pause()
-        self.assertEqual(self.app.command_queue.qsize(), count)
-        commands = list(self.app.command_queue.queue)
-        self.assertTrue(all(payload['session_id'] == panel.session_id for _, payload in commands))
-
-    def test_review_file_io_runs_off_tk_thread_and_applies_matching_result(self):
-        panel = self.panel
-        panel.start()
-        entered, release = threading.Event(), threading.Event()
-        thread_ids = []
-        cloud = (np.array([[0.,0.,1.]]), np.array([[.5,.5,.5]]))
-        def read(_result):
-            thread_ids.append(threading.get_ident())
-            entered.set()
-            if not release.wait(3):
-                raise RuntimeError('test timeout')
-            return dict(initial=cloud, final=cloud)
-        with mock.patch.object(app_local_panel, 'read_review_clouds', side_effect=read):
-            try:
-                panel.event('local_finished', dict(session_id=panel.session_id, source='fixture_source', result='fixture_model'))
-                self.assertTrue(entered.wait(2))
-                self.assertNotEqual(thread_ids, [threading.get_ident()])
-                self.assertEqual(panel.state, 'loading_review')
-                self.assertTrue(self.app.processing)
-                self.assertNotIn('final', panel.clouds)
-            finally:
-                release.set()
-            mailbox = panel._review_mailbox
-            data = mailbox.get(timeout=3)
-            mailbox.put(data)
-            panel.consume_review()
-        self.assertFalse(self.app.processing)
-        self.assertEqual(panel.state, 'ready')
-        self.assertEqual(panel.view, 'final')
-        self.assertIn('final', panel.clouds)
-
-    def test_old_review_mailbox_cannot_replace_current_clouds_or_flags(self):
-        panel = self.panel
-        panel.session_id = 'current'
-        panel.result = Path('current-model')
-        panel._review_mailbox = queue.Queue(maxsize=1)
-        panel._review_mailbox.put(dict(session_id='old', result=Path('old-model'), error=None, clouds={'final': None}))
-        self.app.processing = True
-        panel.consume_review()
-        self.assertEqual(panel.clouds, {})
-        self.assertTrue(self.app.processing)
-
-    def test_review_failure_preserves_model_entry_without_false_cloud(self):
-        panel = self.panel
-        panel.session_id = 'current'
-        panel.result = Path('current-model')
-        panel._review_mailbox = queue.Queue(maxsize=1)
-        panel._review_mailbox.put(dict(session_id='current', result=panel.result, error='read failed', clouds=None))
-        self.app.processing = True
-        panel.consume_review()
-        self.assertEqual(panel.state, 'review_load_error')
-        self.assertFalse(self.app.processing)
-        self.assertNotIn('final', panel.clouds)
-        self.assertEqual(str(panel.buttons['view']['state']), 'normal')
-        self.assertEqual(str(panel.buttons['final']['state']), 'disabled')
 
 
 class CameraDispatchTests(unittest.TestCase):
@@ -296,8 +178,10 @@ class CameraDispatchTests(unittest.TestCase):
         original = np.column_stack((np.arange(100001)*.001, np.zeros(100001), np.ones(100001)))
         cloud.points = o3d.utility.Vector3dVector(original)
         cloud.colors = o3d.utility.Vector3dVector(np.ones_like(original)*.5)
-        with mock.patch('femto.reports.scene_scale_validation.read_geometry_safe', return_value=cloud):
-            result = app_local_panel.read_review_clouds(Path('fixture'))
+        with mock.patch('femto.geometry.fusion.read_geometry_safe', return_value=cloud), \
+             mock.patch('femto.app.qt_capture.read_review_surface', return_value=None), \
+             mock.patch('femto.local.local_processing.result_quality', return_value={}):
+            result = read_review(Path('fixture'), threading.Event(), lambda _: None)['clouds']
         self.assertLessEqual(len(result['final'][0]), 35000)
         result['final'][0][:] = 999
         np.testing.assert_array_equal(np.asarray(cloud.points), original)

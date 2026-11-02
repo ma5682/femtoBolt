@@ -15,7 +15,7 @@ class ToolPalette(QFrame):
         col.setContentsMargins(5, 5, 5, 5)
         col.setSpacing(4)
         self.buttons = {}
-        for key, text in (("work", "＋  规划区"), ("forbid", "⊘  禁入区"), ("erase", "－  擦除"), ("undo", "↶  撤销"), ("clear", "清空标记")):
+        for key, text in (("work", "规划区"), ("forbid", "禁入区"), ("erase", "擦除"), ("undo", "撤销"), ("clear", "清空标记")):
             btn = QPushButton(text)
             btn.setObjectName("toolButton")
             btn.setMinimumSize(96, 44)

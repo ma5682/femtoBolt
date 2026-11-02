@@ -13,7 +13,7 @@ import open3d as o3d
 import trimesh
 from femto.geometry.fusion import write_point_cloud_safe
 import cv2
-from femto.io_utils import write_json_strict
+from femto.io_utils import write_json_strict, sha256_file
 
 STATUS = 'not_physically_validated'
 
@@ -92,12 +92,15 @@ def visible_region(mesh: Any, polygon: Any, view: Any, projection: Any, width: i
 
 
 def region_mesh(mesh: Any, ids: Any) -> Any:
-    result = o3d.geometry.TriangleMesh(mesh)
-    keep = np.zeros(len(mesh.triangles), bool)
-    keep[ids] = True
-    result.remove_triangles_by_mask(~keep)
-    result.remove_unreferenced_vertices()
-    return result
+    from femto.geometry.region_reuse import extracted
+    def build():
+        result = o3d.geometry.TriangleMesh(mesh)
+        keep = np.zeros(len(mesh.triangles), bool)
+        keep[ids] = True
+        result.remove_triangles_by_mask(~keep)
+        result.remove_unreferenced_vertices()
+        return result
+    return extracted(mesh, ids, build)
 
 
 def region_boundary(mesh: Any, ids: Any) -> Any:
@@ -442,7 +445,7 @@ class AnnotationStore:
         if self.points or self.regions:
             self._commit([], [], focus)
 
-    def save(self, parent: str | Path, *, check: Any=None) -> Any:
+    def save(self, parent: str | Path, *, check: Any=None, include_texture: bool=True) -> Any:
         from femto.annotation.measurement_audit import layer_contract
         check = check or (lambda: None)
         check()
@@ -456,9 +459,22 @@ class AnnotationStore:
             mesh_name, cloud_name = f'region_{i+1}_mesh_m.ply', f'region_{i+1}_vertices_m.ply'
             colors = (np.asarray(mesh.vertex_colors)*255).astype(np.uint8) if mesh.has_vertex_colors() else None
             exported = trimesh.Trimesh(vertices=np.asarray(mesh.vertices), faces=np.asarray(mesh.triangles), vertex_colors=colors, process=False)
-            (folder / mesh_name).write_bytes(exported.export(file_type='ply'))
-            from femto.annotation.region_texture import textured_region
-            textured,texture_metadata=textured_region(self.mesh,region['triangle_indices'],self.source)
+            encoded_ply = exported.export(file_type='ply')
+            (folder / mesh_name).write_bytes(encoded_ply)
+            from femto.geometry.region_reuse import remember_ply
+            remember_ply(folder / mesh_name, encoded_ply, exported)
+            if include_texture:
+                from femto.annotation.region_texture import textured_region
+                textured,texture_metadata=textured_region(self.mesh,region['triangle_indices'],self.source)
+            else:
+                textured=None
+                texture_metadata=dict(appearance='vertex_colors_without_photo_texture')
+                # Preserve the normal manifest when there is no photo texture
+                # to defer; its digest remains identical at final export.
+                texture_folder=Path(self.source).parent
+                if any((texture_folder/name).exists() for name in
+                       ('mesh_triangle_uv.npy','texture_multiview.png')):
+                    texture_metadata['reason']='internal_planning_snapshot_texture_deferred_to_export'
             if textured is not None:exported=textured
             glb_name = f'region_{i+1}_mesh_m.glb'
             # Explicit scene-node conversion: W0 RDF -> glTF right/up/back.
@@ -493,7 +509,7 @@ class AnnotationStore:
                 appearance=texture_metadata['appearance'],texture_metadata=texture_metadata,
                 boundary_semantics='unordered_surface_edges_including_holes_not_a_tool_path',
                 physical_accuracy_verified=False, data_layers=layer_contract(self), files=assets,
-                file_sha256={name:hashlib.sha256((folder/name).read_bytes()).hexdigest()
+                file_sha256={name:sha256_file(folder/name,check)
                              for name in assets.values()})
             write_json_strict(folder / manifest_name, manifest)
             regions.append(dict(region, **assets, region_manifest_file=manifest_name))

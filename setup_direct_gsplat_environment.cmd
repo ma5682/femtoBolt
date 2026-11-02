@@ -1,6 +1,8 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
+call "%~dp0_resolve_gsplat_runtime.cmd"
+if errorlevel 1 exit /b 1
 
 echo DIRECT GSPLAT PRODUCT TRAINING ENVIRONMENT
 echo This environment does not install Nerfstudio, PyMeshLab, or Graphdeco code.
@@ -38,27 +40,18 @@ if errorlevel 1 (
   goto :failed
 )
 
-if exist ".venv-gsplat\Scripts\python.exe" (
-  ".venv-gsplat\Scripts\python.exe" -c "import sys; assert sys.version_info[:2] == (3,10)" >nul 2>nul
+if exist "%FEMTO_GSPLAT_ENV%\Scripts\python.exe" (
+  "%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -c "import sys; assert sys.version_info[:2] == (3,10)" >nul 2>nul
   if errorlevel 1 (
-    echo Existing .venv-gsplat uses the wrong Python version. Rename it and rerun setup.
+    echo Existing dedicated gsplat runtime uses the wrong Python version.
     goto :failed
   )
 ) else (
-  py -3.10 -m venv .venv-gsplat
+  py -3.10 -m venv "%FEMTO_GSPLAT_ENV%"
   if errorlevel 1 goto :failed
 )
 
-if not exist "C:\FemtoGsplatRuntime\Scripts\python.exe" (
-  if exist "C:\FemtoGsplatRuntime" (
-    echo C:\FemtoGsplatRuntime already exists and is not this environment.
-    goto :failed
-  )
-  mklink /J "C:\FemtoGsplatRuntime" "%CD%\.venv-gsplat" >nul
-  if errorlevel 1 goto :failed
-)
-
-".venv-gsplat\Scripts\python.exe" -m pip install --upgrade "pip==25.2" "setuptools<82" wheel ninja
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -m pip install --upgrade "pip==25.2" "setuptools<82" wheel ninja
 if errorlevel 1 goto :failed
 
 echo.
@@ -70,33 +63,36 @@ set "EXPECTED_TORCH_SHA=5174f02de8ca14df87c8e333c4c39cf3ce93a323c9d470d690301d11
 set "EXPECTED_TORCHVISION_SHA=ad48ba3c3ffd48027e3a8de42fcea131a53a524ee9416ca4efb22f9ac6b7328d"
 if exist "%TORCH_WHEEL%" if exist "%TORCHVISION_WHEEL%" goto :install_local_torch
 echo Local verified wheels were not found. Falling back to the official PyTorch index.
-".venv-gsplat\Scripts\python.exe" -m pip install --retries 12 --timeout 120 torch==2.7.1+cu128 torchvision==0.22.1+cu128 --index-url https://download.pytorch.org/whl/cu128
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -m pip install --retries 12 --timeout 120 torch==2.7.1+cu128 torchvision==0.22.1+cu128 --index-url https://download.pytorch.org/whl/cu128
 if errorlevel 1 goto :failed
 goto :torch_ready
 
 :install_local_torch
 echo Found manually downloaded PyTorch wheels. Verifying official SHA-256 values...
-".venv-gsplat\Scripts\python.exe" -c "import os; from pathlib import Path; from download_verified_file import sha256_file; p=Path(os.environ['TORCH_WHEEL']); h=sha256_file(p); print(p.name, h); assert h == os.environ['EXPECTED_TORCH_SHA'], 'torch wheel SHA-256 mismatch'"
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -c "import os; from pathlib import Path; from tools.download_verified_file import sha256_file; p=Path(os.environ['TORCH_WHEEL']); h=sha256_file(p); print(p.name, h); assert h == os.environ['EXPECTED_TORCH_SHA'], 'torch wheel SHA-256 mismatch'"
 if errorlevel 1 goto :failed
-".venv-gsplat\Scripts\python.exe" -c "import os; from pathlib import Path; from download_verified_file import sha256_file; p=Path(os.environ['TORCHVISION_WHEEL']); h=sha256_file(p); print(p.name, h); assert h == os.environ['EXPECTED_TORCHVISION_SHA'], 'torchvision wheel SHA-256 mismatch'"
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -c "import os; from pathlib import Path; from tools.download_verified_file import sha256_file; p=Path(os.environ['TORCHVISION_WHEEL']); h=sha256_file(p); print(p.name, h); assert h == os.environ['EXPECTED_TORCHVISION_SHA'], 'torchvision wheel SHA-256 mismatch'"
 if errorlevel 1 goto :failed
-".venv-gsplat\Scripts\python.exe" -m pip install --retries 12 --timeout 120 "%TORCH_WHEEL%" "%TORCHVISION_WHEEL%"
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -m pip install --retries 12 --timeout 120 "%TORCH_WHEEL%" "%TORCHVISION_WHEEL%"
 if errorlevel 1 goto :failed
 
 :torch_ready
 
 set "TORCH_CUDA_ARCH_LIST=12.0"
 set "DISTUTILS_USE_SDK=1"
-".venv-gsplat\Scripts\python.exe" -m pip install --retries 12 --timeout 120 -r requirements-gsplat-lock.txt
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -m pip install --retries 12 --timeout 120 -r requirements-gsplat-lock.txt
 if errorlevel 1 goto :failed
 
-"C:\FemtoGsplatRuntime\Scripts\python.exe" tools\patch_gsplat_windows.py
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" tools\patch_gsplat_windows.py
 if errorlevel 1 goto :failed
 
-".venv-gsplat\Scripts\python.exe" -c "import torch,gsplat; assert torch.cuda.is_available(); print('Direct gsplat runtime ready:', torch.__version__, gsplat.__version__, torch.cuda.get_device_name(0))"
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -c "import torch,gsplat; assert torch.cuda.is_available(); print('Direct gsplat runtime ready:', torch.__version__, gsplat.__version__, torch.cuda.get_device_name(0))"
 if errorlevel 1 goto :failed
 
-".venv-gsplat\Scripts\python.exe" -m pip freeze > requirements-gsplat-resolved.txt
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -c "import femto.gsplat.scene_gsplat_viewer, femto.gsplat.scene_single_gs_viewer; from PySide6.QtWidgets import QApplication; from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor; print('Qt/VTK gsplat viewers ready')"
+if errorlevel 1 goto :failed
+
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -m pip freeze > requirements-gsplat-resolved.txt
 echo.
 echo Direct gsplat environment is ready.
 exit /b 0

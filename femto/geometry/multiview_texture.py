@@ -4,6 +4,7 @@ One calibrated source image per triangle; depth-consistency rejects occluded
 or unsupported projections. Unassigned faces explicitly retain fused color.
 """
 import hashlib
+import io
 import json
 import math
 from pathlib import Path
@@ -13,6 +14,37 @@ from PIL import Image
 import trimesh
 
 from femto.io_utils import imread_unicode, write_json
+from femto.geometry.reconstruction_reuse import texture_view_indices
+
+
+class _EncodedPngTexture:
+    """Immutable, per-export texture using NumPy and image.save protocols.
+
+    Trimesh hashes the pixel array and embeds an image through save(..., format).
+    Keep those public protocols while sharing the exact PNG bytes already used
+    by the standalone atlas. No global encoder patch or cross-export cache is
+    involved. Other formats/options retain ordinary Pillow encoding behavior.
+    """
+    format = 'PNG'
+
+    def __init__(self, pixels):
+        self._pixels = np.array(pixels, copy=True)
+        self._pixels.setflags(write=False)
+        with io.BytesIO() as stream:
+            Image.fromarray(self._pixels).save(stream, format='PNG')
+            self.png_bytes = stream.getvalue()
+
+    def __array__(self, dtype=None, copy=None):
+        if copy is False and dtype is not None and np.dtype(dtype) != self._pixels.dtype:
+            raise ValueError('A dtype conversion requires a texture copy')
+        value = np.asarray(self._pixels, dtype=dtype)
+        return value.copy() if copy else value.view()
+
+    def save(self, stream, format=None, **options):
+        if isinstance(format, str) and format.upper() == 'PNG' and not options:
+            stream.write(self.png_bytes)
+        else:
+            Image.fromarray(self._pixels).save(stream, format=format, **options)
 
 
 def project_visible(vertices, faces, pose, K, distortion, depth, tolerance_m=.015):
@@ -37,7 +69,8 @@ def project_visible(vertices, faces, pose, K, distortion, depth, tolerance_m=.01
     return xy[:len(vertices)][faces], score
 
 
-def export_multiview_texture(mesh, dataset, frames, poses, output, exports, max_views=12):
+def export_multiview_texture(mesh, dataset, frames, poses, output, exports, max_views=12, *,
+                             reconstruction_reuse=None):
     intr = json.loads((dataset/'calibration/color_intrinsic.json').read_text(encoding='utf-8'))
     dist = json.loads((dataset/'calibration/distortion.json').read_text(encoding='utf-8'))['rgb']
     if 'BROWN_CONRADY_K6' not in dist['model']:
@@ -46,7 +79,7 @@ def export_multiview_texture(mesh, dataset, frames, poses, output, exports, max_
     coeff = np.array([dist[k] for k in ('k1','k2','p1','p2','k3','k4','k5','k6')])
     w,h = intr['width'],intr['height']
     # Representative views across the trajectory; no resizing of chosen photos.
-    indices = np.unique(np.linspace(0,len(frames)-1,min(max_views,len(frames)),dtype=int))
+    indices = texture_view_indices(len(frames), max_views)
     columns = int(math.ceil(math.sqrt(len(indices))))
     rows = int(math.ceil(len(indices)/columns))
     vertices,faces = np.asarray(mesh.vertices),np.asarray(mesh.triangles)
@@ -62,8 +95,13 @@ def export_multiview_texture(mesh, dataset, frames, poses, output, exports, max_
     sources = []
     for slot,ordinal in enumerate(indices):
         frame = frames[ordinal]
-        rgb = imread_unicode(dataset/frame['rgb'],cv2.IMREAD_COLOR)
-        depth = imread_unicode(dataset/frame['depth'],cv2.IMREAD_UNCHANGED)
+        original = reconstruction_reuse.get_rgbd(dataset, ordinal, frame) if reconstruction_reuse is not None else None
+        if original is None:
+            rgb = imread_unicode(dataset/frame['rgb'],cv2.IMREAD_COLOR)
+            depth = imread_unicode(dataset/frame['depth'],cv2.IMREAD_UNCHANGED)
+            rgb_sha256 = hashlib.sha256((dataset/frame['rgb']).read_bytes()).hexdigest()
+        else:
+            rgb,depth,rgb_sha256 = original.color,original.depth,original.rgb_sha256
         if rgb.shape != (h,w,3) or depth.shape != (h,w):
             raise ValueError('Texture RGB-D does not match calibration')
         projected,score = project_visible(vertices,faces,poses[ordinal],K,coeff,depth)
@@ -72,7 +110,7 @@ def export_multiview_texture(mesh, dataset, frames, poses, output, exports, max_
         x,y = (slot%columns)*w,(slot//columns)*h
         atlas[y:y+h,x:x+w] = rgb[:,:,::-1]
         sources.append(dict(frame_ordinal=int(ordinal),rgb=str((dataset/frame['rgb']).resolve()),
-                            tile_origin_px=[x,y],rgb_sha256=hashlib.sha256((dataset/frame['rgb']).read_bytes()).hexdigest()))
+                            tile_origin_px=[x,y],rgb_sha256=rgb_sha256))
     uv = np.zeros((len(faces),3,2),np.float64)
     for slot in range(len(indices)):
         mask = choice == slot
@@ -87,7 +125,8 @@ def export_multiview_texture(mesh, dataset, frames, poses, output, exports, max_
         uv[ids,:,0] = ((x+.5)/atlas_w)[:,None]
         uv[ids,:,1] = (1-(y+.5)/atlas_h)[:,None]
     texture = output/'texture_multiview.png'
-    Image.fromarray(atlas).save(texture)
+    encoded_atlas = _EncodedPngTexture(atlas)
+    texture.write_bytes(encoded_atlas.png_bytes)
     uv_path,choice_path = output/'mesh_triangle_uv.npy',output/'mesh_texture_source_slot.npy'
     np.save(uv_path,uv)
     np.save(choice_path,choice)
@@ -107,7 +146,7 @@ def export_multiview_texture(mesh, dataset, frames, poses, output, exports, max_
             rows_out[:,::2] = chunk+1
             rows_out[:,1::2] = np.arange(start*3,(start+len(chunk))*3).reshape(-1,3)+1
             np.savetxt(f,rows_out,fmt='f %d/%d %d/%d %d/%d')
-    material = trimesh.visual.material.PBRMaterial(baseColorTexture=Image.fromarray(atlas),metallicFactor=0,roughnessFactor=1,doubleSided=True)
+    material = trimesh.visual.material.PBRMaterial(baseColorTexture=encoded_atlas,metallicFactor=0,roughnessFactor=1,doubleSided=True)
     visual = trimesh.visual.texture.TextureVisuals(uv=uv.reshape(-1,2),material=material)
     tm = trimesh.Trimesh(vertices=vertices[faces].reshape(-1,3),faces=np.arange(len(faces)*3).reshape(-1,3),visual=visual,process=False)
     tm.export(glb)

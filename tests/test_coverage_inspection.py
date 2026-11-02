@@ -129,22 +129,3 @@ class InspectionTests(unittest.TestCase):
         self.assertEqual(value,before)
         def cancel():raise RuntimeError('cancelled serialization')
         with self.assertRaisesRegex(RuntimeError,'cancelled serialization'):check_document_budget(value,cancel)
-
-    def test_inspector_click_zoom_and_invalidation(self):
-        import tkinter as tk
-        import time
-        with tempfile.TemporaryDirectory() as tmp:
-            mesh,store,region,p=self.surface(Path(tmp));plan=inspected_serpentine_plan(p,mesh,region,8,20)
-            root=tk.Tk();root.withdraw();current=[True];errors=[]
-            root.report_callback_exception=lambda *args:errors.append(args)
-            try:
-                w=show_inspector(root,SimpleNamespace(rgb=np.zeros((85,85,3),np.uint8)),plan,lambda:current[0]);root.update()
-                entry=plan['coverage_inspection']['omissions'][0]
-                w.omission_tree.selection_set(entry['id']);w.omission_tree.event_generate('<<TreeviewSelect>>');root.update()
-                self.assertEqual(w.selected_omission,entry);self.assertEqual(w.focus_bbox,crop_bounds(plan['coverage_inspection'],entry))
-                self.assertEqual(w.plan_binding,plan['plan_binding'])
-                current[0]=False;w.locate_omission(entry['id']);self.assertFalse(w.winfo_exists())
-                root.update();self.assertFalse(errors)
-            finally:root.destroy()
-
-if __name__=='__main__':unittest.main()

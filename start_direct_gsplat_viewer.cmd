@@ -1,12 +1,14 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if not exist "C:\FemtoGsplatRuntime\Scripts\python.exe" (
+call "%~dp0_resolve_gsplat_runtime.cmd"
+if errorlevel 1 exit /b 2
+if not exist "%FEMTO_GSPLAT_ENV%\Scripts\python.exe" (
   echo Direct gsplat environment is missing. Run setup_direct_gsplat_environment.cmd first.
   exit /b 2
 )
 set "CUDA_HOME=%ProgramFiles%\NVIDIA GPU Computing Toolkit\CUDA\v12.8"
-set "PATH=C:\FemtoGsplatRuntime\Scripts;%CUDA_HOME%\bin;%PATH%"
+set "PATH=%FEMTO_GSPLAT_ENV%\Scripts;%CUDA_HOME%\bin;%PATH%"
 set "TORCH_CUDA_ARCH_LIST=12.0"
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 if not exist "%VSWHERE%" goto :run
@@ -19,4 +21,4 @@ set "VSLANG=1033"
 set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 chcp 65001 >nul
-"C:\FemtoGsplatRuntime\Scripts\python.exe" -m femto.gsplat.scene_gsplat_viewer %*
+"%FEMTO_GSPLAT_ENV%\Scripts\python.exe" -m femto.gsplat.scene_gsplat_viewer %*

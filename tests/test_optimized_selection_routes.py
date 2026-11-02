@@ -162,8 +162,8 @@ class OptimizedSelectionRouteTests(unittest.TestCase):
             self.assertEqual(before, {path.name: path.read_bytes() for path in folder.iterdir() if path.is_file()})
         self.assertEqual({path.name for path in folders[0].iterdir()}, {path.name for path in folders[1].iterdir()})
         for name in ("trajectory.csv", "gaps.csv", "blocks.csv"):
-            self.assertEqual((folders[0] / name).read_text().splitlines()[0],
-                             (folders[1] / name).read_text().splitlines()[0])
+            self.assertEqual((folders[0] / name).read_text(encoding="utf-8").splitlines()[0],
+                             (folders[1] / name).read_text(encoding="utf-8").splitlines()[0])
 
     def test_old_playback_is_validated_but_never_replanned_or_upgraded(self):
         from femto.planning.trajectory_history import prepare_playback
@@ -171,7 +171,7 @@ class OptimizedSelectionRouteTests(unittest.TestCase):
             source = make_export(tmp, selection=dict(mask=FULL))
             old = plan(source, SELECTION_ALGORITHM)
             folder = export_trajectory(old, Path(tmp) / "saved", include_visuals=False)
-            region = json.loads(source.read_text())["region"]
+            region = json.loads(source.read_text(encoding="utf-8"))["region"]
             model = SimpleNamespace(store=SimpleNamespace(digest=old.source["geometry_sha256"],
                                                           origin_reference=old.origin_reference),
                                     view_reference=region["view_reference"])
@@ -181,7 +181,7 @@ class OptimizedSelectionRouteTests(unittest.TestCase):
             self.assertIs(returned, model)
             self.assertIn(SELECTION_ALGORITHM, playback["algorithm_notice"])
             self.assertIn("不会自动升级", playback["algorithm_notice"])
-            self.assertEqual(json.loads((folder / "trajectory.json").read_text())["planner"]["algorithm_version"],
+            self.assertEqual(json.loads((folder / "trajectory.json").read_text(encoding="utf-8"))["planner"]["algorithm_version"],
                              SELECTION_ALGORITHM)
 
     def test_cli_default_and_explicit_legacy_flags_dispatch_without_extra_parameters(self):

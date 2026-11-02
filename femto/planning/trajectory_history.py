@@ -24,15 +24,15 @@ def region_manifest(row):
 
 
 def history_rows(reconstruction, check=lambda: None):
-    from femto.planning.export_history import scan_exports
+    from femto.planning.catalog import scan_exports
     rows = [r for r in scan_exports(reconstruction, check=check)
-            if r['kind'] in ('区域', '三维表面轨迹')]
+            if r['kind'] in ('区域', '三维表面轨迹', '区域＋路径')]
     for row in rows:
         check()
         try:
             if row['kind'] == '区域':
                 row['export_manifest'] = region_manifest(row)
-            else:
+            elif row['kind'] == '三维表面轨迹':
                 payload = json.loads(Path(row.get('target', row['source'])).read_text(encoding='utf-8-sig'))
                 row['parent_manifest'] = Path(payload['source']['region_manifest']).resolve()
                 row['block_status'] = saved_block_status(payload)
@@ -228,8 +228,9 @@ def prepare_report(row, control):
     if row.get('kind') != '三维表面轨迹':
         raise ValueError('请先选择一条三维表面轨迹记录')
     control.check()
+    coverage_results=[]
     trajectory = load_trajectory(row.get('target') or row['source'], check=control.check,
-                                 reproduce=False, allow_older_versions=True)
+                                 reproduce=False, allow_older_versions=True,coverage_sink=coverage_results.append)
     control.check()
     text = report_text(trajectory)
     from femto.planning.treatment_head import load_record, report_lines
@@ -237,6 +238,8 @@ def prepare_report(row, control):
     head = load_record(folder if folder.is_dir() else folder.parent, trajectory, check=control.check)
     if head is not None:
         text = text.rstrip('\n') + '\n' + '\n'.join(report_lines(head)) + '\n'
+    from femto.planning.coverage_workflow import summary_text
+    text += '\n'+summary_text(coverage_results[0].metadata if coverage_results else None)+'\n'
     notice = product_algorithm_notice(trajectory.planner.get('parameters', {}), trajectory.planner.get('algorithm_version'))
     control.check()
     return (notice + '\n\n' if notice else '') + text
@@ -248,8 +251,9 @@ def prepare_playback(row, reconstruction, control):
     from femto.planning.surface_trajectory import to_player_plan
     # Playback is viewing only: an accepted older-version file is hash-checked and mesh-validated
     # but not re-planned; regeneration stays an explicit user action.
+    coverage_results=[]
     trajectory = load_trajectory(row.get('target', row['source']), check=control.check,
-                                 reproduce=False, allow_older_versions=True)
+                                 reproduce=False, allow_older_versions=True,coverage_sink=coverage_results.append)
     manifest = json.loads(Path(trajectory.source['region_manifest']).read_text(encoding='utf-8-sig'))
     model = FixedRGBModel(reconstruction, cancel=control)
     if (model.store.digest != trajectory.source['geometry_sha256'] or
@@ -261,6 +265,16 @@ def prepare_playback(row, reconstruction, control):
             raise ValueError('历史轨迹参考图像或标定不一致：'+key)
     control.check()
     plan = to_player_plan(trajectory)
+    if coverage_results:
+        from femto.planning import target_surface,coverage_display
+        folder=Path(row.get('target',row['source'])).resolve()
+        if folder.is_file():folder=folder.parent
+        context=trajectory.planning_context;params=trajectory.planner['parameters']
+        model.target_ledger=target_surface.read(folder,context['target'],context['revision'],
+            evidence=params['quality_evidence'],domain=params['effective_domain'],check=control.check)
+        model.coverage_certificate=coverage_results[0]
+        model.coverage_display=coverage_display.build(model.target_ledger,coverage_results[0],control.check)
+        plan['coverage_evidence']=coverage_results[0].metadata
     notice = product_algorithm_notice(trajectory.planner.get('parameters', {}), trajectory.planner.get('algorithm_version'))
     if notice:
         plan['algorithm_notice'] = notice

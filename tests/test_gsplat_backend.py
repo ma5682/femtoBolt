@@ -73,6 +73,63 @@ class GsplatBackendTests(unittest.TestCase):
         self.assertTrue(assessment["reasons"])
         self.assertEqual(assessment["backend"], "direct_gsplat")
 
+    def test_skipped_local_conversion_does_not_use_a_stale_nested_input(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "demo_summary.json").write_text(
+                json.dumps({"nerfstudio": None, "frame_count": 5}), encoding="utf-8"
+            )
+            stale_input = root / "nerfstudio"
+            stale_input.mkdir()
+            (stale_input / "transforms.json").write_text("{}", encoding="utf-8")
+            with mock.patch.object(gsplat_backend, "assess_direct_input") as direct:
+                assessment = gsplat_backend.assess_training_input(root)
+            self.assertFalse(assessment["ready"])
+            self.assertIsNone(assessment["input"])
+            self.assertIn("not generated", assessment["reasons"][0])
+            direct.assert_not_called()
+            with self.assertRaisesRegex(ValueError, "not generated"):
+                gsplat_backend.prepare_training_input(root)
+            output = root / "must_not_be_created"
+            with mock.patch.object(gsplat_backend.subprocess, "Popen") as launch:
+                with self.assertRaisesRegex(ValueError, "not generated"):
+                    gsplat_backend.train(root, output_dir=output)
+            launch.assert_not_called()
+            self.assertFalse(output.exists())
+
+    def test_invalid_summary_inputs_return_a_blocked_assessment(self) -> None:
+        cases = [[], None, {"nerfstudio": ""}, {"nerfstudio": "  "},
+                 {"nerfstudio": False}, {"nerfstudio": 12},
+                 {"nerfstudio": []}, {"nerfstudio": {}}]
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for summary in cases:
+                with self.subTest(summary=summary):
+                    (root / "demo_summary.json").write_text(json.dumps(summary), encoding="utf-8")
+                    with mock.patch.object(gsplat_backend, "assess_direct_input") as direct:
+                        assessment = gsplat_backend.assess_training_input(root)
+                    self.assertFalse(assessment["ready"])
+                    self.assertIsNone(assessment["input"])
+                    self.assertTrue(assessment["reasons"])
+                    direct.assert_not_called()
+
+    def test_relative_summary_input_is_bound_to_the_reconstruction(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            nested = root / "nerfstudio"
+            nested.mkdir()
+            (nested / "transforms.json").write_text("{}", encoding="utf-8")
+            (root / "demo_summary.json").write_text(
+                json.dumps({"nerfstudio": "nerfstudio"}), encoding="utf-8"
+            )
+            self.assertEqual(gsplat_backend.resolve_training_input(root), nested.resolve())
+
+    def test_legacy_summary_without_input_field_keeps_nested_resolution(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "demo_summary.json").write_text("{}", encoding="utf-8")
+            self.assertEqual(gsplat_backend.resolve_training_input(root), (root / "nerfstudio").resolve())
+
     def test_training_command_targets_the_runtime_trainer_with_an_explicit_output(self) -> None:
         command = gsplat_backend.build_training_command(
             Path("C:/FemtoGsplatRuntime/Scripts/python.exe"),

@@ -1,4 +1,4 @@
-"""Capture-session lifecycle shared by the Tk application and the local capture worker.
+"""Capture-session lifecycle shared by the Qt application and local worker.
 
 Frame and photo writers, the ``ActiveScan`` record and the sticky camera-motion
 hint state live here so that ``femto.capture`` never imports the application.
@@ -381,7 +381,7 @@ def finalize_scan(scan: ActiveScan, camera: OrbbecAlignedCamera) -> Path:
             "processing_mode": scan.processing_mode,
             "depth_min_mm": scan.depth_min_mm,
             "depth_max_mm": scan.depth_max_mm,
-            "entry": "femto.app.femto_control_app",
+            "entry": "femto.app.qt_main",
         },
         "camera_motion_feedback": {
             "state": scan.motion_state if not scan.fixed_camera else "not_applicable",

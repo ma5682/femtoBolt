@@ -1,6 +1,7 @@
 """Treatment-head parameters for surface trajectories and a geometric coverage estimate.
 
-Only the row spacing affects the planned route. Treatment depth, housing diameter and the
+Legacy mesh planners use only row spacing; the quality-constrained workbench also
+uses effective width for its swept-footprint check. Treatment depth, housing diameter and the
 safety margin are recorded for future focus placement / collision checks and are not used.
 The coverage number is a geometric estimate on the measured region mesh, not treatment
 coverage; connectors are never counted because energy is not assumed to be on while moving.
@@ -19,7 +20,7 @@ from femto.planning.surface_trajectory import ScanSegment, SurfaceTrajectory, ca
 
 SCHEMA = "femto-treatment-head-parameters-v1"
 FILE_NAME = "treatment_head.json"
-MODES = ("direct_row_spacing", "from_effective_width")
+MODES = ("direct_row_spacing", "from_effective_width", "fixed_width_auto")
 ROW_SPACING_RANGE_MM = (0.5, 100.0)  # the planner's existing accepted range; never clamped
 PLACEHOLDER_DEFAULTS = {"row_spacing_mm": 5.0, "effective_treatment_width_mm": 5.0, "overlap_percent": 20.0,
                         "treatment_depth_mm": 20.0, "head_diameter_mm": 40.0, "safety_margin_mm": 5.0}
@@ -54,7 +55,7 @@ def head_parameters(mode: str, *, row_spacing_mm: Any = None,
         raise ValueError("Invalid treatment-head values_status")
     width = _number("effective_treatment_width_mm", effective_treatment_width_mm)
     overlap = _number("overlap_percent", overlap_percent)
-    if mode == "from_effective_width":
+    if mode in ("from_effective_width", "fixed_width_auto"):
         spacing = round(width * (1.0 - overlap / 100.0), 6)
         low, high = ROW_SPACING_RANGE_MM
         if not low <= spacing <= high:
@@ -66,10 +67,11 @@ def head_parameters(mode: str, *, row_spacing_mm: Any = None,
     return {
         "schema": SCHEMA, "mode": mode, "values_status": values_status,
         "row_spacing_mm": spacing,
-        "row_spacing_rule": ("effective_treatment_width_mm*(1-overlap_percent/100)" if mode == "from_effective_width"
+        "row_spacing_rule": ("maximum_spacing_for_fixed_width_auto_layout" if mode == "fixed_width_auto" else
+                             "effective_treatment_width_mm*(1-overlap_percent/100)" if mode == "from_effective_width"
                              else "entered_directly"),
         "effective_treatment_width_mm": width, "overlap_percent": overlap,
-        "overlap_used_for_row_spacing": mode == "from_effective_width",
+        "overlap_used_for_row_spacing": mode in ("from_effective_width", "fixed_width_auto"),
         "deferred": {
             "treatment_depth_mm": _number("treatment_depth_mm", treatment_depth_mm),
             "head_diameter_mm": _number("head_diameter_mm", head_diameter_mm),

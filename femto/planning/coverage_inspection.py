@@ -108,11 +108,14 @@ def inspect_coverage(projection: Any,mesh: Any,region: Any,allowed: Any,plan: An
     connected=np.repeat(np.asarray([int(c) in seeded for c in components]),3)
     # Conservative Euclidean lower clearance agrees with the footprint guard.
     boundary=vertices[np.asarray([edge for edge,neighbours in edge_faces.items() if len(neighbours)==1],int)]
-    if len(xyz)*len(boundary)>100_000_000:raise ValueError('覆盖边界采样检查超过预算，请缩小区域')
-    clearance=np.full(len(xyz),np.inf)
-    for i,(a,b) in enumerate(boundary):
-        if i%128==0:check()
-        clearance=np.minimum(clearance,point_segment_distance(xyz,a,b))
+    if len(xyz)*len(boundary)>100_000_000:
+        from femto.planning.boundary_clearance import nearest_boundary_distances
+        clearance=nearest_boundary_distances(xyz,boundary,check)
+    else:
+        clearance=np.full(len(xyz),np.inf)
+        for i,(a,b) in enumerate(boundary):
+            if i%128==0:check()
+            clearance=np.minimum(clearance,point_segment_distance(xyz,a,b))
     reserved=eligible & (clearance<margin+1e-9) if margin else np.zeros(len(xyz),bool)
     center_limited=eligible & (clearance<(width/2000+margin))
     # Projected margin adds image ROI/unsupported boundaries without assigning an area to holes.
@@ -212,10 +215,11 @@ def inspect_coverage(projection: Any,mesh: Any,region: Any,allowed: Any,plan: An
 
 
 def check_document_budget(plan: Any,check: Callable[..., Any]=lambda:None,limit: int=60_000_000) -> None:
-    # Leave space for source metadata and indentation inside the 100 MB replay limit.
+    # Match compact UTF-8 plan persistence; whitespace must not consume the
+    # geometry/detail budget. Keep room for source metadata within 100 MB.
     import json
     total=0
-    for ordinal,chunk in enumerate(json.JSONEncoder(ensure_ascii=False,indent=2,allow_nan=False).iterencode(plan)):
+    for ordinal,chunk in enumerate(json.JSONEncoder(ensure_ascii=False,indent=None,allow_nan=False).iterencode(plan)):
         if ordinal%4096==0:check()
         total+=len(chunk.encode('utf-8'))
         if total>limit:raise ValueError('覆盖方案明细超过可回读大小预算，请缩小区域；未提交新方案')

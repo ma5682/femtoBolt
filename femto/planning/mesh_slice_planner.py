@@ -48,7 +48,8 @@ class Unplannable(ValueError):
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    from femto.io_utils import sha256_file
+    return sha256_file(path)
 
 
 def _manifest_path(source: str | Path) -> Path:
@@ -93,7 +94,10 @@ def _load_input(source: str | Path) -> tuple[Path, dict[str, Any], trimesh.Trime
     expected_hash = hashes.get(files["mesh_file"])
     if not isinstance(expected_hash, str) or _sha256(mesh_path) != expected_hash:
         raise ValueError("Region mesh SHA-256 mismatch")
-    loaded = trimesh.load(mesh_path, force="mesh", process=False)
+    from femto.geometry.region_reuse import loaded_ply
+    loaded = loaded_ply(mesh_path, expected_hash)
+    if loaded is None:
+        loaded = trimesh.load(mesh_path, force="mesh", process=False)
     if not isinstance(loaded, trimesh.Trimesh):
         raise ValueError("Region PLY is not a triangle mesh")
     mesh = loaded
@@ -287,7 +291,9 @@ def _chains(lines: np.ndarray, face_ids: np.ndarray) -> tuple[list[tuple[np.ndar
     return result, branched
 
 
-def _resample(points: np.ndarray, edge_faces: list[int], step_m: float) -> list[tuple[np.ndarray, int]]:
+def _resample(points: np.ndarray, edge_faces: list[int], step_m: float, *,
+              preserve_face_crossings: bool = False,
+              face_local_spacing: bool = False) -> list[tuple[np.ndarray, int]]:
     lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
     keep = lengths > 1e-12
     if not np.any(keep):
@@ -300,9 +306,23 @@ def _resample(points: np.ndarray, edge_faces: list[int], step_m: float) -> list[
             faces.append(int(edge_faces[index]))
     points = np.asarray(clean)
     lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    if face_local_spacing:
+        if not preserve_face_crossings:raise ValueError('面内取点必须保留跨面位置')
+        # The adaptive policy resets spacing at each existing face crossing.
+        # This avoids superimposing a second global grid on short mesh edges.
+        # Every original polyline vertex remains, and every edge stays <= step.
+        samples = []
+        for index, length in enumerate(lengths):
+            count = max(1, math.ceil(float(length)/step_m))
+            for fraction in np.arange(count, dtype=float)/count:
+                samples.append((points[index]*(1-fraction)+points[index+1]*fraction, faces[index]))
+        samples.append((points[-1], faces[-1]))
+        return samples
     cumulative = np.r_[0.0, np.cumsum(lengths)]
     total = float(cumulative[-1])
     distances = np.r_[np.arange(0.0, total, step_m), total]
+    if preserve_face_crossings:
+        distances = np.r_[distances, cumulative]
     distances = np.unique(np.minimum(distances, total))
     samples = []
     for distance in distances:
@@ -531,7 +551,9 @@ def _slice_rows(sliced: trimesh.Trimesh, face_lookup: np.ndarray | None, compone
                 row_dropped += 1
                 dropped_fragments.append(dropped(slice_index, length, "below_min_segment"))
                 continue
-            samples = _resample(polyline, edge_faces, step_m)
+            samples = (_resample(polyline, edge_faces, step_m, preserve_face_crossings=True,
+                                 face_local_spacing=params.get('sampling_decision') is not None)
+                       if params.get('preserve_face_crossings') else _resample(polyline, edge_faces, step_m))
             runs, unsupported = _split_supported(samples, intrinsic, image_size,
                                                   params["min_segment_mm"] / 1000, allowed)
             row_dropped += unsupported
@@ -787,19 +809,32 @@ def _block_descriptors(vertices: np.ndarray, faces: np.ndarray, components: np.n
 def _prepare_block(vertices: np.ndarray, faces: np.ndarray, ids: np.ndarray, component: int, components: np.ndarray,
                    params: dict[str, Any], region: dict[str, Any], intrinsic: np.ndarray, image_size: np.ndarray,
                    check: Callable[[], None], budget: dict[str, int], row_offset: int,
-                   block_index: int, allowed: np.ndarray | None = None) -> dict[str, Any]:
+                   block_index: int, allowed: np.ndarray | None = None, *, row_layout=None) -> dict[str, Any]:
     """Frame, rows, ordered segments and raw gaps of one connected face set (shared by v3.1 and v4)."""
     spacing_m = params["row_spacing_mm"] / 1000
     step_m = params["sample_step_mm"] / 1000
     block_mesh = trimesh.Trimesh(vertices=vertices, faces=faces[ids], process=False)
     origin, e1, e2, _normal, frame = _pca_frame(block_mesh, params)
     outer = {component: _outer_loop(vertices, faces[ids], origin, e1, e2)}
+    if getattr(row_layout,'is_patch',False):
+        from femto.planning.patch_slice_layout import prepare
+        return prepare(row_layout,vertices,faces,ids,component,components,params,region,intrinsic,image_size,
+                       check,budget,row_offset,block_index,allowed,frame,(outer,origin,e1,e2))
     coordinates = (vertices[np.unique(faces[ids])] - origin) @ e2
-    positions = np.arange(float(coordinates.min()) + spacing_m / 2, float(coordinates.max()) + 1e-12, spacing_m)
+    positions = (np.arange(float(coordinates.min()) + spacing_m / 2, float(coordinates.max()) + 1e-12, spacing_m)
+                 if row_layout is None else row_layout.positions(vertices, faces, ids, origin, e2, block_index, row_offset, check))
     if not len(positions):
+        if row_layout is not None:
+            raise Unplannable(row_layout.fragments[-1]['status'], '固定作用宽度在此表面片段没有可排布的扫描行')
         raise Unplannable("narrower_than_row_spacing", "Block is narrower than one row spacing")
     records_by_slice, dropped_fragments = _slice_rows(block_mesh, ids, components, origin, e2, positions, params,
                                                       intrinsic, image_size, check, budget, block_index, allowed)
+    if row_layout is not None:
+        # Nonuniform automatic rows must carry their measured slice level,
+        # rather than the legacy constant-spacing ordinal.
+        for record in records_by_slice:
+            for item in record['candidates']:
+                item['level_m'] = record['position_m']
     if not records_by_slice:
         raise Unplannable("no_supported_segment", "No supported scan segment was produced",
                           details={"dropped_fragments": dropped_fragments})

@@ -24,17 +24,21 @@ Conventions (see CLAUDE.md, "Windows / 中文路径注意事项"):
 from __future__ import annotations
 
 import functools
+import hashlib
 import json
 import os
 from pathlib import Path
 import tempfile
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import numpy as np
+
+from femto.resource_policy import preparation_resources
 
 
 __all__ = [
     "ImageCodecError",
+    "JsonSizeLimitError",
     "append_jsonl",
     "imread_unicode",
     "imread_unicode_or_none",
@@ -42,15 +46,88 @@ __all__ = [
     "load_json",
     "load_json_object",
     "load_jsonl",
+    "sha256_file",
     "write_json",
     "write_json_strict",
     "write_jsonl",
 ]
 
 
+def sha256_file(path: str | Path, check: Callable[[], None] | None = None) -> str:
+    """Hash every byte with an adaptive buffer <=1 MiB and cooperative checks."""
+    if check is None:
+        check = lambda: None
+    check()
+    digest = hashlib.sha256()
+    source = Path(path)
+    resources = preparation_resources(0, file_bytes=source.stat().st_size)
+    buffer = bytearray(resources.hash_buffer_bytes)
+    view = memoryview(buffer)
+    with source.open('rb') as stream:
+        while True:
+            check()
+            size = stream.readinto(buffer)
+            if not size:
+                break
+            digest.update(view[:size])
+    check()
+    return digest.hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # JSON / JSONL
 # ---------------------------------------------------------------------------
+
+
+class JsonSizeLimitError(ValueError):
+    """The encoded JSON would exceed the caller's byte limit."""
+
+
+def _write_json_checked(target, value, *, indent, allow_nan, ensure_ascii,
+                        durable, temporary_prefix, check, max_bytes):
+    """Stream bounded UTF-8 chunks into a unique, unpublished temporary file."""
+    if max_bytes is not None and (type(max_bytes) is not int or max_bytes < 0):
+        raise ValueError('JSON byte limit must be a nonnegative integer')
+    check = check or (lambda: None)
+    check()
+    encoder = json.JSONEncoder(ensure_ascii=ensure_ascii, indent=indent, allow_nan=allow_nan)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='wb', dir=target.parent,
+                prefix=temporary_prefix or f'.{target.name}-', suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            pending = bytearray(); size = 0; pieces = []; characters = 0
+            def flush_pieces():
+                nonlocal size, characters
+                if not pieces:return
+                # Joining small encoder fragments preserves exact JSON and
+                # newline bytes while avoiding one UTF-8 encoding per token.
+                raw = ''.join(pieces).replace('\n', os.linesep).encode('utf-8')
+                size += len(raw)
+                if max_bytes is not None and size > max_bytes:
+                    raise JsonSizeLimitError(f'JSON exceeds its {max_bytes} byte limit')
+                pending.extend(raw); pieces.clear(); characters = 0
+                if len(pending) >= 65536:
+                    check(); stream.write(pending); pending.clear()
+            for index, piece in enumerate(encoder.iterencode(value)):
+                if index % 1024 == 0:check()
+                for start in range(0, len(piece), 16384):
+                    chunk = piece[start:start+16384]
+                    pieces.append(chunk); characters += len(chunk)
+                    if characters >= 16384:flush_pieces()
+            check()
+            flush_pieces()
+            check()
+            if pending:stream.write(pending)
+            if durable:
+                check(); stream.flush(); os.fsync(stream.fileno())
+        check()
+        os.replace(temporary, target)
+    except BaseException:
+        if temporary is not None:
+            try:temporary.unlink(missing_ok=True)
+            except OSError:pass  # Preserve the actual task error if cleanup also fails.
+        raise
 
 
 def load_json(path: str | os.PathLike[str]) -> Any:
@@ -81,10 +158,22 @@ def write_json(
     durable: bool = False,
     unique_temporary: bool = False,
     temporary_prefix: str | None = None,
+    check: Callable[[], None] | None = None,
+    max_bytes: int | None = None,
 ) -> None:
-    """Atomically write UTF-8 JSON, optionally flushing it before publication."""
+    """Atomically write UTF-8 JSON, optionally flushing it before publication.
+
+    Supplying ``check`` or ``max_bytes`` streams into a unique temporary file,
+    checks each output chunk, and enforces the encoded size before overflow.
+    Unspecified options retain the existing writer and its byte format.
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    if check is not None or max_bytes is not None:
+        _write_json_checked(target, value, indent=indent, allow_nan=allow_nan,
+            ensure_ascii=ensure_ascii, durable=durable, temporary_prefix=temporary_prefix,
+            check=check, max_bytes=max_bytes)
+        return
     if durable or unique_temporary:
         temporary: Path | None = None
         try:

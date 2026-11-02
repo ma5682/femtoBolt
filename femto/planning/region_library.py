@@ -4,20 +4,16 @@ from typing import Any, Callable
 
 import hashlib
 import json
-import os
 from pathlib import Path
-import tempfile
 import zipfile
+from femto.asset_storage import publish_json
+from femto.io_utils import sha256_file
 
 SCHEMA = 'femto-region-library-v1'
 
 
 def digest(path: str | Path, check: Callable[..., Any]=lambda: None) -> str:
-    h = hashlib.sha256()
-    with Path(path).open('rb') as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b''):
-            check(); h.update(block)
-    return h.hexdigest()
+    return sha256_file(path, check)
 
 
 def identity(value: Any) -> str:
@@ -34,18 +30,9 @@ def read_index(root: str | Path) -> Any:
     return data
 
 
-def write_index(root: str | Path, data: Any, commit: Any=None) -> None:
-    root = Path(root); root.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix='.library_', dir=root)
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-            json.dump(data, stream, ensure_ascii=False, indent=2)
-            stream.flush(); os.fsync(stream.fileno())
-        action=lambda:os.replace(temporary, root / 'region_library.json')
-        if commit:commit(action)
-        else:action()
-    finally:
-        if Path(temporary).exists(): Path(temporary).unlink()
+def write_index(root: str | Path, data: Any, commit: Any=None, *,
+                check: Callable[..., Any]=lambda:None) -> None:
+    publish_json(Path(root)/'region_library.json', data, check, commit=commit)
 
 
 def project_metadata(path: Any, check: Callable[..., Any]=lambda:None, verify: bool=False) -> Any:
@@ -118,7 +105,7 @@ def enrich(rows: Any, root: Any, check: Callable[..., Any]=lambda: None) -> Any:
                 if saved.get('sha256') and digest(target, check) != saved['sha256']:
                     raise ValueError('清单内容与登记指纹不一致')
                 data = json.loads(target.read_text(encoding='utf-8-sig'))
-                from femto.planning.export_history import local_asset
+                from femto.planning.catalog import local_asset
                 is_trajectory = data.get('schema') == 'femto-surface-trajectory-v1'
                 if is_trajectory:
                     from femto.planning.surface_trajectory import SurfaceTrajectory
@@ -187,8 +174,16 @@ def enrich(rows: Any, root: Any, check: Callable[..., Any]=lambda: None) -> Any:
                 source_mesh=data.get('source_mesh'), project_id=data.get('project_id'),
                 revision_id=data.get('revision_id'), plan_binding=binding,
                 files=details_files if details_files is not None else data.get('files', {}), location=str(row['target']))
-            row['status'] = row['file_status'] + ('；轨迹只读、不可直接执行' if history_binding else
-                '；路径关联待工作台重算' if binding else '；旧版本/无路径关联待验证')
+            if history_binding:
+                row['status'] = row['file_status'] + '；轨迹只读、不可直接执行'
+            elif binding:
+                row['status'] = row['file_status'] + '；路径关联待工作台重算'
+            elif row['kind'] == '区域' and row['file_status'] == '导出资产指纹一致':
+                # A region-only export has no plan binding by design. Absence of a
+                # binding does not turn its successfully verified assets into a legacy file.
+                row['status'] = '区域已保存 · 区域资产核验通过'
+            else:
+                row['status'] = row['file_status'] + '；旧版本/无路径关联待验证'
         except TimeoutError:raise
         except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, zipfile.BadZipFile) as error:
             row['file_status'] = '损坏'; row['status'] = '损坏：' + str(error)
@@ -198,7 +193,7 @@ def enrich(rows: Any, root: Any, check: Callable[..., Any]=lambda: None) -> Any:
 
 def edit_records(root: Any, rows: Any, *, hidden: Any=None, note: str | None=None, check: Callable[..., Any]=lambda:None,commit: Any=None) -> None:
     """Validate whole selection first; one atomic index change, no file deletion."""
-    from femto.planning.export_history import scan_exports
+    from femto.planning.catalog import scan_exports
     current = {r['key']: r for r in scan_exports(root, include_hidden=True,check=check)}
     keys = [r['key'] for r in rows]
     if not keys or any(key not in current for key in keys): raise ValueError('选择不属于当前方案库')
@@ -207,12 +202,12 @@ def edit_records(root: Any, rows: Any, *, hidden: Any=None, note: str | None=Non
         entry = data['records'].setdefault(key, {})
         if hidden is not None: entry['hidden'] = bool(hidden)
         if note is not None: entry['note'] = str(note)
-    check(); write_index(root, data,commit)
+    check(); write_index(root, data,commit,check=check)
 
 
 def relocate(root: Any, row: Any, candidate: str | Path, check: Callable[..., Any]=lambda:None,commit: Any=None) -> None:
     """A lost old file without a prior digest cannot be identified by its name."""
-    from femto.planning.export_history import scan_exports
+    from femto.planning.catalog import scan_exports
     current = next((r for r in scan_exports(root, include_hidden=True,check=check) if r['key'] == row['key']), None)
     if current is None: raise ValueError('记录不属于当前方案库')
     expected = current.get('expected_sha256')
@@ -235,12 +230,12 @@ def relocate(root: Any, row: Any, candidate: str | Path, check: Callable[..., An
                 if digest(asset,check)!=expected_asset:raise ValueError('重定位资产指纹不一致：'+name)
     data = read_index(root)
     data['records'].setdefault(row['key'], {}).update(location=str(candidate), sha256=expected)
-    check();write_index(root, data,commit)
+    check();write_index(root, data,commit,check=check)
 
 
 def rebuild(root: Any, check: Callable[..., Any]=lambda:None,commit: Any=None) -> Any:
     """Discovery cache is optional; preserve user notes/hides and relocation."""
-    from femto.planning.export_history import scan_exports
+    from femto.planning.catalog import scan_exports
     data = read_index(root)
     rows = scan_exports(root, include_hidden=True,check=check)
     for row in rows:
@@ -250,13 +245,13 @@ def rebuild(root: Any, check: Callable[..., Any]=lambda:None,commit: Any=None) -
             entry.setdefault('sha256', digest(target,check))
         entry.update(region_key=row['region_key'],version_key=row['version_key'],details=row['details'],
             snapshot={k:str(v) if isinstance(v,Path) else v for k,v in row.items() if k in {'time','stamp','kind','name','folder','source','asset','diagram','archive','region_index'}})
-    check(); write_index(root, data,commit)
+    check(); write_index(root, data,commit,check=check)
     return rows
 
 
 def discover_projects(root: Any, directory: str | Path, check: Callable[..., Any]=lambda:None) -> dict[str, Any]:
     """Explicit, bounded directory discovery rebuilds external project references."""
-    from femto.planning.export_history import register_project
+    from femto.planning.catalog import register_project
     found=[]; skipped=[]; count=0
     for path in Path(directory).rglob('*'):
         check();count+=1

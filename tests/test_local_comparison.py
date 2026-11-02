@@ -248,7 +248,12 @@ class ComparisonRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             script = root/'allocate.py'
-            script.write_text('import time\ndata=bytearray(64*1024*1024)\ntime.sleep(5)\n')
+            # A traceback can itself exhaust the job's remaining memory and
+            # stop after its heading. Report the caught allocation failure
+            # directly, before importing traceback/linecache machinery.
+            script.write_text('import os,time\ntry:\n data=bytearray(64*1024*1024)\n'
+                              'except MemoryError:\n os.write(2,b"MemoryError: allocation rejected\\n")\n'
+                              ' os._exit(74)\ntime.sleep(5)\n')
             with self.assertRaises(StageStopped) as stopped:
                 supervise([sys.executable, str(script)], root/'memory.log', timeout_s=5, memory_mb=16)
             self.assertEqual(stopped.exception.status, 'failed')
@@ -257,6 +262,7 @@ class ComparisonRuntimeTests(unittest.TestCase):
                 # The kernel rejects the allocation before it crosses the hard
                 # limit; the child then exits with a real MemoryError.
                 self.assertIn('MemoryError', (root/'memory.log').read_text(errors='replace'))
+                self.assertEqual(stopped.exception.stats['returncode'], 74)
                 self.assertGreater(stopped.exception.stats['peak_job_committed_mb'], 0)
             else:
                 self.assertIn('memory', str(stopped.exception))

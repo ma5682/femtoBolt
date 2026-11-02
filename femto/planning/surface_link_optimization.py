@@ -48,14 +48,17 @@ def optimize_surface_path(vertices: np.ndarray, faces: np.ndarray, points: np.nd
                           edge_faces: list[int],
                           edge_allowed: Callable[[np.ndarray, np.ndarray], bool],
                           check: Callable[[], None] = lambda: None,
-                          *, edge_counts: Counter | None = None) -> tuple[np.ndarray, list[int]]:
+                          *, edge_counts: Counter | None = None, sweeps: int = 4) -> tuple[np.ndarray, list[int]]:
     """Return an independent, no-longer path with the same endpoints and supported corridor.
 
-    Four forward/backward sweeps are a deterministic computation limit, not a quality gate.
+    The retained default is four forward/backward sweeps. A versioned caller
+    can request fewer sweeps; this is a computation limit, not a quality gate.
     At each manifold portal the exact unconstrained local length minimum is tested; if a
     selection/exclusion constraint rejects it, the existing feasible vertex is retained.
     Vertex-only adjacency and non-manifold edges are never used as movable portals.
     """
+    if type(sweeps) is not int or not 1<=sweeps<=4:
+        raise ValueError('Surface path sweeps must be an integer from 1 to 4')
     check()
     original = np.asarray(points, dtype=float).copy()
     original_faces = [int(face) for face in edge_faces]
@@ -87,7 +90,7 @@ def optimize_surface_path(vertices: np.ndarray, faces: np.ndarray, points: np.nd
             squared = float(vector @ vector)
             if squared > 0:
                 portals[index] = (a, vector, squared)
-    for _ in range(4):
+    for _ in range(sweeps):
         for indices in (range(1, len(result) - 1), range(len(result) - 2, 0, -1)):
             for index in indices:
                 check()

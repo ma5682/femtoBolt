@@ -75,8 +75,10 @@ if __name__=='__main__':
     except Exception as error:
         import traceback
         traceback.print_exc()
-        import tkinter as tk
-        from tkinter import messagebox
-        root=tk.Tk();root.withdraw();messagebox.showerror('导出预览失败',str(error));root.destroy()
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        app = QApplication.instance() or QApplication([])
+        QMessageBox.critical(None, '导出预览失败', str(error))
+        if QApplication.instance() is app and app is not None:
+            app.processEvents()
     finally:
         if viewer is not None:viewer.destroy_window()

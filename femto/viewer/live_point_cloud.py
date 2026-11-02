@@ -137,7 +137,7 @@ class LivePointCloudPreview:
             return
         self.closed = True
         self.stopped.set()
-        # Never wait for the renderer on Tk's UI thread. Termination is bounded
+        # Never wait for the renderer on the UI thread. Termination is bounded
         # and targets only this instance's child if graceful shutdown fails.
         def reap() -> None:
             self.process.join(timeout=5)

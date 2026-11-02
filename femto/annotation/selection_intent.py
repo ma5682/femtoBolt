@@ -269,12 +269,8 @@ def components_of_pixels(labels: np.ndarray, uv: Any) -> np.ndarray:
     return result
 
 
-def build_selection_support(mask: Any, projection: Any) -> dict[str, Any]:
-    """Classify every selected pixel from the bound mesh first hit and the reference raw depth.
-
-    Evidence is the single reference frame only; the fused multi-view cloud is not bound
-    here. Classes describe why XYZ is or is not available; they never invent XYZ.
-    """
+def classify_selection_support(mask: Any, projection: Any) -> np.ndarray:
+    """Same pixel classes as the persisted record, without its serialization round trip."""
     mask = _as_mask(mask)
     reasons = np.asarray(projection.reasons)
     depth = np.asarray(projection.depth)
@@ -289,6 +285,18 @@ def build_selection_support(mask: Any, projection: Any) -> dict[str, Any]:
     if image_valid is not None:
         classes[~np.asarray(image_valid, bool)] = 6
     classes[~mask] = 0
+    _depth_range(minimum, maximum)
+    flat = classes.reshape(-1)
+    if 1 + np.count_nonzero(flat[1:] != flat[:-1]) > MAX_RUNS:
+        raise ValueError('Selection mask is too fragmented to record')
+    return classes
+
+
+def build_selection_support(mask: Any, projection: Any) -> dict[str, Any]:
+    """Classify bound first-hit/raw-depth evidence; never invent XYZ."""
+    mask = _as_mask(mask)
+    classes = classify_selection_support(mask, projection)
+    minimum, maximum = float(projection.minimum), float(projection.maximum)
     counts = {name: int((classes == code).sum()) for code, name in SUPPORT_CLASSES.items() if code}
     unconfirmed = int(sum(counts[SUPPORT_CLASSES[code]] for code in UNCONFIRMED_CLASSES))
     height, width = mask.shape

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
 import hashlib
@@ -10,6 +10,7 @@ import json
 import math
 
 import numpy as np
+from femto.planning.fixed_width_layout import ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION
 
 
 SCHEMA = "femto-surface-trajectory-v1"
@@ -33,10 +34,12 @@ SELECTION_ALGORITHMS = (SELECTION_ALGORITHM, OPTIMIZED_SELECTION_ALGORITHM,
 ROW_TURN_FAILURE_REASONS = {
     "non_adjacent_slice", "endpoint_not_on_boundary", "forbidden_blocked",
     "ambiguous_boundary", "no_boundary_path_in_band",
+    "connection_deferred",
 }
 LINK_FAILURE_REASONS = {
     "disconnected_measured_surface", "forbidden_blocked", "outside_reference_image",
     "explicit_unselected_blocked", "no_surface_path", "budget_exceeded",
+    "connection_deferred",
 }
 BLOCKS_SCHEMA = "femto-surface-trajectory-blocks-v1"
 SELECTION_BLOCKS_SCHEMA = "femto-surface-trajectory-blocks-v2"
@@ -133,6 +136,7 @@ class SurfaceTrajectory:
     data_layers: Any = None
     route_diagram_status: Any = None
     blocks: Any = None
+    planning_context: Any = None
 
     def to_dict(self) -> dict[str, Any]:
         items = [item.to_dict() for item in self.ordered_items]
@@ -153,10 +157,15 @@ class SurfaceTrajectory:
             result["route_diagram_status"] = self.route_diagram_status
         if self.blocks is not None:
             result["blocks"] = self.blocks
+        if self.planning_context is not None:
+            result['planning_context'] = self.planning_context
         return result
 
     @classmethod
-    def from_dict(cls, value: Any) -> "SurfaceTrajectory":
+    def from_dict(cls, value: Any, *, mesh: Any = None, region: Any = None,
+                  check=lambda: None) -> "SurfaceTrajectory":
+        """Parse and validate once, including caller-supplied geometric support."""
+        check()
         if not isinstance(value, dict):
             raise ValueError("Invalid surface trajectory document")
         if (value.get("schema") != SCHEMA or value.get("coordinate_frame") != "world_rdf" or
@@ -169,43 +178,62 @@ class SurfaceTrajectory:
             raise ValueError("Invalid surface trajectory coordinate/safety contract")
         items: list[ScanSegment | Gap] = []
         for item in value.get("ordered_items", []):
+            check()
             items.append(ScanSegment.from_dict(item) if item.get("kind") == "scan_segment"
                          else Gap.from_dict(item))
         result = cls(value.get("origin_reference"), value.get("planner"), value.get("source"),
                      items, value.get("statistics"), value.get("gap_report"),
                      value.get("spacing_report"), value.get("row_report"),
                      value.get("data_layers"), value.get("route_diagram_status"),
-                     value.get("blocks"))
-        validate_trajectory(result, expected_result_sha256=value.get("result_sha256"))
+                     value.get("blocks"), value.get('planning_context'))
+        validate_trajectory(result, mesh=mesh, region=region, check=check,
+                            expected_result_sha256=value.get("result_sha256"))
+        check()
         return result
 
 
+_FORBIDDEN_ORIENTATION_KEYS = frozenset({"pitch", "yaw", "roll", "rx", "ry", "rz", "quaternion", "normal"})
+_JSON_CONTAINERS = (dict, list, tuple)
+
+
 def _forbidden_orientation_keys(value: Any) -> None:
-    forbidden = {"pitch", "yaw", "roll", "rx", "ry", "rz", "quaternion", "normal"}
     if isinstance(value, dict):
-        if forbidden.intersection(k.casefold() for k in value):
+        if _FORBIDDEN_ORIENTATION_KEYS.intersection(k.casefold() for k in value):
             raise ValueError("Surface trajectory contains forbidden orientation fields")
         for child in value.values():
-            _forbidden_orientation_keys(child)
-    elif isinstance(value, list):
+            if isinstance(child, _JSON_CONTAINERS):
+                _forbidden_orientation_keys(child)
+    elif isinstance(value, (list, tuple)):
+        # JSON serializes tuples as lists; reject the same nested keys before
+        # publication as on independent readback. Scalars have no field keys.
         for child in value:
-            _forbidden_orientation_keys(child)
+            if isinstance(child, _JSON_CONTAINERS):
+                _forbidden_orientation_keys(child)
 
 
 def _point_on_triangle(point: Any, vertices: np.ndarray, triangle: np.ndarray,
-                       tolerance_m: float = 1e-6) -> bool:
+                       tolerance_m: float = 1e-6, *, _prepared=None) -> bool:
     xyz = np.asarray(point, dtype=np.float64)
-    a, b, c = vertices[triangle]
-    ab, ac, ap = b - a, c - a, xyz - a
-    normal = np.cross(ab, ac)
-    length = float(np.linalg.norm(normal))
+    if _prepared is None:
+        a, b, c = vertices[triangle]
+        ab, ac, ap = b - a, c - a, xyz - a
+        normal = np.cross(ab, ac)
+        length = float(np.linalg.norm(normal))
+    else:
+        a, ab, ac = _prepared.origin, _prepared.ab, _prepared.ac
+        ap, normal = xyz - a, _prepared.normal
+        length = float(_prepared.normal_length)
     if not math.isfinite(length) or length <= 0:
         return False
     if abs(float(np.dot(ap, normal))) / length > tolerance_m:
         return False
-    matrix = np.column_stack((ab, ac))
+    if _prepared is not None and _prepared.solver.point_inside_one(xyz, ap, _prepared, tolerance_m):
+        return True
+    matrix = np.column_stack((ab, ac)) if _prepared is None else _prepared.matrix
     uv, *_ = np.linalg.lstsq(matrix, ap, rcond=None)
-    scale = max(min(float(np.linalg.norm(ab)), float(np.linalg.norm(ac))), tolerance_m)
+    edge_length = (min(float(np.linalg.norm(ab)), float(np.linalg.norm(ac)))
+                   if _prepared is None else _prepared.minimum_edge_length)
+    scale = max(edge_length, tolerance_m)
     barycentric_tolerance = tolerance_m / scale
     closest = a + ab * uv[0] + ac * uv[1]
     return (float(np.linalg.norm(closest - xyz)) <= tolerance_m
@@ -426,18 +454,213 @@ def _check_block_consistency(trajectory: SurfaceTrajectory, blocks: list[dict[st
             raise ValueError("Scan point lies on a face outside its block")
 
 
+def _validate_scan_points(
+    item: ScanSegment, version: str, connected_rows: bool, selection_mode: bool,
+    expected_route: int, sample_step_m: float, vertices: np.ndarray | None,
+    faces: np.ndarray | None, *, _prepared_faces=None,
+) -> int:
+    # Group only syntactically ordinary candidates. All original structural
+    # checks below still run in order, and uncertain geometry follows the old
+    # scalar predicate. These local flags never cross validation requests.
+    interior = np.zeros(len(item.points), dtype=bool)
+    if faces is not None and _prepared_faces is not None:
+        groups = {}
+        for i, point in enumerate(item.points):
+            if type(point) is not dict:
+                continue
+            index = point.get('triangle_index')
+            xyz = point.get('xyz_m')
+            try:
+                if (type(index) is int and 0 <= index < len(faces)
+                        and type(xyz) in (list, tuple) and len(xyz) == 3
+                        and all(type(v) in (float, int) and math.isfinite(v) for v in xyz)):
+                    groups.setdefault(index, []).append(i)
+            except (TypeError, ValueError, OverflowError):
+                # Malformed inputs are rejected below in the original order.
+                pass
+        for index, ids in groups.items():
+            if len(ids) >= 8:
+                try:
+                    prepared = _prepared_faces(index)
+                    xyz = np.asarray([item.points[i]['xyz_m'] for i in ids], dtype=np.float64)
+                    interior[ids] = prepared.solver.point_inside(xyz, prepared, 1e-6)
+                except (TypeError, ValueError, IndexError, OverflowError):
+                    pass
+    previous = None
+    for point_index, point in enumerate(item.points):
+        if not isinstance(point, dict) or point.get("geometry_support") != "measured_mesh":
+            raise ValueError("Every trajectory point needs measured_mesh support")
+        xyz = _finite_xyz(point.get("xyz_m"))
+        point_row = point.get('row_index')
+        row_valid = ((type(point_row) is int and point_row >= 0) if version == ORDERED_SELECTION_ALGORITHM
+                     else (type(point_row) is int and point_row >= item.row_index) if connected_rows
+                     else point_row == item.row_index)
+        if point.get("route_index") != expected_route or not row_valid:
+            raise ValueError("Invalid global route index or row binding")
+        triangle_index = point.get("triangle_index")
+        if type(triangle_index) is not int or triangle_index < 0:
+            raise ValueError("Invalid local triangle index")
+        pixel = point.get("pixel")
+        if pixel is not None:
+            uv = np.asarray(pixel, dtype=np.float64)
+            if uv.shape != (2,) or not np.isfinite(uv).all():
+                raise ValueError("Invalid display pixel")
+        role = point.get("role")
+        if role is not None and role not in ("scan", "connector"):
+            raise ValueError("Invalid trajectory point role")
+        if "revisit" in point and (not selection_mode or role != "connector" or point["revisit"] is not True):
+            raise ValueError("revisit is only a v4 flag on connector samples")
+        if previous is not None and np.linalg.norm(np.asarray(xyz) - previous) > sample_step_m + 1e-9:
+            raise ValueError("Adjacent scan samples exceed sample_step_mm")
+        if faces is not None:
+            if triangle_index >= len(faces):
+                raise ValueError("Trajectory point is not supported by its local triangle")
+            prepared = None if _prepared_faces is None else _prepared_faces(triangle_index)
+            if not interior[point_index] and not _point_on_triangle(xyz, vertices, faces[triangle_index], _prepared=prepared):
+                raise ValueError("Trajectory point is not supported by its local triangle")
+            if connected_rows and point.get('role') == 'connector' and previous is not None:
+                if not _point_on_triangle(previous, vertices, faces[triangle_index], _prepared=prepared):
+                    raise ValueError('Connector edge is not supported by a single triangle')
+        previous = np.asarray(xyz)
+        expected_route += 1
+    return expected_route
+
+
+def _validate_gap_record(item: Gap, gaps: list[Gap], selection_mode: bool, block_mode: bool) -> None:
+    if type(item.gap_index) is not int or item.gap_index != len(gaps) or item.reason not in GAP_REASONS:
+        raise ValueError("Invalid gap index/reason")
+    if item.reason == "selection_break" and not selection_mode:
+        raise ValueError("selection_break gaps only exist in selection-block trajectories")
+    expected_detail = {"inferred_cause": item.detail.get("inferred_cause"),
+                       "method": "sweep_plane_outer_loop_containment",
+                       "confidence": "heuristic", "decision_use": "none"}
+    failure = item.detail.get("row_turn_failure_reason") if isinstance(item.detail, dict) else None
+    if failure is not None:
+        if not block_mode or item.reason != "row_turn" or failure not in ROW_TURN_FAILURE_REASONS:
+            raise ValueError("row_turn_failure_reason is only a diagnostic on block-mode row_turn gaps")
+        expected_detail["row_turn_failure_reason"] = failure
+    link_failure = item.detail.get("link_failure_reason") if isinstance(item.detail, dict) else None
+    if link_failure is not None:
+        if not selection_mode or item.reason == "selection_break" or link_failure not in LINK_FAILURE_REASONS:
+            raise ValueError("link_failure_reason is only a diagnostic on v4 intra-block gaps")
+        expected_detail["link_failure_reason"] = link_failure
+    if item.detail != expected_detail:
+        raise ValueError("Invalid informational gap detail")
+    _finite_xyz(item.previous_point.get("xyz_m"), "gap previous xyz_m")
+    _finite_xyz(item.next_point.get("xyz_m"), "gap next xyz_m")
+    _finite_xyz(item.scan_direction_w0, "scan_direction_w0")
+    if not math.isfinite(item.chord_length_m) or item.chord_length_m < 0:
+        raise ValueError("Invalid gap chord length")
+
+
 def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
-                        expected_result_sha256: Any = None, region: Any = None) -> None:
+                        expected_result_sha256: Any = None, region: Any = None, check=lambda: None) -> None:
+    if trajectory.planning_context is not None:
+        from femto.planning.planning_revision import validate_context
+        from femto.planning.target_surface import validate_metadata
+        context = trajectory.planning_context
+        revision = validate_context(context, region=region, algorithm=trajectory.planner.get('algorithm_version'))
+        validate_metadata(context['target'], revision)
+        params = trajectory.planner['parameters']
+        from femto.planning.fixed_width_layout import SHIFT_PATCH_VERSION,FLOOR_PATCH_VERSION
+        from femto.planning.planning_revision import digest
+        layout_record=params.get('fixed_width_layout') or {}
+        layout_version=(layout_record.get('request') or {}).get('version')
+        algorithms=revision['inputs']['algorithms']
+        if layout_version==FLOOR_PATCH_VERSION or algorithms.get('layout')==FLOOR_PATCH_VERSION or 'minimum_metric_fraction' in algorithms:
+            from femto.planning.planning_revision import supported_target_algorithms
+            if (layout_version!=FLOOR_PATCH_VERSION or algorithms.get('layout')!=FLOOR_PATCH_VERSION
+                    or layout_record['request'].get('minimum_metric_fraction')!=algorithms.get('minimum_metric_fraction')
+                    or params.get('continuous_routing')!=algorithms.get('routing')
+                    or not supported_target_algorithms(algorithms)):
+                raise ValueError('尺度行距下限与计算修订不一致')
+        if layout_version in (ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION) or algorithms.get('layout') in (ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION):
+            from femto.planning.planning_revision import supported_target_algorithms
+            if (layout_version not in (ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION) or algorithms.get('layout')!=layout_version
+                    or 'minimum_metric_fraction' in layout_record['request']
+                    or params.get('continuous_routing')!=algorithms.get('routing') or not supported_target_algorithms(algorithms)):
+                raise ValueError('自适应尺度行距与计算修订不一致')
+        if layout_version==SHIFT_PATCH_VERSION or algorithms.get('layout')==SHIFT_PATCH_VERSION:
+            shifts=layout_record.get('row_shifts')
+            if (layout_version!=SHIFT_PATCH_VERSION or algorithms.get('layout')!=SHIFT_PATCH_VERSION
+                    or not isinstance(shifts,list) or not 1<=len(shifts)<=4
+                    or algorithms.get('row_shifts_sha256')!=digest(shifts)):
+                raise ValueError('研究行偏移与计算修订不一致')
+        if (trajectory.planner.get('algorithm_version')=='quality-constrained-surface-v3'
+                and (params.get('fixed_width_layout') or {}).get('request',{}).get('version') in
+                    ('fixed-width-local-direction-repair-v3','fixed-width-local-direction-budgeted-v4','fixed-width-local-direction-foldback-v5','research-fixed-width-local-direction-adaptive-half-v6','research-fixed-width-local-direction-minimal-v7','fixed-width-local-direction-spacing-floor-v9',ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION)):
+            from femto.planning.repair_workflow import validate as validate_repair
+            validate_repair(trajectory,mesh,region,check)
+        reference = revision['inputs']['calibration']['view_reference']
+        if (reference.get('derivation') or {}).get('schema') == 'reduced-planning-reference-v1':
+            from femto.planning.planning_resolution import route_sample_step_mm
+            if params.get('sample_step_mm') != route_sample_step_mm(
+                    reference, decision=params.get('sampling_decision'), mesh=mesh):
+                raise ValueError('路线采样间隔与简化规划参考的计算修订不一致')
+        if (revision['inputs']['geometry']['source_sha256'] != trajectory.source.get('geometry_sha256')
+                or revision['inputs']['reference']['origin'] != trajectory.origin_reference
+                or context['target']['quality_evidence_sha256'] != params.get('quality_evidence', {}).get('sha256')
+                or context['target']['effective_domain_sha256'] != params.get('effective_domain', {}).get('sha256')):
+            raise ValueError('路线与原目标来源、质量证据或计算修订不一致')
+        # Keep all retained v1/v2/v3 validators unchanged. Their internal
+        # candidate projections do not become new calculation results.
+        if trajectory.planner.get('algorithm_version') not in ('source-anchored-surface-v1', 'constructed-surface-route-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
+            validate_trajectory(replace(trajectory, planning_context=None), mesh=mesh,
+                                expected_result_sha256=expected_result_sha256, region=region, check=check)
+            return
     if not isinstance(trajectory.origin_reference, dict) or trajectory.origin_reference.get("kind") != "initial_color_camera":
         raise ValueError("Surface trajectory requires an initial_color_camera origin")
     if not isinstance(trajectory.planner, dict) or not isinstance(trajectory.source, dict):
         raise ValueError("Invalid trajectory planner/source binding")
+    if trajectory.planner.get('algorithm_version') == 'source-anchored-surface-v1':
+        from femto.planning.source_anchored_adjustment import validate as validate_anchored
+        validate_anchored(trajectory,mesh=mesh,region=region,check=check)
+        if expected_result_sha256 is not None and trajectory.to_dict()['result_sha256'] != expected_result_sha256:
+            raise ValueError('Surface trajectory result hash mismatch')
+        return
+    if trajectory.planner.get('algorithm_version') == 'nominal-variable-width-refined-surface-v1':
+        from femto.planning.variable_width_refinement import validate as validate_variable_refinement
+        validate_variable_refinement(trajectory,mesh=mesh,region=region,check=check)
+        if expected_result_sha256 is not None and trajectory.to_dict()['result_sha256'] != expected_result_sha256:
+            raise ValueError('Surface trajectory result hash mismatch')
+        return
+    if trajectory.planner.get('algorithm_version') == 'nominal-variable-width-surface-v1':
+        from femto.planning.variable_width_route import validate as validate_variable
+        validate_variable(trajectory, mesh=mesh, region=region, check=check)
+        if expected_result_sha256 is not None and trajectory.to_dict()['result_sha256'] != expected_result_sha256:
+            raise ValueError('Surface trajectory result hash mismatch')
+        return
+    if trajectory.planner.get('algorithm_version') == 'constructed-surface-route-v1':
+        from femto.planning.strict_validation import validate as validate_strict
+        validate_strict(trajectory, mesh=mesh, region=region, check=check)
+        if expected_result_sha256 is not None and trajectory.to_dict()['result_sha256'] != expected_result_sha256:
+            raise ValueError('Surface trajectory result hash mismatch')
+        return
+    if trajectory.planner.get('algorithm_version') in ('coverage-refined-surface-v1', 'constructed-coverage-refined-surface-v1'):
+        from femto.planning.refinement_validation import validate as validate_refinement
+        validate_refinement(trajectory, mesh=mesh, region=region, check=check)
+        if expected_result_sha256 is not None and trajectory.to_dict()['result_sha256'] != expected_result_sha256:
+            raise ValueError('Surface trajectory result hash mismatch')
+        return
+    if trajectory.planner.get('algorithm_version') == 'quality-constrained-surface-v3':
+        from femto.planning.continuous_quality import validate as validate_continuous
+        validate_continuous(trajectory,mesh=mesh,region=region,check=check)
+        if expected_result_sha256 is not None and trajectory.to_dict()['result_sha256'] != expected_result_sha256:
+            raise ValueError('Surface trajectory result hash mismatch')
+        return
+    if trajectory.planner.get('algorithm_version') in ('quality-constrained-surface-v1', 'quality-constrained-surface-v2'):
+        from femto.planning.quality_constrained import validate as validate_quality
+        validate_quality(trajectory, mesh=mesh, region=region, check=check)
+        if expected_result_sha256 is not None and trajectory.to_dict()['result_sha256'] != expected_result_sha256:
+            raise ValueError('Surface trajectory result hash mismatch')
+        return
     if not trajectory.ordered_items or not isinstance(trajectory.ordered_items[0], ScanSegment) or not isinstance(trajectory.ordered_items[-1], ScanSegment):
         raise ValueError("Trajectory must start and end with a scan segment")
-    vertices = faces = None
+    vertices = faces = prepared_faces = None
     if mesh is not None:
-        vertices = np.asarray(mesh.vertices, dtype=np.float64)
-        faces = np.asarray(mesh.faces, dtype=np.int64)
+        from femto.geometry.triangle_support import prepare_triangle_faces
+        vertices, faces, prepared_faces = prepare_triangle_faces(
+            np.asarray(mesh.vertices, dtype=np.float64), np.asarray(mesh.faces, dtype=np.int64))
     expected_route = 0
     segments: list[ScanSegment] = []
     gaps: list[Gap] = []
@@ -471,66 +694,15 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
                     raise ValueError("Blocks must be scanned one after another in visit order")
             elif item.block_index is not None:
                 raise ValueError("block_index is only valid for block trajectories")
-            previous = None
-            for point in item.points:
-                if not isinstance(point, dict) or point.get("geometry_support") != "measured_mesh":
-                    raise ValueError("Every trajectory point needs measured_mesh support")
-                xyz = _finite_xyz(point.get("xyz_m"))
-                point_row = point.get('row_index')
-                row_valid = ((type(point_row) is int and point_row >= 0) if version == ORDERED_SELECTION_ALGORITHM
-                             else (type(point_row) is int and point_row >= item.row_index) if connected_rows
-                             else point_row == item.row_index)
-                if point.get("route_index") != expected_route or not row_valid:
-                    raise ValueError("Invalid global route index or row binding")
-                triangle_index = point.get("triangle_index")
-                if type(triangle_index) is not int or triangle_index < 0:
-                    raise ValueError("Invalid local triangle index")
-                pixel = point.get("pixel")
-                if pixel is not None:
-                    uv = np.asarray(pixel, dtype=np.float64)
-                    if uv.shape != (2,) or not np.isfinite(uv).all():
-                        raise ValueError("Invalid display pixel")
-                role = point.get("role")
-                if role is not None and role not in ("scan", "connector"):
-                    raise ValueError("Invalid trajectory point role")
-                if "revisit" in point and (not selection_mode or role != "connector" or point["revisit"] is not True):
-                    raise ValueError("revisit is only a v4 flag on connector samples")
-                if previous is not None and np.linalg.norm(np.asarray(xyz) - previous) > sample_step_m + 1e-9:
-                    raise ValueError("Adjacent scan samples exceed sample_step_mm")
-                if faces is not None:
-                    if triangle_index >= len(faces) or not _point_on_triangle(xyz, vertices, faces[triangle_index]):
-                        raise ValueError("Trajectory point is not supported by its local triangle")
-                    if connected_rows and point.get('role') == 'connector' and previous is not None:
-                        if not _point_on_triangle(previous, vertices, faces[triangle_index]):
-                            raise ValueError('Connector edge is not supported by a single triangle')
-                previous = np.asarray(xyz)
-                expected_route += 1
+            expected_route = _validate_scan_points(item, version, connected_rows, selection_mode,
+                expected_route, sample_step_m, vertices, faces, _prepared_faces=prepared_faces)
             segments.append(item)
         else:
-            if type(item.gap_index) is not int or item.gap_index != len(gaps) or item.reason not in GAP_REASONS:
-                raise ValueError("Invalid gap index/reason")
-            if item.reason == "selection_break" and not selection_mode:
-                raise ValueError("selection_break gaps only exist in selection-block trajectories")
-            expected_detail = {"inferred_cause": item.detail.get("inferred_cause"),
-                               "method": "sweep_plane_outer_loop_containment",
-                               "confidence": "heuristic", "decision_use": "none"}
-            failure = item.detail.get("row_turn_failure_reason") if isinstance(item.detail, dict) else None
-            if failure is not None:
-                if not block_mode or item.reason != "row_turn" or failure not in ROW_TURN_FAILURE_REASONS:
-                    raise ValueError("row_turn_failure_reason is only a diagnostic on block-mode row_turn gaps")
-                expected_detail["row_turn_failure_reason"] = failure
-            link_failure = item.detail.get("link_failure_reason") if isinstance(item.detail, dict) else None
-            if link_failure is not None:
-                if not selection_mode or item.reason == "selection_break" or link_failure not in LINK_FAILURE_REASONS:
-                    raise ValueError("link_failure_reason is only a diagnostic on v4 intra-block gaps")
-                expected_detail["link_failure_reason"] = link_failure
-            if item.detail != expected_detail:
-                raise ValueError("Invalid informational gap detail")
-            _finite_xyz(item.previous_point.get("xyz_m"), "gap previous xyz_m")
-            _finite_xyz(item.next_point.get("xyz_m"), "gap next xyz_m")
-            _finite_xyz(item.scan_direction_w0, "scan_direction_w0")
-            if not math.isfinite(item.chord_length_m) or item.chord_length_m < 0:
-                raise ValueError("Invalid gap chord length")
+            if ('connection_deferred' in (item.detail.get('link_failure_reason'),item.detail.get('row_turn_failure_reason'))
+                    and parameters.get('fixed_width_layout',{}).get('request',{}).get('version') not in
+                    ('fixed-width-local-direction-patches-v1','fixed-width-local-direction-stable-v2','fixed-width-local-direction-repair-v3','fixed-width-local-direction-budgeted-v4','fixed-width-local-direction-foldback-v5','research-fixed-width-local-direction-adaptive-half-v6','research-fixed-width-local-direction-minimal-v7','research-fixed-width-local-direction-bounded-shift-v8','fixed-width-local-direction-spacing-floor-v9',ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION)):
+                raise ValueError('Deferred connections require the local-patch candidate version')
+            _validate_gap_record(item, gaps, selection_mode, block_mode)
             gaps.append(item)
     if len(gaps) != len(segments) - 1:
         raise ValueError("Every adjacent scan segment needs exactly one gap")
@@ -603,8 +775,20 @@ def block_view(trajectory: SurfaceTrajectory) -> dict[str, Any] | None:
 
 
 def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, Any]:
-    model = SurfaceTrajectory.from_dict(trajectory) if isinstance(trajectory, dict) else trajectory
-    validate_trajectory(model)
+    if isinstance(trajectory, dict):
+        model = SurfaceTrajectory.from_dict(trajectory)
+    else:
+        model = trajectory
+        validate_trajectory(model)
+    return _player_plan_view(model)
+
+
+def _player_plan_view(model: SurfaceTrajectory) -> dict[str, Any]:
+    """Pure projection, used only immediately after validating this object.
+
+    Public conversion still validates its input. This helper keeps no cache or
+    acceptance flag and must not be used to resume an earlier validation.
+    """
     segments = [[dict(point, motion_kind=point.get("role", "scan")) for point in item.points]
                 for item in model.ordered_items if isinstance(item, ScanSegment)]
     gaps = [item for item in model.ordered_items if isinstance(item, Gap)]
@@ -667,6 +851,8 @@ def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, 
                       surface_mode={"schema": "femto-surface-trajectory-player-view-v1",
                                     "algorithm": model.planner.get("algorithm_version")},
                       spacing_report=spacing)
+    if model.planning_context is not None:
+        result['planning_context'] = model.planning_context
     return result
 
 

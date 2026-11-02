@@ -7,20 +7,16 @@ import unittest
 from unittest import mock
 
 import numpy as np
-import tkinter as tk
 
 import femto.app.femto_control_app as control
 from femto.app.app_temporal import TemporalBurst, process_burst
 from tests.test_segmented_capture import make_camera, make_frame
+from tests.camera_worker_fixture import bare_camera_app
 
 
 class TemporalGuiTests(unittest.TestCase):
     def bare_app(self):
-        app=control.FemtoControlApp.__new__(control.FemtoControlApp)
-        app.language='zh'; app.event_queue=queue.Queue(); app.command_queue=queue.Queue()
-        app.stop_event=threading.Event(); app.frame_lock=threading.Lock()
-        app.temporal_thread=None
-        return app
+        return bare_camera_app()
 
     def test_main_camera_is_only_owner_and_preview_continues_after_burst(self):
         app=self.bare_app()
@@ -80,71 +76,3 @@ class TemporalGuiTests(unittest.TestCase):
             events=queue.Queue(); process_burst(burst,Path(td),events)
         self.assertEqual(list(events.queue)[-1][0],'temporal_error')
         self.assertIn('disk full',list(events.queue)[-1][1]['error'])
-
-    def test_panel_options_and_busy_state_without_camera(self):
-        with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'), \
-             mock.patch('femto.app.app_temporal_panel.TemporalPanel.restore_last'):
-            root=tk.Tk(); root.withdraw()
-            try:
-                app=control.FemtoControlApp(root)
-                app.camera_ready=True
-                app.open_temporal_panel(); panel=app.temporal_panel
-                root.update()
-                self.assertEqual(tuple(panel.count_box['values']),('5','10','15'))
-                panel.count.set('10'); panel.mode.set('quality'); panel.start()
-                self.assertTrue(app.processing); self.assertTrue(app.temporal_collecting)
-                self.assertEqual(app.command_queue.get_nowait(),('temporal_start',dict(count=10,mode='quality')))
-                self.assertFalse(app.start_temporal(5,'fast'))
-                panel.cancel()
-                self.assertEqual(app.command_queue.get_nowait()[0],'temporal_stop')
-                app.event_queue.put(('temporal_finished',dict(status='cancelled_or_incomplete',source='unused',output='unused')))
-                app._poll_events()
-                self.assertFalse(app.processing); self.assertFalse(app.temporal_busy)
-                self.assertIsNone(app.latest_result)
-                app.event_queue.put(('temporal_error',dict(error='test failure',source=None)))
-                app._poll_events()
-                panel.window.destroy()
-                app.open_temporal_panel()
-                self.assertIn('test failure',app.temporal_panel.status.get())
-            finally:
-                for timer in root.tk.call('after','info'): root.after_cancel(timer)
-                root.destroy()
-
-    def test_completed_result_buttons_and_no_old_model_reassignment(self):
-        with TemporaryDirectory() as td, mock.patch.object(control.FemtoControlApp,'_start_camera'), \
-             mock.patch.object(control.FemtoControlApp,'_load_latest_paths'),mock.patch('femto.app.app_temporal_panel.TemporalPanel.restore_last'):
-            root=tk.Tk(); root.withdraw()
-            try:
-                app=control.FemtoControlApp(root); app.open_temporal_panel()
-                output=Path(td)
-                for name in ('fused_pointcloud.ply','comparison.png','temporal_report.json'): (output/name).write_text('test')
-                report=dict(frame_count=5,original_invalid_rate=.1,after_temporal_invalid_rate=.08,reference_point_count=90,point_count=92)
-                app.event_queue.put(('temporal_finished',dict(status='completed',output=str(output),source=str(output),report=report)))
-                app._poll_events(); app.temporal_panel.update_controls()
-                self.assertEqual(str(app.temporal_panel.buttons['cloud']['state']),'normal')
-                with mock.patch('femto.app.app_temporal_panel.subprocess.Popen') as launch:
-                    app.temporal_panel.open_result('cloud')
-                    self.assertEqual(launch.call_args.args[0][1:3],['-m','femto.viewer.segmented_cloud_viewer'])
-                self.assertIsNone(app.latest_result)
-            finally:
-                for timer in root.tk.call('after','info'): root.after_cancel(timer)
-                root.destroy()
-
-    def test_visible_panel_layout_at_default_window_size(self):
-        with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'), \
-             mock.patch('femto.app.app_temporal_panel.TemporalPanel.restore_last'):
-            root=tk.Tk()
-            try:
-                app=control.FemtoControlApp(root); app.open_temporal_panel()
-                root.update()
-                button=app.photo_button
-                self.assertGreater(button.winfo_width(),70)
-                self.assertLess(button.winfo_rootx()+button.winfo_width(),root.winfo_rootx()+root.winfo_width()+1)
-                panel=app.temporal_panel
-                for widget in (panel.start_button,panel.cancel_button,*panel.buttons.values()):
-                    self.assertTrue(widget.winfo_ismapped())
-                    self.assertLessEqual(widget.winfo_rootx()+widget.winfo_width(),panel.window.winfo_rootx()+panel.window.winfo_width())
-                    self.assertLessEqual(widget.winfo_rooty()+widget.winfo_height(),panel.window.winfo_rooty()+panel.window.winfo_height())
-            finally:
-                for timer in root.tk.call('after','info'): root.after_cancel(timer)
-                root.destroy()

@@ -1,8 +1,8 @@
 """Application composition. Pages emit intents; the controller owns transitions."""
 from pathlib import Path
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QImage, QKeySequence, QShortcut
-from PySide6.QtWidgets import QCheckBox, QDockWidget, QFrame, QHBoxLayout, QListWidget, QMainWindow, QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QDialog, QDockWidget, QFrame, QHBoxLayout, QListWidget, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget
 from app.controller import WorkflowController
 from app.navigation import STAGES, VIEWS, actions
 from app.presentation import current_notice
@@ -11,6 +11,7 @@ from pages.region_page import RegionPage
 from pages.planning_page import PlanningPage
 from pages.confirmation_page import ConfirmationPage
 from widgets.patient_header import PatientHeader
+from widgets.icons import workstation_icon
 from widgets.workflow_sidebar import WorkflowSidebar
 from widgets.action_bar import ActionBar
 from widgets.tool_palette import ToolPalette
@@ -22,7 +23,7 @@ from adapters.replay_images import depth_heatmap, region_image
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, records_dir=None, viewport_factory=create_viewport):
+    def __init__(self, records_dir=None, viewport_factory=create_viewport, use_project_replay=False):
         super().__init__()
         self.setWindowTitle("Femto Bolt · 三维采集与轨迹规划工作台")
         self.resize(1600, 900)
@@ -34,10 +35,11 @@ class MainWindow(QMainWindow):
         # In the modular app source_dir is <project>/prototype/app; in the
         # generated standalone it is <project>/prototype.
         project_root = source_dir.parents[1] if source_dir.name == "app" else source_dir.parent
-        try:
-            self.project_replay = load_project_data(project_root)
-        except Exception as exc:
-            self.replay_error = str(exc)
+        if use_project_replay:
+            try:
+                self.project_replay = load_project_data(project_root)
+            except Exception as exc:
+                self.replay_error = str(exc)
         root = QWidget()
         root.setObjectName("root")
         self.setCentralWidget(root)
@@ -65,13 +67,13 @@ class MainWindow(QMainWindow):
         center.setObjectName("center")
         work = QVBoxLayout(center)
         self.work_layout = work
-        work.setContentsMargins(0, 0, 0, 0)
-        work.setSpacing(0)
+        work.setContentsMargins(10, 8, 10, 8)
+        work.setSpacing(6)
         title_bar = QFrame()
         title_bar.setObjectName("titleBar")
-        title_bar.setFixedHeight(94)
+        title_bar.setFixedHeight(64)
         title_row = QHBoxLayout(title_bar)
-        title_row.setContentsMargins(16, 10, 16, 9)
+        title_row.setContentsMargins(4, 4, 4, 4)
         title_col = QVBoxLayout()
         title_col.setSpacing(3)
         self.page_title = text_label("", "pageTitle")
@@ -88,36 +90,48 @@ class MainWindow(QMainWindow):
         view_bar.setObjectName("viewBar")
         view_bar.setFixedHeight(54)
         view_row = QHBoxLayout(view_bar)
-        view_row.setContentsMargins(16, 4, 16, 4)
+        view_row.setContentsMargins(6, 5, 6, 5)
         view_row.setSpacing(4)
         self.view_labels = {"RGB": "▣  RGB", "深度": "≋  深度", "点云": "⠿  点云", "模型": "◇  模型"}
         self.view_buttons = []
-        for _ in range(4):
+        for _ in range(3):
             btn = QPushButton()
             btn.setObjectName("viewButton")
-            btn.setMinimumSize(92, 44)
-            btn.clicked.connect(lambda _=False, b=btn: self.controller.set_view(b.property("view_name")))
+            btn.setFixedHeight(42)
+            btn.setMinimumWidth(110)
+            btn.clicked.connect(lambda _=False, b=btn: self.choose_view(b.property("view_name")))
             view_row.addWidget(btn)
             self.view_buttons.append(btn)
         view_row.addStretch()
-        self.fit_button = QPushButton("适配")
-        self.zoom_button = QPushButton("⌕")
-        self.one_button = QPushButton("1:1")
-        self.full_button = QPushButton("□")
-        for button, tip in (
-            (self.fit_button, "适配窗口"),
-            (self.zoom_button, "缩放"),
-            (self.one_button, "原始比例"),
-            (self.full_button, "全屏显示"),
+        self.fit_button = QPushButton("⊡")
+        self.zoom_button = QPushButton("＋")
+        self.one_button = QPushButton("↔")
+        self.full_button = QPushButton("⛶")
+        for button, icon, tip in (
+            (self.fit_button, "fit", "适配窗口"),
+            (self.zoom_button, "zoom", "放大视图；滚轮可缩小"),
+            (self.one_button, "pan", "平移视图；再次点击返回选择"),
+            (self.full_button, "fullscreen", "全屏显示"),
         ):
+            button.setText("")
+            button.setIcon(workstation_icon(icon))
+            button.setIconSize(QSize(22, 22))
+            button.setAccessibleName(tip)
             button.setObjectName("viewTool")
-            button.setMinimumSize(44, 40)
+            button.setFixedSize(40, 40)
             button.setToolTip(tip)
             view_row.addWidget(button)
-        self.reset_button = QPushButton("复位视图")
-        self.reset_button.setObjectName("quietButton")
-        self.reset_button.setMinimumHeight(40)
-        self.reset_button.setToolTip("恢复默认视图")
+        self.reset_button = QPushButton()
+        self.reset_button.setIcon(workstation_icon("cube"))
+        self.reset_button.setIconSize(QSize(22, 22))
+        self.reset_button.setAccessibleName("三维显示方式")
+        self.reset_button.setObjectName("viewTool")
+        self.reset_button.setFixedSize(40,40)
+        self.reset_button.setToolTip("三维显示方式")
+        mode_menu = QMenu(self.reset_button)
+        for mode in ("点云", "模型"):
+            mode_menu.addAction(mode, lambda mode=mode: self.controller.set_view(mode))
+        self.reset_button.setMenu(mode_menu)
         view_row.addWidget(self.reset_button)
         work.addWidget(view_bar)
 
@@ -143,9 +157,10 @@ class MainWindow(QMainWindow):
         else:
             self.viewport = viewport_factory(center)
         self.viewport.regions_edited.connect(self.controller.set_regions)
-        self.reset_button.clicked.connect(self.viewport.reset_view)
-        self.fit_button.clicked.connect(self.viewport.reset_view)
-        self.one_button.clicked.connect(self.viewport.reset_view)
+        self._navigation_tool = "select"
+        self.fit_button.clicked.connect(lambda: self.viewport.reset_view())
+        self.zoom_button.clicked.connect(lambda: self.viewport.zoom_in())
+        self.one_button.clicked.connect(self.toggle_pan)
         self.full_button.clicked.connect(self.toggle_maximized)
         work.addWidget(self.viewport, 1)
         self.palette = ToolPalette(self.viewport)
@@ -175,6 +190,7 @@ class MainWindow(QMainWindow):
         column.addLayout(body, 1)
         self.action_bar = ActionBar()
         self.action_bar.action_requested.connect(self.perform_action)
+        self.action_bar.details_requested.connect(self.show_status_details)
         column.addWidget(self.action_bar)
         self.build_drawers()
         shortcut = QShortcut(QKeySequence.Undo, self)
@@ -194,7 +210,7 @@ class MainWindow(QMainWindow):
             self._switch_to_mock_viewport()
         self.header.update_state(s)
         self.sidebar.update_state(s)
-        self.page_title.setText(("三维采集", "区域标记", "轨迹规划", "运行预览")[s.stage])
+        self.page_title.setText(("三维采集", "区域标记", "轨迹规划", "规划确认")[s.stage])
         self.page_subtitle.setText((
             "调整相机位置，采集完整的目标表面",
             "在固定视角标出目标规划区和禁入区",
@@ -208,13 +224,15 @@ class MainWindow(QMainWindow):
         tone(self.reference, "good" if s.capture.reference_ready else "")
         self.page_stack.setCurrentIndex(s.stage)
         self.pages[s.stage].update_state(s)
-        names = VIEWS[s.stage]
+        names = ("RGB", "深度", "三维预览") if s.stage == 0 else VIEWS[s.stage]
         for i, btn in enumerate(self.view_buttons):
             btn.setVisible(i < len(names))
             if i < len(names):
                 btn.setProperty("view_name", names[i])
-                btn.setText(self.view_labels.get(names[i], names[i]))
-                tone(btn, "active" if names[i] == s.view else "")
+                btn.setText(names[i])
+                selected = names[i] == s.view or names[i] == "三维预览" and s.view in ("点云","模型")
+                tone(btn, "active" if selected else "")
+        self.reset_button.setVisible(s.stage == 0 and s.view in ("点云","模型"))
         if s.replay_mode and isinstance(self.viewport, ReplayViewport):
             self.viewport.set_view(s.stage, s.view)
             self.viewport.focus_issue(s.issue_focus)
@@ -240,18 +258,8 @@ class MainWindow(QMainWindow):
         old.deleteLater()
         self.viewport = create_viewport(self.center)
         self.work_layout.addWidget(self.viewport, 1)
-        try:
-            self.reset_button.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.reset_button.clicked.connect(self.viewport.reset_view)
-        try:
-            self.fit_button.clicked.disconnect()
-            self.one_button.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.fit_button.clicked.connect(self.viewport.reset_view)
-        self.one_button.clicked.connect(self.viewport.reset_view)
+        self._navigation_tool = "select"
+        tone(self.one_button, "")
         self.viewport.regions_edited.connect(self.controller.set_regions)
         self.viewport.installEventFilter(self)
         self.palette.deleteLater()
@@ -266,8 +274,30 @@ class MainWindow(QMainWindow):
     def _status_summary(s):
         if s.replay_mode:
             project = s.replay_label.replace("项目回放 · ", "")
-            return f"{project}  |  ● 相机：回放  |  FPS —  |  分辨率 —  |  GPU —  |  存储 —"
-        return f"{s.patient.identifier}  |  ● 相机：已连接  |  FPS 30  |  1920 × 1080  |  GPU 28%  |  存储 12.4 / 100 GB"
+            return f"项目回放 · 只读  |  {project}  |  相机未连接"
+        return f"原型演示 · 未连接设备  |  {s.patient.identifier}  |  模拟采集 {s.capture.frames} 帧"
+
+    def choose_view(self, name):
+        self.controller.set_view("点云" if name == "三维预览" else name)
+
+    def toggle_pan(self):
+        self._navigation_tool = "select" if self._navigation_tool == "pan" else "pan"
+        self.viewport.set_navigation_tool(self._navigation_tool)
+        tone(self.one_button, "active" if self._navigation_tool == "pan" else "")
+
+    def show_status_details(self):
+        s=self.controller.state
+        notice, severity=current_notice(s)
+        dialog=QDialog(self)
+        dialog.setWindowTitle("当前任务状态")
+        dialog.resize(580,360)
+        column=QVBoxLayout(dialog)
+        content=QTextBrowser()
+        content.setPlainText(notice+"\n\n"+self._status_summary(s)+"\n\n"+self.developer_info.text())
+        column.addWidget(content)
+        close=QPushButton("关闭");close.clicked.connect(dialog.accept)
+        column.addWidget(close,alignment=Qt.AlignRight)
+        dialog.exec()
 
     def toggle_maximized(self):
         self.showNormal() if self.isMaximized() else self.showMaximized()

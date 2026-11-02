@@ -532,6 +532,7 @@ def supervise(command: Any, log_path: str | Path, *, timeout_s: float, memory_mb
     log_path = Path(log_path)
     flags = (subprocess.CREATE_NO_WINDOW | 0x4) if os.name == 'nt' else 0  # CREATE_SUSPENDED
     job = None
+    failure = None
     def measurements(elapsed):
         return dict(elapsed_s=elapsed,
             peak_job_committed_mb=peak / 1024**2 if job else None,
@@ -571,6 +572,9 @@ def supervise(command: Any, log_path: str | Path, *, timeout_s: float, memory_mb
             if process.returncode:
                 raise StageStopped('failed', f'Worker exited with code {process.returncode}; see {log_path}', stats)
             return stats
+        except BaseException as error:
+            failure = error
+            raise
         finally:
             if job:
                 job.close()
@@ -585,6 +589,17 @@ def supervise(command: Any, log_path: str | Path, *, timeout_s: float, memory_mb
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=3)
+            if failure is not None:
+                from femto.operation_diagnostics import retain_subprocess_failure
+                try:log.flush()
+                except OSError:pass
+                stats = dict(measurements(time.monotonic()-started),
+                    returncode=process.returncode if process is not None else None)
+                directory = retain_subprocess_failure(log_path, status=getattr(failure, 'status', 'failed'),
+                    stats=stats, error=failure)
+                if isinstance(failure, StageStopped):
+                    failure.stats.update(failure_diagnostics_recorded=directory is not None,
+                        failure_diagnostics=str(directory) if directory is not None else None)
 
 
 def _business_indices(raw):
@@ -597,7 +612,7 @@ def _business_indices(raw):
 def run_comparison(dataset: str | Path, output: str | Path, *, voxel_m: float=.005, sdf_trunc_m: float=.02, max_views: int=20,
                    stage_timeout_s: float=300., memory_mb: float=3072., render_width: int=640,
                    allow_synthetic: bool=False, cancel_file: str | Path | None=None, progress: Any=None, latest_paths: Any=None, cancelled: Any=None) -> dict[str, Any]:
-    """Synchronous supervisor API; a GUI must invoke it off its Tk thread or as a CLI."""
+    """Synchronous supervisor API; a GUI must invoke it off the UI thread or as a CLI."""
     dataset, output = Path(dataset).resolve(), Path(output).resolve()
     if output.exists():
         raise FileExistsError('Comparison output must be a new directory')

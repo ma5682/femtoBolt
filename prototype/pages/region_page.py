@@ -30,10 +30,10 @@ class RegionPage(StatusPanel):
 
     def update_state(self, s):
         r = s.region
-        self.value(self.work, "✓ 已标记" if r.has_work else "待标记", "good" if r.has_work else "")
+        self.value(self.work, "● 已标记" if r.has_work else "待标记", "good" if r.has_work else "")
         self.value(self.forbidden, "已标记" if r.has_forbidden else "尚未标记")
         names = {
-            "unchecked": "待检查", "checking": "检查中…", "valid": "✓ 已确认",
+            "unchecked": "待检查", "checking": "检查中…", "valid": "● 已确认",
             "partial": "⚠ 部分未确认", "missing": "阻断 · 局部缺失",
         }
         self.value(self.support, names.get(r.support, "待检查"), "bad" if r.support in ("missing", "partial") else "good" if r.support == "valid" else "")

@@ -125,6 +125,10 @@ def _block_labels(trajectory: SurfaceTrajectory) -> list[tuple[int, str, str]]:
 
 def _block_header(trajectory: SurfaceTrajectory) -> str | None:
     stats = trajectory.statistics
+    if trajectory.planner.get('algorithm_version') in ('nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
+        return f"名义变宽模型 {stats['segment_count']} 段；覆盖须按当前模型独立核验；断点只停不连线"
+    if trajectory.planner.get('algorithm_version') in ('quality-constrained-surface-v1', 'quality-constrained-surface-v2', 'quality-constrained-surface-v3', 'source-anchored-surface-v1', 'coverage-refined-surface-v1', 'constructed-surface-route-v1', 'constructed-coverage-refined-surface-v1'):
+        return f"质量与宽度约束后 {stats['segment_count']} 段；覆盖见独立核验；断点只停不连线"
     if trajectory.blocks is None or "block_count" not in stats:
         return None
     if trajectory.blocks.get("schema") == "femto-surface-trajectory-blocks-v2":
@@ -494,6 +498,45 @@ def _block_report_lines(trajectory: SurfaceTrajectory) -> list[str]:
 
 
 def report_text(trajectory: SurfaceTrajectory) -> str:
+    if trajectory.planner.get('algorithm_version') == 'nominal-variable-width-refined-surface-v1':
+        from femto.planning.variable_width_refinement import summary_text
+        from femto.planning.variable_width_route import summary_text as profile_text
+        return (summary_text(trajectory)+'\n'+profile_text(trajectory)+'\n'
+                +'逐轮候选、增益及累计预算见 trajectory.json 的 refinement；模型和全部逐边界见 variable_footprint.json / variable_width_report.json。\n'
+                +'扫描下界用于名义覆盖，连接不计覆盖；设备偏移上界未知，不能用于机器人执行。\n')
+    if trajectory.planner.get('algorithm_version') == 'nominal-variable-width-surface-v1':
+        from femto.planning.variable_width_route import summary_text
+        return (summary_text(trajectory)+'\n原严格路线和精确锚点保留；模型变化后覆盖须重新核验。\n'
+                +'逐段上下界、连接检查和原路线见 variable_width_report.json；模型见 variable_footprint.json。\n')
+    if trajectory.planner.get('algorithm_version') in ('constructed-surface-route-v1', 'constructed-coverage-refined-surface-v1'):
+        from femto.planning.strict_path import summary_text
+        from femto.planning.coverage_refinement import summary_text as refinement_text
+        stats = trajectory.statistics
+        return '\n'.join([
+            summary_text(trajectory), refinement_text(trajectory),
+            f"当前路线 {stats['segment_count']} 段 / {stats['gap_count']} 处断点 / {stats['point_count']} 点。",
+            '构造来源保存在 surface_anchor；CSV 的 XYZ 是其舍入显示值。正长度微缝不会按容差闭合。',
+            '新候选重新执行作用宽度、参考质量、边界及严格支持检查；断点没有规划运动。',
+            '严格支持仅对应当前数值网格，不代表物理精度、接触或治疗覆盖；覆盖须匹配当前计算修订。',
+            'registration_uncertainty_mm=null；execution_ready=false；physical_accuracy_verified=false。',
+        ])+'\n'
+    if trajectory.planner.get('algorithm_version') == 'source-anchored-surface-v1':
+        stats=trajectory.statistics
+        return '\n'.join([
+            '来源点修正路线（研发）',
+            '保留修正前路线和来源路线；两个内部点由原扫描点索引重建，全部边重新进行几何检查。',
+            f"总长度 {stats['total_length_m']:.6f} m；连接长度 {stats['connector_length_m']:.6f} m；点数 {stats['point_count']}。",
+            '排布行距报告对应修正前的切片；修正后点间距不由该报告认证。',
+            '新计算修订的覆盖状态待独立核验；原证据没有迁移为新证据。',
+            'execution_ready=false；physical_accuracy_verified=false。',
+        ])+'\n'
+    if trajectory.planner.get('algorithm_version') == 'coverage-refined-surface-v1':
+        from femto.planning.coverage_refinement import summary_text
+        from femto.planning.quality_constrained import report_text as quality_text
+        return summary_text(trajectory)+'\n\n'+quality_text(trajectory)
+    if trajectory.planner.get('algorithm_version') in ('quality-constrained-surface-v1', 'quality-constrained-surface-v2', 'quality-constrained-surface-v3'):
+        from femto.planning.quality_constrained import report_text as quality_text
+        return quality_text(trajectory)
     from femto.planning.trajectory_quality import quality_report_lines
     stats = trajectory.statistics
     frame = trajectory.planner["sweep_frame"]

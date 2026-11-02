@@ -29,8 +29,8 @@ class SingleGsTests(unittest.TestCase):
                 view.language=language; view.load()
                 self.assertIs(view.view,original)
                 self.assertFalse(view.dirty)
-            self.assertEqual(view.messagebox.showinfo.call_count,2)
-            view.messagebox.showerror.assert_not_called()
+            self.assertEqual(view.messagebox.information.call_count,2)
+            view.messagebox.critical.assert_not_called()
             view.save(); saved=(view.output/'viewport.json').read_bytes()
             view.reset(); view.load()
             self.assertEqual(view.view.zoom,2)
@@ -41,10 +41,10 @@ class SingleGsTests(unittest.TestCase):
             for content in ('{', '[]', '{"model_sha256":"model","source_fingerprint":"source","viewport":{"zoom":null,"cx":0.5,"cy":0.5}}'):
                 (view.output/'viewport.json').write_text(content)
                 view.messagebox.reset_mock(); view.load()
-                view.messagebox.showerror.assert_called_once()
+                view.messagebox.critical.assert_called_once()
                 self.assertIs(view.view,before)
             write_json(view.output/'viewport.json',dict(model_sha256='different',source_fingerprint='source'))
-            view.load(); view.messagebox.showwarning.assert_called_once()
+            view.load(); view.messagebox.warning.assert_called_once()
             self.assertIs(view.view,before)
 
     def test_full_hd_render_budget_is_explicit_and_keeps_multiview_default(self):

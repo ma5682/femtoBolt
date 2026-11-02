@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 import open3d as o3d
 
-from femto.app.femto_control_app import FemtoControlApp, save_rgbd_photo
+from femto.capture.scan_session import save_rgbd_photo
 from femto.geometry.fusion import read_geometry_safe
 from femto.hardware.orbbec_rgbd import AlignedFrame, DEPTH_MODE_SPECS
 from femto.geometry.pose_geometry import Intrinsics
@@ -225,15 +225,6 @@ class SegmentedCaptureTests(unittest.TestCase):
             self.assertEqual(marker.read_text(encoding="utf-8"), "previous good capture")
             self.assertEqual(json.loads((output / "manifest.json").read_text())["status"], "failed")
 
-    def test_photo_button_no_longer_reads_removed_depth_slider(self):
-        app = FemtoControlApp.__new__(FemtoControlApp)
-        app.camera_ready = True
-        app.photo_saving = False
-        app._set_action_state = mock.Mock()
-        app.capturing = app.processing = app.segmented_capturing = False
-        app.command_queue = mock.Mock()
-        app.take_photo()
-        app.command_queue.put.assert_called_once_with(("photo", None))
 
 
 if __name__ == "__main__":

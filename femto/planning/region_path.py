@@ -8,7 +8,9 @@ import json
 import uuid
 from pathlib import Path
 import numpy as np
-from femto.io_utils import write_json, write_json_strict
+from femto.io_utils import write_json, write_json_strict, sha256_file
+
+MAX_PATH_JSON_BYTES = 100_000_000
 
 
 def raster_path(projection: Any, mesh: Any, region: Any, row_step_px: int=10, max_step_mm: float=5., check: Callable[..., Any]=lambda: None) -> dict[str, Any]:
@@ -74,27 +76,50 @@ def path_summary(plan: Any) -> dict[Any, Any]:
                 length_semantics='sum_of_sample_chords_excludes_transition_moves')
 
 
-def load_path(path: str | Path, store: Any, projection: Any, region: Any, check: Callable[..., Any]=lambda: None) -> Any:
+def load_path(path: str | Path, store: Any, projection: Any, region: Any, check: Callable[..., Any]=lambda: None,
+              *, coverage_sink=None, target_sink=None) -> Any:
     """Reproduce a saved plan against current geometry before accepting it."""
     path = Path(path)
-    if path.stat().st_size > 100_000_000:raise ValueError('Path file exceeds 100 MB')
+    if path.stat().st_size > MAX_PATH_JSON_BYTES:raise ValueError('Path file exceeds 100 MB')
     payload = json.loads(path.read_text(encoding='utf-8'))
     if not isinstance(payload, dict):raise ValueError('Invalid path document')
     from femto.annotation.measurement_audit import layer_contract
     if 'data_layers' in payload and payload['data_layers'] != layer_contract(store):
         raise ValueError('Data layer / source model mismatch')
     schema=payload.get('schema')
-    if schema not in ('femto-region-raster-path-v1','femto-region-metric-path-v1'):
+    if schema not in ('femto-region-raster-path-v1','femto-region-metric-path-v1','femto-workspace-surface-plan-v1'):
         raise ValueError('Unknown path schema')
     from femto.planning.planning_state import region_signature, validate
     modern = 'plan_binding' in payload
-    if modern:validate(payload, store.mesh, region)
+    if schema=='femto-workspace-surface-plan-v1' and not modern:
+        raise ValueError('三维工作台路线缺少来源与结果绑定')
+    if modern:validate(payload, store.mesh, region, check=check)
     expected = dict(coordinate_frame='world_rdf', unit='metre',
                     geometry_sha256=store.digest, origin_reference=store.origin_reference,
                     local_context=store.local_context, region_id=region['annotation_id'],
                     region_signature=region_signature(region) if modern else signature(region), execution_ready=False, physical_accuracy_verified=False)
     for key, value in expected.items():
         if key not in payload or payload[key] != value:raise ValueError('Path source/metadata mismatch: '+key)
+    if schema == 'femto-workspace-surface-plan-v1':
+        check()
+        ledger = None
+        context = payload.get('planning_context')
+        if context is not None:
+            from femto.planning import target_surface
+            params = payload['surface_trajectory']['planner']['parameters']
+            ledger = target_surface.read(path.parent, context['target'], context['revision'],
+                evidence=params['quality_evidence'], domain=params['effective_domain'], check=check)
+        if payload.get('coverage_evidence') is not None:
+            from femto.planning import coverage_workflow
+            from femto.planning.surface_trajectory import SurfaceTrajectory
+            if ledger is None:raise ValueError('覆盖证据缺少同修订原目标台账')
+            certificate = coverage_workflow.read(path.parent, payload['coverage_evidence'],
+                SurfaceTrajectory.from_dict(payload['surface_trajectory']), ledger, check)
+            check()
+            if coverage_sink is not None:coverage_sink(certificate)
+        check()
+        if ledger is not None and target_sink is not None:target_sink(ledger)
+        return payload
     if schema=='femto-region-metric-path-v1':
         if 'coverage_parameters' in payload:
             from femto.planning.region_coverage import coverage_plan
@@ -131,6 +156,8 @@ def load_path(path: str | Path, store: Any, projection: Any, region: Any, check:
 
 
 def _export_path(plan, store, parent, region=None, presentation=None,check=lambda:None,progress=lambda stage:None):
+    if plan.get('coverage_evidence') is not None:
+        raise ValueError('含模型覆盖证据的方案请通过三维路线工作台保存，以保留完整台账与证明资产')
     from femto.annotation.measurement_audit import layer_contract
     legacy_binding_upgrade=False
     if region is not None:
@@ -185,7 +212,7 @@ def _export_path(plan, store, parent, region=None, presentation=None,check=lambd
             payload['coverage_diagram']='coverage_diagram.png'
     if plan.get('spacing_report'):
         from femto.planning.surface_spacing_report import spacing_text
-        write_json(folder/'surface_spacing_report.json', dict(plan_binding=plan['plan_binding'],report=plan['spacing_report']))
+        write_json(folder/'surface_spacing_report.json', dict(plan_binding=plan['plan_binding'],report=plan['spacing_report']), indent=None)
         binding_text=json.dumps(plan['plan_binding'],ensure_ascii=False)
         (folder/'surface_spacing_report.txt').write_text(spacing_text(plan)+'\n方案关联：'+binding_text,encoding='utf-8')
         with (folder/'surface_spacing_samples.csv').open('w',encoding='utf-8-sig',newline='') as stream:
@@ -201,7 +228,7 @@ def _export_path(plan, store, parent, region=None, presentation=None,check=lambd
         write_json(folder/'route_quality.json', dict(plan_binding=plan['plan_binding'],report=plan['route_quality']))
     if plan.get('coverage_inspection'):
         check();progress('写入覆盖采样与遗漏定位')
-        write_json(folder/'coverage_inspection.json', dict(plan_binding=plan['plan_binding'],report=plan['coverage_inspection']))
+        write_json(folder/'coverage_inspection.json', dict(plan_binding=plan['plan_binding'],report=plan['coverage_inspection']), indent=None)
         with (folder/'coverage_omissions.csv').open('w',encoding='utf-8-sig',newline='') as stream:
             writer=csv.writer(stream);writer.writerow(['schema','result_sha256','id','reason','in_denominator','sampled_area_m2','pixel_count','bbox_pixel','focus_xyz_m','evidence'])
             for item in plan['coverage_inspection']['omissions']:
@@ -226,8 +253,11 @@ def _export_path(plan, store, parent, region=None, presentation=None,check=lambd
         from femto.planning.region_path_guard import coverage_report_text
         payload['coverage_report']='coverage_report.txt'
         (folder/'coverage_report.txt').write_text(coverage_report_text(plan),encoding='utf-8-sig')
-    payload['files']={asset.name:hashlib.sha256(asset.read_bytes()).hexdigest() for asset in folder.iterdir() if asset.is_file()}
-    write_json_strict(folder/'path.json', payload)
+    payload['files']={asset.name:sha256_file(asset,check) for asset in folder.iterdir() if asset.is_file()}
+    # Match the planner's compact UTF-8 budget without dropping samples/reports.
+    write_json_strict(folder/'path.json', payload, indent=None, ensure_ascii=False)
+    if (folder/'path.json').stat().st_size > MAX_PATH_JSON_BYTES:
+        raise ValueError('完整路线文件超过 100 MB 可回读预算；未保存新方案，当前标记与路线仍保留')
     progress('压缩完整分享包')
     import zipfile
     with zipfile.ZipFile(folder/'route_package.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:

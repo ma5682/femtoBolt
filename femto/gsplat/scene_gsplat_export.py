@@ -80,7 +80,8 @@ def _stage_ascii_paths(ply_path: Path, spz_path: Path) -> tuple[tempfile.Tempora
     root = Path(temp_dir.name)
     if not str(root).isascii():
         temp_dir.cleanup()
-        fallback = Path("C:/FemtoSpzTmp")
+        from femto.paths import ASCII_GSPLAT_RUNTIME_ROOT
+        fallback = ASCII_GSPLAT_RUNTIME_ROOT.parent / "spz-tmp"
         fallback.mkdir(parents=True, exist_ok=True)
         temp_dir = tempfile.TemporaryDirectory(prefix="femto_spz_", dir=str(fallback))
         root = Path(temp_dir.name)

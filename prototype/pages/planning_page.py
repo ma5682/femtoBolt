@@ -74,17 +74,17 @@ class PlanningPage(StatusPanel):
         self.error.setVisible(bool(error))
         ready = p.phase in ("ready", "failed")
         stats = s.replay_stats
-        self.value(self.region, "✓ 原始规划记录" if s.replay_mode and ready else "✓ 已规划" if ready else "等待生成", "good" if ready else "")
-        self.value(self.forbidden, "原始禁入区记录" if s.replay_mode and ready else "✓ 未进入 · 模拟" if ready else "等待检查", "good" if ready else "")
+        self.value(self.region, "● 原始规划记录" if s.replay_mode and ready else "● 已规划" if ready else "等待生成", "good" if ready else "")
+        self.value(self.forbidden, "原始禁入区记录" if s.replay_mode and ready else "● 未进入 · 模拟" if ready else "等待检查", "good" if ready else "")
         if s.replay_mode and ready:
             geometry = stats.get("geometry_status", "已记录")
             geometry_label = "部分未确认" if "unconfirmed" in geometry else "已确认"
             self.value(self.geometry, geometry_label, "bad" if "unconfirmed" in geometry else "good")
             gaps = int(stats.get("gap_count", 0))
-            continuity = f"局部断开 · {gaps} 个缺口" if gaps else "✓ 连续"
+            continuity = f"局部断开 · {gaps} 个缺口" if gaps else "● 连续"
             self.value(self.continuity, continuity, "bad" if gaps else "good")
         else:
-            self.value(self.geometry, "✓ 有效 · 模拟", "good")
-            self.value(self.continuity, "局部断开" if p.phase == "failed" else "✓ 段内连续 · 模拟" if ready else "等待生成", "bad" if p.phase == "failed" else "good" if ready else "")
+            self.value(self.geometry, "● 有效 · 模拟", "good")
+            self.value(self.continuity, "局部断开" if p.phase == "failed" else "● 段内连续 · 模拟" if ready else "等待生成", "bad" if p.phase == "failed" else "good" if ready else "")
         self.route_issue.setVisible(p.phase == "failed")
         self.edge_issue.setVisible(ready and (not s.replay_mode or stats.get("coverage_status") == "partial"))

@@ -144,25 +144,26 @@ def render_comparison(model: Any,report: Any) -> Any:
     return canvas
 
 
-def show_diagnostics(parent: Any,model: Any,report: Any) -> Any:
-    import tkinter as tk
-    from tkinter import ttk
-    from PIL import ImageTk
-    w=tk.Toplevel(parent);w.title('同位置几何来源诊断');w.geometry('1150x850')
-    photo=ImageTk.PhotoImage(render_comparison(model,report).resize((640,696)));label=ttk.Label(w,image=photo);label.image=photo;label.pack(side='left')
-    side=ttk.Frame(w);side.pack(side='right',fill='both',expand=True)
+def show_diagnostics(parent: Any, model: Any, report: Any) -> Any:
+    """Open the local geometry evidence report in a Qt dialog."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage, QPixmap
+    from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTextBrowser, QVBoxLayout
+    image = render_comparison(model, report)
+    pixels = np.ascontiguousarray(np.asarray(image.convert("RGB")))
+    qimage = QImage(pixels.data, pixels.shape[1], pixels.shape[0], pixels.strides[0], QImage.Format.Format_RGB888).copy()
+    window = QDialog(parent); window.setWindowTitle("同位置几何来源诊断"); window.resize(1150, 850)
+    layout = QHBoxLayout(window); preview = QLabel(); preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    preview.setPixmap(QPixmap.fromImage(qimage).scaled(640, 696, Qt.KeepAspectRatio, Qt.SmoothTransformation)); layout.addWidget(preview)
+    side = QVBoxLayout(); layout.addLayout(side, 1)
     labels={'multi_frame_supported':'多帧观测支持','single_frame_supported':'单帧观测支持','source_unknown':'来源未知/核验不完整','no_consistent_raw_support':'无一致原深度支持'}
-    summary=labels[report['support_kind']]+'；已核对支持帧数 '+str(report['support_frame_count'])+'（不是精度）\n参考深度：'+('缺失/量程外' if report['reference_depth_missing'] else '存在')
-    summary+='\n融合重影：未证实；纹理错位：未测量。\n几何射线交点 '+str(len(report['diagnosis']['geometry_ray_layers']['depths_m']))+' 个；可能是真实前后表面。\n绿十字：多帧；橙：单帧；紫：未知/无支持。'
-    ttk.Label(side,text=summary,wraplength=470).pack(fill='x')
+    summary=labels.get(report.get('support_kind'),'来源未知')+'；已核对支持帧数 '+str(report.get('support_frame_count','—'))+'（不是精度）\n参考深度：'+('缺失/量程外' if report.get('reference_depth_missing') else '存在')
+    side.addWidget(QLabel(summary)); save_button=QPushButton('保存诊断 JSON 与对照图'); side.addWidget(save_button)
+    text=QTextBrowser(); text.setPlainText(json.dumps(report,ensure_ascii=False,indent=2)); side.addWidget(text,1)
     def save():
-        from tkinter import messagebox
-        try:folder=save_diagnostics(report,render_comparison(model,report));messagebox.showinfo('诊断已保存',str(folder),parent=w)
-        except (OSError,ValueError) as e:messagebox.showerror('诊断保存失败',str(e),parent=w)
-    ttk.Button(side,text='保存诊断JSON与同位置对照图',command=save).pack(fill='x')
-    text=tk.Text(side,wrap='word',width=60);text.pack(fill='both',expand=True)
-    text.insert('1.0',json.dumps(report,ensure_ascii=False,indent=2));text.configure(state='disabled')
-    return w
+        try: folder=save_diagnostics(report, render_comparison(model, report)); QMessageBox.information(window,'诊断已保存',str(folder))
+        except (OSError,ValueError) as error: QMessageBox.critical(window,'诊断保存失败',str(error))
+    save_button.clicked.connect(save); window.show(); return window
 
 
 def save_diagnostics(report: Any,image: Any,parent: str | Path | None=None) -> Any:

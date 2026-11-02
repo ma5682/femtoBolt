@@ -8,13 +8,11 @@ from pathlib import Path
 import queue
 import tempfile
 import time
-import tkinter as tk
 import unittest
 from unittest import mock
 from types import SimpleNamespace
 
 import numpy as np
-from PIL import Image, ImageTk
 
 from femto.capture.local_capture import LocalCapture
 from femto.tracking.scene_live_tracker import LiveTracker, PairEstimator, PairEstimationError
@@ -298,148 +296,6 @@ class CaptureFailureTests(unittest.TestCase):
         self.assertEqual((capture.session.parent/'latest_scene.txt').read_text(encoding='utf-8'), str(capture.session))
 
 
-class TrackingStatusUITests(unittest.TestCase):
-    def setUp(self):
-        gc.collect()
-        import femto.app.femto_control_app as control
-        with mock.patch.object(control.FemtoControlApp, '_start_camera'), \
-                mock.patch.object(control.FemtoControlApp, '_load_latest_paths'):
-            self.root = tk.Tk()
-            self.app = control.FemtoControlApp(self.root)
-        self.root.geometry('1120x720')
-        self.panel = self.app.local_panel
-        self.app.camera_ready = True
-        self.panel.start()
-        self.addCleanup(self.close)
-
-    def close(self):
-        for timer in self.root.tk.call('after', 'info'):self.root.after_cancel(timer)
-        self.root.destroy()
-        del self.panel, self.app, self.root
-        gc.collect()
-
-    def pose_event(self, state='tracking', **extra):
-        record = dict(state=state, reference_frame_id=0, received_monotonic=time.monotonic(),
-                      xyz_mm=[10., 20., 30.], pitch_yaw_roll_deg=[1.,2.,3.], latency_ms=120.)
-        record.update(extra)
-        self.panel.event('local_pose', dict(session_id=self.panel.session_id, source='fixture', record=record, accepted=3))
-        self.panel.tick()
-
-    def test_invalid_pose_pause_and_recovery_remain_in_same_session(self):
-        self.pose_event()
-        session = self.panel.session_id
-        self.assertIn('+10.0', self.panel.pose.get())
-        self.panel.pause()
-        self.assertIn('暂停', self.panel.hint.get())
-        self.pose_event('uncertain', rejection_reason='pair_quality', pair_failure={'rejected_checks': ['cycle_consistency']})
-        self.assertNotIn('+10.0', self.panel.pose.get())
-        self.assertIn('前后向', self.panel.hint.get())
-        self.assertEqual(str(self.panel.buttons['add']['state']), 'disabled')
-        self.pose_event()
-        self.assertEqual(self.panel.session_id, session)
-        self.assertTrue(self.panel.paused)
-        self.panel.pause()
-        self.assertEqual(str(self.panel.buttons['add']['state']), 'normal')
-
-    def test_relocalizing_hides_pose_and_recovery_clears_old_notice(self):
-        self.pose_event();self.panel.count=3;self.panel.notice='duplicate';self.panel.notice_until=time.monotonic()+5
-        self.pose_event('relocalizing',continuity=dict(remaining_window_s=12.),status_updated_monotonic=time.monotonic())
-        self.assertNotIn('+10.0',self.panel.pose.get());self.assertIn('重定位',self.panel.hint.get())
-        self.assertEqual(str(self.panel.buttons['add']['state']),'disabled')
-        self.assertEqual(str(self.panel.buttons['finish']['state']),'disabled')
-        self.pose_event(continuity=dict(relocalized=True))
-        self.assertEqual(self.panel.notice,'relocalized');self.assertIn('重新停稳',self.panel.hint.get())
-        self.app.language='en';self.panel.refresh_status();self.assertIn('Relocalized',self.panel.hint.get())
-
-    def test_expired_display_is_invalid_without_claiming_session_ended(self):
-        self.pose_event(received_monotonic=time.monotonic()-3)
-        self.assertNotIn('+10.0', self.panel.pose.get())
-        self.assertIn('过期', self.panel.hint.get())
-        self.assertTrue(self.panel.active)
-        self.assertEqual(str(self.panel.buttons['add']['state']), 'disabled')
-
-    def test_insufficient_views_keep_session_open_until_three_are_accepted(self):
-        panel = self.panel
-        session = panel.session_id
-        for count in (0, 1, 2):
-            panel.count = count
-            panel.refresh()
-            self.assertEqual(str(panel.buttons['finish']['state']), 'disabled')
-            queued = self.app.command_queue.qsize()
-            panel.finish(True)
-            self.assertEqual(self.app.command_queue.qsize(), queued)
-            self.assertTrue(panel.active)
-            self.assertFalse(panel.finishing)
-            self.assertEqual(panel.session_id, session)
-            self.assertEqual(panel.notice, 'need_more_views')
-        self.pose_event()
-        self.assertEqual(str(panel.buttons['finish']['state']), 'normal')
-        panel.finish(True)
-        self.assertTrue(panel.finishing)
-        command, payload = self.app.command_queue.get_nowait()
-        while not self.app.command_queue.empty():
-            command, payload = self.app.command_queue.get_nowait()
-        self.assertEqual((command, payload), ('local_finish', dict(session_id=session, value=True)))
-
-    def test_cancel_remains_available_before_three_views(self):
-        self.panel.count = 1
-        self.panel.refresh()
-        self.assertEqual(str(self.panel.buttons['cancel']['state']), 'normal')
-        self.panel.finish(False)
-        self.assertTrue(self.panel.finishing)
-        self.assertEqual(list(self.app.command_queue.queue)[-1],
-                         ('local_finish', dict(session_id=self.panel.session_id, value=False)))
-
-    def test_every_terminal_error_keeps_old_pose_cleared_on_later_ticks(self):
-        for error in ('calibration_changed', 'final_pose_invalid', 'disk write failed'):
-            with self.subTest(error=error):
-                if not self.panel.active:self.panel.start()
-                self.pose_event()
-                self.assertIn('+10.0', self.panel.pose.get())
-                self.panel.event('local_error', dict(session_id=self.panel.session_id,
-                    source='fixture', error=error))
-                for _ in range(2):
-                    self.panel.tick()
-                    self.assertNotIn('+10.0', self.panel.pose.get())
-                    self.assertEqual(self.panel.age.get(), self.panel.text('age_failed'))
-                self.assertFalse(self.panel.active)
-
-    def test_loss_reason_stays_visible_with_large_image_in_both_languages(self):
-        self.pose_event()
-        image = ImageTk.PhotoImage(Image.new('RGB', (2000, 1200), '#102030'))
-        self.panel.photo = image
-        self.panel.preview.configure(image=image)
-        context = dict(reason='tracking_gap', preceding_rejection=dict(reason='pair_quality',
-                       pair_failure={'rejected_checks': ['cycle_consistency']}))
-        self.panel.notice, self.panel.notice_until = 'duplicate', time.monotonic()+3
-        self.panel.event('local_error', dict(session_id=self.panel.session_id, source='fixture',
-            error='tracking_lost', failure=dict(termination=context)))
-        for language, message in [('zh', '跟踪已中断'), ('en', 'Tracking interrupted')]:
-            self.app.language = language
-            self.panel.refresh();self.panel.tick()
-            self.root.update();self.root.update()
-            self.assertIn(message, self.panel.hint.get())
-            self.assertNotIn('+10.0', self.panel.pose.get())
-            self.assertEqual(self.panel.hint_label.cget('bg'), '#622e2c')
-            label = self.panel.hint_label
-            self.assertTrue(label.winfo_ismapped())
-            self.assertGreater(label.winfo_height(), 30)
-            self.assertLess(label.winfo_rooty()+label.winfo_height(), self.root.winfo_rooty()+720)
-            for key in ('start', 'add', 'pause', 'finish', 'cancel', 'view', 'report'):
-                button = self.panel.buttons[key]
-                self.assertGreaterEqual(button.winfo_height(), button.winfo_reqheight(), key)
-                self.assertGreaterEqual(button.winfo_width(), button.winfo_reqwidth(), key)
-                self.assertLessEqual(button.winfo_rooty()+button.winfo_height(), self.root.winfo_rooty()+720)
-        self.assertFalse(self.panel.active)
-        for key in ('add','pause','finish','view'):
-            self.assertEqual(str(self.panel.buttons[key]['state']), 'disabled')
-        self.assertEqual(str(self.panel.buttons['report']['state']), 'normal')
-        self.assertEqual(str(self.panel.buttons['start']['state']), 'normal')
-        previous = self.panel.session_id
-        self.panel.start()
-        self.assertNotEqual(previous, self.panel.session_id)
-        self.assertIsNone(self.panel.failure)
-        self.assertNotIn('Tracking interrupted', self.panel.hint.get())
 
 
 if __name__=='__main__':

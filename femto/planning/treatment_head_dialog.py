@@ -1,10 +1,9 @@
-"""Modal dialog for treatment-head parameters before generating a surface trajectory."""
+"""Qt treatment-head parameter form kept for external planning integrations."""
 from __future__ import annotations
 
 from typing import Any
 
 from femto.planning.treatment_head import PLACEHOLDER_DEFAULTS, head_parameters
-
 
 FIELDS = (
     ("row_spacing_mm", "指定行距 / mm"),
@@ -15,102 +14,45 @@ FIELDS = (
     ("safety_margin_mm", "探头外壳避让余量 / mm（仅记录）"),
 )
 
-
 def collect(mode: str, texts: dict[str, str]) -> dict[str, Any]:
-    """Parse entry texts into a validated record; raises ValueError with a readable message."""
-    values = {}
+    values: dict[str, float] = {}
     for key, label in FIELDS:
         if key == "row_spacing_mm" and mode != "direct_row_spacing":
-            continue  # disabled entry; the row spacing is computed
-        try:
-            values[key] = float(texts[key].strip())
-        except (KeyError, ValueError):
-            # Keep the established report wording for machine/readback
-            # compatibility while the clinician form uses “有效作用宽度”.
+            continue
+        try: values[key] = float(str(texts[key]).strip())
+        except (KeyError, TypeError, ValueError):
             error_label = "有效治疗宽度 / mm" if key == "effective_treatment_width_mm" else label
             raise ValueError(f"{error_label} 不是有效数字") from None
     return head_parameters(mode, **values)
 
-
-def ask_treatment_head(parent: Any, initial: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """Return a `head_parameters` record, or None if cancelled."""
-    import tkinter as tk
-    from tkinter import ttk
-    initial = dict(initial or {})
-    initial.update(initial.pop("deferred", None) or {})
-    window = tk.Toplevel(parent)
-    window.title("治疗头参数")
-    window.transient(parent)
-    window.resizable(False, False)
-    body = ttk.Frame(window, padding=14)
-    body.pack(fill="both", expand=True)
-    ttk.Label(body, text="默认值为占位值，不是设备参数。只有行距影响轨迹；深度、直径和探头外壳避让余量仅写入记录。",
-              wraplength=420, justify="left").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-    mode = tk.StringVar(value=initial.get("mode", "direct_row_spacing"))
-    ttk.Radiobutton(body, text="直接指定行距", variable=mode, value="direct_row_spacing").grid(row=1, column=0, columnspan=2, sticky="w")
-    ttk.Radiobutton(body, text="根据有效治疗宽度自动计算", variable=mode, value="from_effective_width").grid(row=2, column=0, columnspan=2, sticky="w")
-    texts: dict[str, tk.StringVar] = {}
-    entries: dict[str, Any] = {}
-    basic_fields = FIELDS[:3]
-    deferred_fields = FIELDS[3:]
-    for index, (key, label) in enumerate(basic_fields, start=3):
-        ttk.Label(body, text=label).grid(row=index, column=0, sticky="w", pady=2)
-        texts[key] = tk.StringVar(value=f"{initial.get(key, PLACEHOLDER_DEFAULTS[key]):g}")
-        entries[key] = ttk.Entry(body, textvariable=texts[key], width=10)
-        entries[key].grid(row=index, column=1, sticky="e", pady=2)
-    advanced = tk.BooleanVar(value=False)
-    advanced_toggle = ttk.Checkbutton(body, text="显示高级记录参数", variable=advanced)
-    advanced_toggle.grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 2))
-    advanced_frame = ttk.Frame(body)
-    advanced_frame.grid(row=7, column=0, columnspan=2, sticky="ew")
-    advanced_frame.grid_remove()
-    for index, (key, label) in enumerate(deferred_fields):
-        ttk.Label(advanced_frame, text=label).grid(row=index, column=0, sticky="w", pady=2)
-        texts[key] = tk.StringVar(value=f"{initial.get(key, PLACEHOLDER_DEFAULTS[key]):g}")
-        entries[key] = ttk.Entry(advanced_frame, textvariable=texts[key], width=10)
-        entries[key].grid(row=index, column=1, sticky="e", pady=2)
-
-    def toggle_advanced(*_: Any) -> None:
-        if advanced.get():
-            advanced_frame.grid()
-        else:
-            advanced_frame.grid_remove()
-
-    advanced_toggle.configure(command=toggle_advanced)
-    computed = tk.StringVar()
-    ttk.Label(body, textvariable=computed, wraplength=420, justify="left").grid(row=8, column=0, columnspan=2, sticky="w", pady=(8, 0))
+def ask_treatment_head(parent: Any = None, initial: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Show a modal Qt form and return a validated record, or ``None``."""
+    from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFormLayout,
+                                   QLabel, QLineEdit, QVBoxLayout)
+    initial = dict(initial or {}); initial.update(initial.pop("deferred", None) or {})
+    dialog = QDialog(parent); dialog.setWindowTitle("治疗头参数")
+    layout = QVBoxLayout(dialog)
+    note = QLabel("默认值为占位值，不是设备参数。只有行距影响轨迹；其余参数仅写入记录。")
+    note.setWordWrap(True); layout.addWidget(note)
+    mode = QComboBox(); mode.addItem("直接指定行距", "direct_row_spacing"); mode.addItem("按有效作用宽度计算", "from_effective_width")
+    mode.setCurrentIndex(0 if initial.get("mode", "direct_row_spacing") == "direct_row_spacing" else 1); layout.addWidget(mode)
+    fields: dict[str, QLineEdit] = {}
+    form = QFormLayout(); layout.addLayout(form)
+    for key, label in FIELDS:
+        edit = QLineEdit(f"{initial.get(key, PLACEHOLDER_DEFAULTS[key]):g}"); fields[key] = edit; form.addRow(label, edit)
     result: list[dict[str, Any] | None] = [None]
-    ok = ttk.Button(body, text="生成")
+    buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel); layout.addWidget(buttons)
+    def refresh(*_):
+        direct = mode.currentData() == "direct_row_spacing"; fields["row_spacing_mm"].setEnabled(direct); fields["overlap_percent"].setEnabled(not direct)
+        try: buttons.button(QDialogButtonBox.Ok).setEnabled(True); dialog.setToolTip(f"最终规划行距：{collect(mode.currentData(), {k: v.text() for k, v in fields.items()})['row_spacing_mm']:g} mm")
+        except ValueError: buttons.button(QDialogButtonBox.Ok).setEnabled(False)
+    def accept():
+        try: result[0] = collect(mode.currentData(), {k: v.text() for k, v in fields.items()})
+        except ValueError: return
+        dialog.accept()
+    mode.currentIndexChanged.connect(refresh)
+    for edit in fields.values(): edit.textChanged.connect(refresh)
+    buttons.accepted.connect(accept); buttons.rejected.connect(dialog.reject); refresh()
+    return result[0] if dialog.exec() == QDialog.Accepted else None
 
-    def refresh(*_: Any) -> None:
-        direct = mode.get() == "direct_row_spacing"
-        entries["row_spacing_mm"].configure(state="normal" if direct else "disabled")
-        entries["overlap_percent"].configure(state="disabled" if direct else "normal")
-        try:
-            record = collect(mode.get(), {key: value.get() for key, value in texts.items()})
-            computed.set(f"计算行距：{record['row_spacing_mm']:g} mm")
-            ok.configure(state="normal")
-        except ValueError as error:
-            computed.set("参数无效：" + str(error))
-            ok.configure(state="disabled")
-
-    def accept() -> None:
-        try:
-            result[0] = collect(mode.get(), {key: value.get() for key, value in texts.items()})
-        except ValueError:
-            return
-        window.destroy()
-
-    mode.trace_add("write", refresh)
-    for value in texts.values():
-        value.trace_add("write", refresh)
-    buttons = ttk.Frame(body)
-    buttons.grid(row=9, column=0, columnspan=2, sticky="e", pady=(10, 0))
-    ok.configure(command=accept)
-    ok.pack(in_=buttons, side="left")
-    ttk.Button(buttons, text="取消", command=window.destroy).pack(side="left", padx=(6, 0))
-    window.bind("<Escape>", lambda _: window.destroy())
-    refresh()
-    window.grab_set()
-    window.wait_window()
-    return result[0]
+__all__ = ["FIELDS", "ask_treatment_head", "collect"]

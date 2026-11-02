@@ -7,7 +7,6 @@ import time
 import unittest
 from unittest import mock
 import queue
-import tkinter as tk
 
 import numpy as np
 import open3d as o3d
@@ -203,30 +202,6 @@ class LocalIntegrationTests(unittest.TestCase):
             store.local_context['session_id']='other'
             with self.assertRaises(ValueError):store.load(saved)
 
-    def test_workbench_empty_start_and_old_tools_remain(self):
-        import femto.app.femto_control_app as control
-        with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
-            root=tk.Tk();root.withdraw()
-            try:
-                app=control.FemtoControlApp(root);panel=app.local_panel
-                self.assertEqual(len(app.workbench.tabs()),2)
-                self.assertEqual(str(panel.buttons['view']['state']),'disabled')
-                app.camera_ready=True;panel.start()
-                command, payload = app.command_queue.get_nowait()
-                self.assertEqual(command, 'local_start')
-                self.assertEqual(payload['session_id'], panel.session_id)
-                self.assertIsNone(payload['value'])
-                self.assertIs(payload['cancel_event'], panel.cancel_event)
-                self.assertIsInstance(payload['cancel_event'], threading.Event)
-                self.assertFalse(payload['cancel_event'].is_set())
-                self.assertEqual(str(app.scan_button['state']),'disabled')
-                panel.event('local_error',dict(session_id=panel.session_id,source=None,error='origin_timeout'))
-                app._set_action_state()
-                self.assertFalse(app.capturing);self.assertFalse(app.local_busy)
-                self.assertEqual(str(panel.buttons['start']['state']),'normal')
-            finally:
-                for timer in root.tk.call('after','info'):root.after_cancel(timer)
-                root.destroy()
 
     def test_local_camera_dispatch_does_not_open_second_sdk(self):
         import femto.app.femto_control_app as control
@@ -249,19 +224,3 @@ class LocalIntegrationTests(unittest.TestCase):
         self.assertGreater(local.submit.call_count,0)
         local.finish.assert_called_with(False)
         self.assertFalse([e for e in app.event_queue.queue if e[0]=='camera_error'])
-
-    def test_primary_controls_fit_minimum_window(self):
-        import femto.app.femto_control_app as control
-        with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
-            root=tk.Tk()
-            try:
-                app=control.FemtoControlApp(root)
-                root.geometry('1120x720');root.update()
-                for key in ('start','add','pause','finish','cancel','view','report'):
-                    button=app.local_panel.buttons[key]
-                    self.assertTrue(button.winfo_ismapped())
-                    self.assertLessEqual(button.winfo_rooty()+button.winfo_height(),root.winfo_rooty()+root.winfo_height())
-                    self.assertLessEqual(button.winfo_rootx()+button.winfo_width(),root.winfo_rootx()+root.winfo_width())
-            finally:
-                for timer in root.tk.call('after','info'):root.after_cancel(timer)
-                root.destroy()

@@ -2,8 +2,9 @@
 import hashlib
 from pathlib import Path
 import numpy as np
-from PIL import Image
 import trimesh
+
+from femto.geometry.png_texture import load_source_texture
 
 
 def source_vertex_normals(vertices, faces):
@@ -27,7 +28,7 @@ def textured_region(mesh, ids, source):
     if uv.shape!=(len(faces),3,2) or not np.isfinite(uv).all():
         raise ValueError('Source texture UV does not match mesh triangles')
     ids=np.asarray(sorted(set(ids)),dtype=int)
-    with Image.open(image_path) as image:atlas=image.convert('RGB').copy()
+    atlas,texture_digest=load_source_texture(image_path)
     material=trimesh.visual.material.PBRMaterial(baseColorTexture=atlas,metallicFactor=0,
                                                 roughnessFactor=1,doubleSided=True)
     visual=trimesh.visual.texture.TextureVisuals(uv=uv[ids].reshape(-1,2),material=material)
@@ -35,7 +36,7 @@ def textured_region(mesh, ids, source):
         faces=np.arange(len(ids)*3).reshape(-1,3),visual=visual,process=False,
         vertex_normals=source_vertex_normals(vertices,faces)[faces[ids]].reshape(-1,3))
     return result,dict(appearance='source_rgb_atlas_with_original_corner_uv',
-        texture_sha256=hashlib.sha256(image_path.read_bytes()).hexdigest(),
+        texture_sha256=texture_digest,
         uv_sha256=hashlib.sha256(uv_path.read_bytes()).hexdigest(),
         source_triangle_indices=ids.tolist(),texture_embedded=True,
         normal_policy='area_weighted_source_topology_normals_preserved_across_uv_seams',

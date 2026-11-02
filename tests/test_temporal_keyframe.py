@@ -87,17 +87,3 @@ class KeyframeFusionTests(unittest.TestCase):
         layer=TemporalDepthLayer(d,c,m['source_count'],m['temporal_variance'],m['original_support_count'],m['filled_support_count'],m['selected_original'])
         layer.validate()
         self.assertEqual(layer.fused_confidence[12,12],0)
-
-    def test_one_click_defaults_ten_and_cancel(self):
-        import tkinter as tk
-        import femto.app.femto_control_app as control
-        with mock.patch.object(control.FemtoControlApp,'_start_camera'), mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
-            root=tk.Tk(); root.withdraw()
-            try:
-                app=control.FemtoControlApp(root); app.camera_ready=True
-                app.scan_mode_var.set('keyframe'); app.toggle_scan()
-                self.assertEqual(app.command_queue.get_nowait(),('temporal_start',dict(count=10,mode='quality',build_model=True)))
-                self.assertEqual(str(app.scan_button['state']),'normal')
-                app.toggle_scan()
-                self.assertEqual(app.command_queue.get_nowait()[0],'temporal_stop')
-            finally: root.destroy()

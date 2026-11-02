@@ -24,3 +24,17 @@ torchvision @ file:///C:/Users/55053/Downloads/femto-gsplat-wheels/torchvision-0
 tqdm==4.67.1
 typing_extensions==4.16.0
 wadler_lindig==0.1.7
+PySide6==6.11.2
+PySide6_Addons==6.11.2
+PySide6_Essentials==6.11.2
+shiboken6==6.11.2
+tomli==2.4.1
+vtk==9.5.2
+matplotlib==3.10.9
+contourpy==1.3.2
+cycler==0.12.1
+fonttools==4.65.0
+kiwisolver==1.5.1
+pyparsing==3.3.3
+python-dateutil==2.9.0.post0
+six==1.17.0

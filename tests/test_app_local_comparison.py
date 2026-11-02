@@ -3,11 +3,10 @@ from pathlib import Path
 import tempfile
 import threading
 import time
-import tkinter as tk
 import unittest
 from unittest import mock
 
-from femto.app.app_local_comparison import ComparisonWindow, comparison_source, progress_text
+from femto.reports.local_comparison_status import comparison_source, progress_text
 
 
 def write(path, value):
@@ -15,7 +14,7 @@ def write(path, value):
     path.write_text(json.dumps(value), encoding='utf-8')
 
 
-class ComparisonControlsTests(unittest.TestCase):
+class ComparisonReportTests(unittest.TestCase):
     def test_ancestry_uses_original_recorded_input_and_rejects_cross_session(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -35,95 +34,10 @@ class ComparisonControlsTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'not published'):
                 comparison_source(result)
 
-    def window(self, language='zh'):
-        root = tk.Tk()
-        root.withdraw()
-        window = ComparisonWindow(root, Path('model'), Path(tempfile.gettempdir()) / 'femto_comparison_ui_tests', language)
-        self.addCleanup(lambda: root.destroy() if root.winfo_exists() else None)
-        return root, window
 
-    def test_close_parent_cancels_worker_and_late_event_stays_in_its_dialog(self):
-        root, window = self.window()
-        started, stopped = threading.Event(), threading.Event()
-        def compare(source, output, *, cancelled, progress):
-            started.set()
-            progress(dict(state='running', stages=[]))
-            deadline = time.monotonic() + 3
-            while not cancelled() and time.monotonic() < deadline:
-                time.sleep(.01)
-            stopped.set()
-            return dict(state='cancelled', stages=[])
-        with mock.patch('femto.app.app_local_comparison.comparison_source', return_value=Path('fixture')), \
-             mock.patch('femto.pipeline.local_comparison.run_comparison', side_effect=compare):
-            window.start()
-            self.assertTrue(started.wait(2))
-            poll_timer = window.timer
-            self.assertIn(poll_timer, root.tk.call('after', 'info'))
-            root.destroy()
-            self.assertTrue(window.closed)
-            self.assertTrue(window.cancel_event.is_set())
-            self.assertIsNone(window.timer)
-            self.assertNotIn(poll_timer, root.tk.call('after', 'info'))
-            self.assertTrue(stopped.wait(2))
-            window.thread.join(2)
-        # Remove the now-invalid Tcl root cleanup; no worker reaches Tk.
-        self._cleanups.clear()
 
-    def test_progress_is_not_terminal_until_report_writer_returns_and_stale_generation_ignored(self):
-        root, window = self.window()
-        window.running = True
-        window.generation = 2
-        window._put(1, dict(state='complete'), terminal=True)
-        window.poll()
-        self.assertTrue(window.running)
-        self.assertIsNone(window.report)
-        window._put(2, dict(state='complete'), terminal=False)
-        window.poll()
-        self.assertTrue(window.running)
-        window._put(2, dict(state='complete'), terminal=True)
-        window.poll()
-        self.assertFalse(window.running)
-        window.close()
 
-    def test_repeated_poll_keeps_one_timer_and_close_preserves_other_callbacks(self):
-        root, window = self.window()
-        unrelated = root.after(60_000, lambda: None)
-        try:
-            for _ in range(4):
-                previous = window.timer
-                self.assertIn(previous, root.tk.call('after', 'info'))
-                window.poll()
-                pending = set(root.tk.call('after', 'info'))
-                self.assertNotIn(previous, pending)
-                self.assertIsNotNone(window.timer)
-                self.assertEqual(pending, {unrelated, window.timer})
-            window.close()
-            self.assertIsNone(window.timer)
-            self.assertEqual(set(root.tk.call('after', 'info')), {unrelated})
-            # Closing and polling an already closed dialog remain idempotent.
-            window.close()
-            window.poll()
-            self.assertEqual(set(root.tk.call('after', 'info')), {unrelated})
-        finally:
-            root.after_cancel(unrelated)
-            window.close()
 
-    def test_small_window_controls_available_in_both_languages(self):
-        for language in ('zh', 'en'):
-            with self.subTest(language=language):
-                root = tk.Tk()
-                root.withdraw()
-                window = ComparisonWindow(root, Path('model'), Path('outputs'), language)
-                try:
-                    window.window.geometry('600x400')
-                    root.update()
-                    for button in window.buttons.values():
-                        self.assertGreaterEqual(button.winfo_height(), button.winfo_reqheight())
-                        self.assertLessEqual(button.winfo_rootx()+button.winfo_width(), window.window.winfo_rootx()+window.window.winfo_width())
-                        self.assertLessEqual(button.winfo_rooty()+button.winfo_height(), window.window.winfo_rooty()+window.window.winfo_height())
-                finally:
-                    window.close()
-                    root.destroy()
 
     def test_status_reports_reused_geometry_and_missing_evidence_without_fabricated_zero(self):
         report = dict(state='complete', variants=[dict(name='B', optimization=dict(status='not_adopted'), same_as='A')])

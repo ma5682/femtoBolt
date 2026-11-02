@@ -1,5 +1,77 @@
 """Generated standalone mock workstation. Run: python standalone.py"""
 
+"""Fixed navy workstation palette. Keep medical.qss in sync with these tokens."""
+COLORS = {
+    "background": "#08131F", "panel": "#0D1B29", "secondary": "#102233",
+    "control": "#142A3D", "hover": "#193B55", "current": "#086E91",
+    "primary": "#087DDE", "primary_hover": "#0A91F5", "primary_pressed": "#0567BC",
+    "text": "#EAF2F8", "muted": "#91A9BB", "subtle": "#637B8D",
+    "border": "#20384A", "good": "#22D3A6", "warning": "#F2B84B",
+    "error": "#F06464", "pending": "#F29B45", "viewport": "#06101A",
+    "header": "#0B1927", "footer": "#0C2030", "grid": "#173042",
+}
+SIZES = {"button": 42, "tool": 40, "primary": 52, "step": 80, "status_row": 36}
+TYPE = {"title": 28, "state": 24, "panel": 18, "step": 17,
+        "button": 15, "body": 14, "description": 13, "helper": 12}
+
+"""Small workstation icons rendered with Qt paths, independent of UI fonts."""
+
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+
+
+def workstation_icon(name: str, color: str = "#91A9BB") -> QIcon:
+    """Return a 24 px vector-style icon backed by a crisp 2× raster.
+
+    Drawing in logical pixels keeps the stroke width consistent across the
+    toolbar. Unknown names raise early so a typo cannot create an empty button.
+    """
+    supported = {"fit", "zoom", "pan", "fullscreen", "cube"}
+    if name not in supported:
+        raise ValueError(f"Unknown workstation icon: {name}")
+    pixmap = QPixmap(48, 48)
+    pixmap.setDevicePixelRatio(2.0)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(QPen(QColor(color), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    painter.setBrush(Qt.NoBrush)
+
+    def polyline(*points):
+        path = QPainterPath(QPointF(*points[0]))
+        for point in points[1:]:
+            path.lineTo(QPointF(*point))
+        painter.drawPath(path)
+
+    if name in ("fit", "fullscreen"):
+        inset, length = (4, 4) if name == "fit" else (3, 5)
+        outer = 24 - inset
+        polyline((inset, inset + length), (inset, inset), (inset + length, inset))
+        polyline((outer - length, inset), (outer, inset), (outer, inset + length))
+        polyline((outer, outer - length), (outer, outer), (outer - length, outer))
+        polyline((inset + length, outer), (inset, outer), (inset, outer - length))
+        if name == "fit":
+            painter.drawRoundedRect(QRectF(8, 8, 8, 8), 0.6, 0.6)
+    elif name == "zoom":
+        painter.drawEllipse(QRectF(3.5, 3.5, 12.5, 12.5))
+        polyline((14.5, 14.5), (20.5, 20.5))
+        polyline((6.8, 9.75), (12.7, 9.75))
+        polyline((9.75, 6.8), (9.75, 12.7))
+    elif name == "pan":
+        polyline((12, 3), (12, 21))
+        polyline((3, 12), (21, 12))
+        polyline((9, 6), (12, 3), (15, 6))
+        polyline((9, 18), (12, 21), (15, 18))
+        polyline((6, 9), (3, 12), (6, 15))
+        polyline((18, 9), (21, 12), (18, 15))
+    else:  # cube
+        polyline((12, 2.8), (20, 7.3), (20, 16.7), (12, 21.2), (4, 16.7), (4, 7.3), (12, 2.8))
+        polyline((4, 7.3), (12, 12), (20, 7.3))
+        polyline((12, 12), (12, 21.2))
+
+    painter.end()
+    return QIcon(pixmap)
+
 from dataclasses import dataclass
 
 
@@ -278,7 +350,7 @@ class MockPlanStore:
 
 from dataclasses import dataclass
 
-STAGES = ("三维采集", "区域标记", "轨迹规划", "运行预览")
+STAGES = ("三维采集", "区域标记", "轨迹规划", "规划确认")
 VIEWS = (("RGB", "深度", "点云", "模型"), ("固定 RGB", "三维模型"), ("三维模型", "RGB 路线图"), ("三维模型", "RGB 路线图"))
 
 
@@ -1011,8 +1083,7 @@ class StatusPanel(QWidget):
         self.column.setSpacing(8)
 
     def section(self, title):
-        icons = {"采集信息": "▣", "数据质量": "▥", "空间数据": "◇", "采集状态": "▣", "三维模型检查": "◇", "规划参数": "⌘", "规划预览": "□", "运行预览": "□"}
-        label = text_label(f"{icons.get(title, '·')}  {title}", "sectionTitle")
+        label = text_label(title, "sectionTitle")
         self.column.addWidget(label)
         return label
 
@@ -1024,6 +1095,7 @@ class StatusPanel(QWidget):
 
     def row(self, title):
         item = QWidget()
+        item.setMinimumHeight(36)
         layout = QHBoxLayout(item)
         layout.setContentsMargins(0, 3, 0, 3)
         layout.setSpacing(8)
@@ -1088,31 +1160,16 @@ class PatientHeader(QFrame):
         separator.setFrameShape(QFrame.VLine)
         row.addWidget(separator)
         brand = QVBoxLayout()
-        brand.setSpacing(1)
+        brand.setSpacing(4)
         brand.addWidget(text_label("三维采集与轨迹规划工作台", "brand"))
-        brand.addWidget(text_label("医疗三维工作站", "brandCaption"))
-        row.addLayout(brand)
-        patient = QVBoxLayout()
-        patient.setSpacing(4)
+        self.reference_status = text_label("参考位置未建立", "referenceStatus")
+        brand.addWidget(self.reference_status)
+        row.addLayout(brand, 1)
+        # Keep task metadata available on hover rather than adding a second
+        # title-sized information block to the header.
         self.patient = text_label("", "patientName")
         self.task = text_label("", "muted")
-        patient.addWidget(self.patient)
-        patient.addWidget(self.task)
-        row.addLayout(patient, 1)
-        device = QVBoxLayout()
-        device.setSpacing(4)
-        self.device_status = text_label("●  相机已连接", "deviceReady")
-        self.sensor_status = text_label("RGB 正常  ·  深度正常  /  模拟", "muted")
-        device.addWidget(self.device_status)
-        device.addWidget(self.sensor_status)
-        self.source = text_label("Mock 演示", "modeBadge")
-        device.addWidget(self.source)
-        # Connection/quality telemetry is shown once in the bottom status bar;
-        # repeating it in the title bar makes the header feel like a dashboard.
-        device_widget = QFrame()
-        device_widget.setLayout(device)
-        device_widget.setVisible(False)
-        row.addWidget(device_widget)
+        self.patient.hide(); self.task.hide()
         demo = QVBoxLayout()
         demo.setSpacing(4)
         demo.addWidget(text_label("研发场景模拟", "muted"))
@@ -1120,15 +1177,14 @@ class PatientHeader(QFrame):
         self.scenario.setObjectName("scenario")
         for key, name in SCENARIOS.items():
             self.scenario.addItem(name, key)
-        self.scenario.addItem("项目回放 · 只读", "replay")
-        self.scenario.setMinimumWidth(124)
+        self.scenario.setFixedSize(184, 42)
         self.scenario.currentIndexChanged.connect(lambda: self.scenario_requested.emit(self.scenario.currentData()))
         demo.addWidget(self.scenario)
         row.addLayout(demo)
-        for text, signal in (("历史", self.history_requested), ("设置", self.settings_requested)):
+        for text, signal in (("历史记录", self.history_requested), ("高级工具", self.settings_requested)):
             button = QPushButton(text)
             button.setObjectName("quietButton")
-            button.setMinimumSize(52, 40)
+            button.setFixedHeight(42)
             button.clicked.connect(signal.emit)
             row.addWidget(button)
 
@@ -1140,134 +1196,255 @@ class PatientHeader(QFrame):
             self.patient.setText(f"项目：{s.patient.identifier}")
             self.task.setText(f"本地路径：prototype/demo_records   ·   {s.patient.task}")
         with QSignalBlocker(self.scenario):
+            if s.replay_mode and self.scenario.findData("replay") < 0:
+                self.scenario.addItem("项目回放 · 只读", "replay")
             self.scenario.setCurrentIndex(self.scenario.findData("replay" if s.replay_mode else s.scenario))
+            if not s.replay_mode and self.scenario.findData("replay") >= 0:
+                self.scenario.removeItem(self.scenario.findData("replay"))
         self.scenario.setEnabled(not s.replay_mode)
-        self.source.setText("项目回放 · 只读" if s.replay_mode else "Mock 演示")
-        self.device_status.setText("●  已保存数据可读" if s.replay_mode else "●  相机已连接")
-        self.sensor_status.setText("RGB / 深度 / 网格 · 只读" if s.replay_mode else "RGB 正常  ·  深度正常  /  模拟")
+        established = s.capture.reference_ready
+        self.reference_status.setText("●  项目回放 · 参考位置已记录" if s.replay_mode else
+                                      "●  参考位置已建立 · 模拟采集" if established else "○  参考位置未建立 · 原型演示")
+        tone(self.reference_status, "good" if established else "warning")
+        self.reference_status.setToolTip(self.patient.text()+"\n"+self.task.text())
 
 from PySide6.QtCore import Qt, Signal, QRectF, QPointF
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QFrame, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QScrollArea, QVBoxLayout, QWidget
+
+
+
+def _font(size, bold=False):
+    font = QFont('Microsoft YaHei')
+    font.setPixelSize(size)
+    font.setWeight(QFont.DemiBold if bold else QFont.Normal)
+    return font
 
 
 class WorkflowStep(QPushButton):
-    """Timeline step rendered like an industrial workstation navigator."""
+    """A milestone; clicking only requests navigation within the existing flow."""
 
     def __init__(self, index, title, subtitle, parent=None):
         super().__init__(parent)
-        self.index = index
-        self.title = title
-        self.subtitle = subtitle
-        self.active = False
-        self.warning = False
-        self.setObjectName("workflowStep")
+        self.index, self.title, self.subtitle = index, title, subtitle
+        self.active = self.warning = self.completed = self.blocked = False
+        self.setObjectName('workflowStep')
         self.setFlat(True)
+        self.setFixedHeight(80)
         self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumHeight(82)
+        self.setAccessibleName(f'{index + 1:02d} {title}')
 
-    def set_state(self, active, warning):
-        self.active = bool(active)
-        self.warning = bool(warning)
+    def set_state(self, active, warning=False, completed=False, blocked=False):
+        self.active, self.warning = bool(active), bool(warning)
+        self.completed, self.blocked = bool(completed), bool(blocked)
+        self.setAccessibleDescription('需处理' if blocked else '当前' if active else '已完成' if completed else '待处理' if warning else '未执行')
         self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        rect = self.rect()
+        rect = QRectF(self.rect()).adjusted(.5, .5, -.5, -.5)
         if self.active:
-            p.fillRect(rect, QColor("#142936"))
-            p.fillRect(QRectF(0, 0, 3, rect.height()), QColor("#12bfe6"))
-        center = QPointF(30, 30)
-        if self.index < 3:
-            p.setPen(QPen(QColor("#334656"), 1))
-            p.drawLine(QPointF(center.x(), 51), QPointF(center.x(), rect.height()))
-        ring = QColor("#12bfe6") if self.active else QColor("#596d7d")
-        p.setBrush(QColor("#0d1721"))
-        p.setPen(QPen(ring, 1.5))
-        p.drawEllipse(center, 21, 21)
-        p.setPen(ring if self.active else QColor("#b3c0ca"))
-        p.setFont(QFont("Segoe UI", 11, QFont.DemiBold))
-        p.drawText(QRectF(9, 18, 42, 25), Qt.AlignCenter, f"{self.index + 1:02d}")
-        p.setPen(QColor("#e7edf4") if self.active else QColor("#c2cdd6"))
-        p.setFont(QFont("Microsoft YaHei", 13, QFont.DemiBold if self.active else QFont.Normal))
-        p.drawText(QPointF(64, 28), self.title)
-        p.setPen(QColor("#8998a8"))
-        p.setFont(QFont("Microsoft YaHei", 11))
-        p.drawText(QPointF(64, 52), self.subtitle)
-        if self.warning:
-            p.setBrush(QColor("#e9b949"))
+            p.setBrush(QColor('#103D57'))
+            p.setPen(QPen(QColor('#087FA8'), 1))
+            p.drawRoundedRect(rect, 5, 5)
+        elif self.underMouse() and self.isEnabled():
+            p.setBrush(QColor('#142A3D'))
             p.setPen(Qt.NoPen)
-            p.drawEllipse(QPointF(rect.width() - 18, 24), 4, 4)
+            p.drawRoundedRect(rect, 5, 5)
+        if self.hasFocus():
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor('#91A9BB'), 1, Qt.DotLine))
+            p.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 4, 4)
+        p.setPen(QPen(QColor('#355368'), 1))
+        if self.index:
+            p.drawLine(QPointF(24, 0), QPointF(24, 10))
+        if self.index < 5:
+            p.drawLine(QPointF(24, 44), QPointF(24, 80))
+        edge, fill, ink = '#4D687C', '#172B3E', '#91A9BB'
+        marker = f'{self.index + 1:02d}'
+        if self.completed:
+            edge, fill, ink, marker = '#22D3A6', '#10352F', '#22D3A6', '✓'
+        if self.active:
+            edge, fill, ink, marker = '#13D7DC', '#13D7DC', '#06212A', f'{self.index + 1:02d}'
+        if self.blocked:
+            edge, fill, ink, marker = '#F06464', '#392734', '#F06464', '!'
+        elif self.warning:
+            edge, fill, ink, marker = '#F2B84B', '#3A3426', '#F2B84B', '!'
+        p.setPen(QPen(QColor(edge), 1.25))
+        p.setBrush(QColor(fill))
+        p.drawEllipse(QPointF(24, 27), 16, 16)
+        p.setPen(QColor(ink))
+        p.setFont(_font(15, True))
+        if marker == '✓':
+            p.setPen(QPen(QColor(ink), 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawLine(QPointF(17, 27), QPointF(22, 32))
+            p.drawLine(QPointF(22, 32), QPointF(31, 22))
+        else:
+            p.drawText(QRectF(8, 11, 32, 32), Qt.AlignCenter, marker)
+        p.setFont(_font(17, self.active or self.completed))
+        p.setPen(QColor('#EAF2F8' if self.active or self.completed else '#91A9BB'))
+        p.drawText(QPointF(51, 29), self.title)
+        p.setFont(_font(13))
+        p.setPen(QColor('#91A9BB' if self.active else '#637B8D'))
+        p.drawText(QPointF(51, 53), self.subtitle)
         p.end()
 
 
 class WorkflowSidebar(QFrame):
     step_requested = Signal(int)
+    STAGE_MAP = (0, 0, 0, 1, 2, 3)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("workflowSidebar")
-        self.setFixedWidth(220)
+        self.setObjectName('workflowSidebar')
+        self.setFixedWidth(236)
         col = QVBoxLayout(self)
-        col.setContentsMargins(16, 18, 14, 14)
-        col.setSpacing(8)
-        col.addWidget(text_label("操作流程", "sidebarHeading"))
+        col.setContentsMargins(10, 16, 10, 12)
+        col.setSpacing(6)
+        col.addWidget(text_label('工作流程', 'sidebarHeading'))
+        self.scroll = QScrollArea()
+        self.scroll.setObjectName('workflowScroll')
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        content.setObjectName('workflowSteps')
+        steps = QVBoxLayout(content)
+        steps.setContentsMargins(0, 0, 0, 0)
+        steps.setSpacing(0)
         self.buttons = []
-        self.subtitles = ("采集场景三维数据", "标记目标区域", "生成执行轨迹", "仿真与效果检查")
-        for index, title in enumerate(STAGES):
-            button = WorkflowStep(index, title, self.subtitles[index], self)
+        self.subtitles = ('设置相机与目标参考', '多角度补充采集', '确认三维表面质量', '圈定目标与避让区域', '计算并核对扫描路线', '核对参数与保存方案')
+        titles = ('建立参考位置', '移动补采', '检查模型', '区域标记', '轨迹规划', '规划确认')
+        for index, title in enumerate(titles):
+            button = WorkflowStep(index, title, self.subtitles[index], content)
             button.setAttribute(Qt.WA_AlwaysShowToolTips)
-            button.clicked.connect(lambda _=False, i=index: self.step_requested.emit(i))
-            col.addWidget(button)
+            button.clicked.connect(lambda _=False, stage=self.STAGE_MAP[index]: self.step_requested.emit(stage))
+            steps.addWidget(button)
             self.buttons.append(button)
-        col.addStretch()
-        self.mode_badge = text_label("研发规划预览", "prototypeBadge")
-        self.mode_note = text_label("模拟患者与设备\n不用于治疗执行", "muted", True)
-        col.addWidget(self.mode_badge)
-        col.addWidget(self.mode_note)
+        steps.addStretch(1)
+        self.scroll.setWidget(content)
+        col.addWidget(self.scroll, 1)
+        self._visible_milestone = None
+        device = QFrame()
+        device.setObjectName('devicePanel')
+        device_col = QVBoxLayout(device)
+        device_col.setContentsMargins(10, 10, 10, 8)
+        device_col.setSpacing(0)
+        head = QHBoxLayout()
+        head.addWidget(text_label('设备状态', 'deviceTitle'))
+        self.device_status = text_label('● 未连接', 'deviceRowValue')
+        head.addWidget(self.device_status, 1, Qt.AlignRight)
+        device_col.addLayout(head)
+        self.device_values = {}
+        for key, icon, name in (('camera', '▣', '相机'), ('rgb', '▧', 'RGB 图像'), ('depth', '◇', '深度图像'), ('reference', '⊙', '参考位置')):
+            row = QWidget()
+            row.setMinimumHeight(30)
+            layout = QHBoxLayout(row)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.addWidget(text_label(name, 'deviceRowName'))
+            value = text_label('—', 'deviceRowValue')
+            layout.addWidget(value, 1, Qt.AlignRight)
+            device_col.addWidget(row)
+            self.device_values[key] = value
+        col.addWidget(device)
+        self.mode_badge = text_label('研发模拟 · 不连接设备', 'prototypeBadge')
+        self.mode_note = text_label('仅供交互预览，不用于治疗执行', 'muted', True)
+        self.mode_badge.hide()
+        self.mode_note.hide()
+        device.setToolTip("原型演示：设备与采集状态为模拟；仅供交互预览。")
+
+    @staticmethod
+    def current_milestone(s):
+        if s.stage > 0:
+            return s.stage + 2
+        return 0 if s.capture.phase == 'idle' else 1 if s.capture.phase == 'capturing' else 2
 
     def update_state(self, s):
-        self.mode_badge.setText("项目回放 · 只读" if s.replay_mode else "研发规划预览")
-        self.mode_note.setText("原始数据只读\n不可执行" if s.replay_mode else "模拟患者与设备\n不用于治疗执行")
+        current = self.current_milestone(s)
+        completed = (s.capture.reference_ready, s.capture.phase in ('checking', 'passed', 'failed'), s.capture.phase == 'passed', s.region.support == 'valid', s.plan_current, bool(s.plan.saved_id))
         for i, btn in enumerate(self.buttons):
-            reason = navigation_reason(s, i)
-            active = s.stage == i
-            warning = (i == 1 and s.region.support == "partial") or (i >= 2 and s.plan.phase == "failed")
-            btn.set_state(active, warning)
-            btn.setEnabled(active or not reason)
-            btn.setToolTip(reason)
-            tone(btn, "active" if active else "warning" if warning else "")
+            stage = self.STAGE_MAP[i]
+            reason = navigation_reason(s, stage)
+            if stage == 0 and i > current and s.stage == 0:
+                reason = '请按底部主操作完成当前采集步骤。'
+            active = i == current
+            blocked = (i == 2 and s.capture.phase == 'failed') or (i == 3 and s.region.support == 'missing') or (i == 4 and s.plan.phase == 'failed')
+            warning = i == 3 and s.region.support == 'partial'
+            btn.set_state(active, warning, completed[i], blocked)
+            btn.setEnabled((active and not s.busy) or not reason)
+            btn.setToolTip(reason or ('已完成' if completed[i] and not active else '当前步骤' if active else '查看此步骤'))
+            tone(btn, 'bad' if blocked else 'warning' if warning else 'current' if active else 'good' if completed[i] else 'idle')
+        if self._visible_milestone != current:
+            self.scroll.ensureWidgetVisible(self.buttons[current], 0, 8)
+            self._visible_milestone = current
+        if s.replay_mode:
+            self.mode_badge.setText('项目回放 · 只读')
+            self.mode_note.setText('显示已保存数据，不连接相机')
+            status, status_tone = '● 未连接', 'idle'
+            data = {'camera': ('○ 未连接', 'idle'), 'rgb': ('● 回放数据', 'current'), 'depth': ('● 回放数据', 'current'), 'reference': ('● 已载入', 'current')}
+        else:
+            self.mode_badge.setText('研发模拟 · 不连接设备')
+            self.mode_note.setText('仅供交互预览，不用于治疗执行')
+            active = s.capture.phase != 'idle'
+            status, status_tone = ('● 模拟中', 'current') if active else ('○ 未就绪', 'idle')
+            data = {'camera': ('● 模拟' if active else '○ 未就绪', 'current' if active else 'idle'), 'rgb': ('● 模拟画面' if active else '○ 未获取', 'current' if active else 'idle'), 'depth': ('● 模拟画面' if active else '○ 未获取', 'current' if active else 'idle'), 'reference': ('● 模拟已建' if s.capture.reference_ready else '○ 未建立', 'good' if s.capture.reference_ready else 'idle')}
+        self.device_status.setText(status)
+        tone(self.device_status, status_tone)
+        for key, (text, color) in data.items():
+            self.device_values[key].setText(text)
+            tone(self.device_values[key], color)
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QPushButton, QToolButton, QMenu
 
 
 class ActionBar(QFrame):
     action_requested = Signal(str)
+    details_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("actionBar")
+        self.setFixedHeight(80)
         row = QHBoxLayout(self)
         row.setContentsMargins(16, 7, 16, 7)
         row.setSpacing(10)
         self.notice = text_label("", "actionNotice", True)
         self.notice.setMinimumWidth(230)
-        row.addWidget(self.notice)
+        copy = QVBoxLayout()
+        copy.setSpacing(3)
+        copy.addWidget(self.notice)
         self.telemetry = text_label("", "statusTelemetry")
-        row.addWidget(self.telemetry, 1)
+        copy.addWidget(self.telemetry)
+        row.addLayout(copy, 1)
+        self.details = QToolButton()
+        self.details.setObjectName("detailsButton")
+        self.details.setText("状态详情")
+        self.details.setFixedHeight(42)
+        self.details.clicked.connect(self.details_requested.emit)
+        row.addWidget(self.details)
+        self.more = QToolButton()
+        self.more.setObjectName("moreButton")
+        self.more.setText("更多")
+        self.more.setFixedHeight(42)
+        self.more.setPopupMode(QToolButton.InstantPopup)
+        self.more_menu = QMenu(self.more)
+        self._menu_signature = None
+        self.more.setMenu(self.more_menu)
+        row.addWidget(self.more)
         self.secondary = []
         for _ in range(2):
             btn = QPushButton()
             btn.setObjectName("secondaryButton")
-            btn.setMinimumHeight(46)
+            btn.setFixedHeight(42)
             btn.clicked.connect(lambda _=False, b=btn: self.action_requested.emit(b.property("action")))
-            row.addWidget(btn)
+            btn.hide()
             self.secondary.append(btn)
         self.primary = QPushButton()
         self.primary.setObjectName("primaryButton")
-        self.primary.setMinimumSize(200, 48)
+        self.primary.setProperty("role", "primary")
+        self.primary.setFixedSize(290, 52)
         self.primary.clicked.connect(lambda: self.action_requested.emit(self.primary.property("action")))
         row.addWidget(self.primary)
 
@@ -1275,7 +1452,7 @@ class ActionBar(QFrame):
         self.telemetry.setText(text)
 
     def update_state(self, primary, secondary, notice, severity, telemetry=""):
-        status = "▱  项目已加载" if severity == "normal" else ("！  " + notice)
+        status = ("●  " if severity == "normal" else "！  ") + notice
         self.notice.setText(status)
         tone(self.notice, severity)
         if telemetry:
@@ -1285,8 +1462,17 @@ class ActionBar(QFrame):
             btn.setProperty("action", action.key)
             btn.setEnabled(action.enabled)
             btn.setToolTip(action.reason if not action.enabled else "")
-        for index, btn in enumerate(self.secondary):
-            btn.setVisible(index < len(secondary))
+        signature = tuple((a.key, a.text, a.enabled, a.reason) for a in secondary)
+        # Capture refreshes every 650 ms; keep an open menu usable across ticks.
+        if signature != self._menu_signature:
+            self.more_menu.clear()
+            for action in secondary:
+                item = self.more_menu.addAction(action.text)
+                item.setEnabled(action.enabled)
+                item.setToolTip(action.reason)
+                item.triggered.connect(lambda _=False, key=action.key: self.action_requested.emit(key))
+            self._menu_signature = signature
+        self.more.setEnabled(bool(secondary))
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFrame, QPushButton, QVBoxLayout
@@ -1304,7 +1490,7 @@ class ToolPalette(QFrame):
         col.setContentsMargins(5, 5, 5, 5)
         col.setSpacing(4)
         self.buttons = {}
-        for key, text in (("work", "＋  规划区"), ("forbid", "⊘  禁入区"), ("erase", "－  擦除"), ("undo", "↶  撤销"), ("clear", "清空标记")):
+        for key, text in (("work", "规划区"), ("forbid", "禁入区"), ("erase", "擦除"), ("undo", "撤销"), ("clear", "清空标记")):
             btn = QPushButton(text)
             btn.setObjectName("toolButton")
             btn.setMinimumSize(96, 44)
@@ -1326,100 +1512,62 @@ class ToolPalette(QFrame):
         self.buttons["undo"].setEnabled(can_undo and not s.busy)
         self.buttons["clear"].setEnabled(bool(s.region.strokes) and not s.busy)
 
-from PySide6.QtWidgets import QProgressBar
 
 
 class CapturePage(StatusPanel):
-    """Compact Inspector for acquisition, quality and spatial data."""
+    """Acquisition Inspector with one prominent phase and factual data rows."""
 
     def __init__(self):
         super().__init__()
-        self.section("采集信息")
-        self.phase = self.row("采集状态")
-        self.resolution = self.row("相机分辨率")
-        self.fps = self.row("帧率 FPS")
-        self.capture_time = self.row("采集时间")
-        self.frames = self.row("有效视角")
+        self.section('当前状态')
+        self.phase = self.note('等待建立参考位置', 'phaseLabel')
+        self.hint = self.note('保持相机与目标稳定\n在下方开始模拟采集', 'panelHint')
         self.divider()
-
-        self.section("数据质量")
-        self.coverage = self.row("覆盖率")
-        self.coverage_bar = self.metric_bar()
-        self.stability = self.row("有效深度")
-        self.progress = self.metric_bar()
-        self.views_bar = self.metric_bar()
+        self.section('采集信息')
+        self.camera = self.row('相机状态')
+        self.rgb = self.row('RGB 图像')
+        self.depth = self.row('深度图像')
+        self.surface = self.row('三维表面')
+        self.reference = self.row('参考位置')
+        self.pose = self.reference
         self.divider()
-
-        self.section("空间数据")
-        self.depth = self.row("深度数据")
-        self.pose = self.row("相机位姿")
-        self.reference = self.row("空间基准")
-        self.surface = self.row("表面模型")
-        self.problem = self.issue("查看缺失位置  →", "capture")
-        self.hint = self.note("", "panelHint")
-        self.result_note = self.note("", "panelHint")
-        self.hint.setVisible(False)
-        self.result_note.setVisible(False)
+        self.section('当前采集')
+        self.frames = self.row('有效视角帧数')
+        self.frames.setObjectName('metricValue')
+        self.minimum_frames = self.row('建议最少帧数')
+        self.value(self.minimum_frames, '3 帧')
+        self.problem = self.issue('查看待补采位置  →', 'capture')
+        self.problem.hide()
+        self.result_note = self.note('补采会保留参考位置。\n完成后检查三维表面质量。', 'panelHint')
         self.finish()
-
-    def metric_bar(self):
-        bar = QProgressBar()
-        bar.setObjectName("inspectorProgress")
-        bar.setRange(0, 100)
-        bar.setTextVisible(False)
-        bar.setFixedHeight(8)
-        self.column.addWidget(bar)
-        return bar
-
-    @staticmethod
-    def _percent(value, default=0):
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            return default
-        return value * 100 if 0 <= value <= 1 else value
 
     def update_state(self, s):
         c = s.capture
-        names = {"idle": "待开始", "capturing": "采集中", "checking": "检查中", "passed": "已就绪", "failed": "需补采"}
-        self.value(self.phase, names[c.phase], "bad" if c.phase == "failed" else "good" if c.phase == "passed" else "")
-        self.value(self.resolution, "1920 × 1080")
-        self.value(self.fps, "30")
+        names = {'idle': '等待建立参考位置', 'capturing': '正在模拟采集', 'checking': '正在检查模型', 'passed': '三维模型已就绪', 'failed': '质量不足，需补采'}
+        hints = {'idle': '保持相机与目标稳定\n在下方开始模拟采集', 'capturing': '多角度补充目标表面\n至少采集 3 个模拟视角', 'checking': '正在检查三维表面\n检查完成后可继续', 'passed': '模型检查已完成\n可继续标记目标区域', 'failed': '发现三维数据缺失\n请定位缺失处后继续补采'}
+        phase_tone = 'bad' if c.phase == 'failed' else 'good' if c.phase == 'passed' else 'current' if c.phase in ('capturing', 'checking') else 'idle'
+        self.value(self.phase, names.get(c.phase, '等待确认'), phase_tone)
+        self.hint.setText(hints.get(c.phase, '请按底部提示继续操作'))
+        self.value(self.frames, f'{c.frames} 帧', 'good' if c.frames >= 3 else 'idle')
         if s.replay_mode:
-            created = str(s.replay_stats.get("created_local", ""))
-            self.value(self.capture_time, created.replace("T", " ")[:16] or "—")
+            self.value(self.phase, '查看已保存采集', 'current')
+            self.hint.setText('当前为项目数据回放\n相机未连接，不执行采集')
+            self.value(self.camera, '○ 未连接', 'idle')
+            self.value(self.rgb, '● 回放数据', 'current')
+            self.value(self.depth, '● 回放数据', 'current')
+            self.value(self.reference, '● 已载入', 'current')
+            self.value(self.surface, '仅供校对', 'warning')
+            self.result_note.setText('仅显示已保存采集与检查结果。')
         else:
-            self.value(self.capture_time, "演示采集")
-        self.value(self.frames, f"{c.frames} / 3" if c.frames else "0 / 3", "good" if c.frames >= 3 else "")
-        self.views_bar.setValue(min(100, int(c.frames / 3 * 100)))
-
-        if s.replay_mode:
-            coverage = self._percent(s.replay_stats.get("geometry_support_ratio"), 96)
-            depth = self._percent(s.replay_stats.get("valid_depth_ratio_mean"), 75)
-        else:
-            coverage = c.support
-            depth = c.stability if c.reference_ready else 0
-        coverage = max(0, min(100, int(coverage)))
-        depth = max(0, min(100, int(depth)))
-        self.value(self.coverage, f"{coverage}%")
-        self.coverage_bar.setValue(coverage)
-        self.value(self.stability, f"{depth}%", "warning" if depth < 90 and s.replay_mode else "")
-        self.progress.setValue(depth)
-
-        checked = c.phase in ("passed", "failed")
-        if s.replay_mode:
-            self.value(self.depth, "已获取", "good")
-            self.value(self.pose, "已建立", "good")
-            self.value(self.reference, "已对齐", "good")
-            self.value(self.surface, "仅供校对", "warning")
-        else:
-            status = "已获取" if checked else "待检查"
-            status_tone = "good" if checked else ""
-            self.value(self.depth, status, status_tone)
-            self.value(self.pose, "已建立" if checked else "待建立", status_tone)
-            self.value(self.reference, "已对齐" if c.reference_ready else "待建立", "good" if c.reference_ready else "")
-            self.value(self.surface, "已生成" if checked else "待检查", status_tone)
-        self.problem.setVisible(c.phase == "failed")
+            active = c.phase != 'idle'
+            self.value(self.camera, '● 模拟中' if active else '○ 未就绪', 'current' if active else 'idle')
+            self.value(self.rgb, '● 模拟画面' if active else '○ 未获取', 'current' if active else 'idle')
+            self.value(self.depth, '● 模拟画面' if active else '○ 未获取', 'current' if active else 'idle')
+            self.value(self.reference, '● 模拟已建立' if c.reference_ready else '○ 未建立', 'good' if c.reference_ready else 'idle')
+            surface = {'idle': '等待采集', 'capturing': '采集中', 'checking': '检查中', 'passed': '● 模拟已生成', 'failed': '● 模拟有缺失'}
+            self.value(self.surface, surface.get(c.phase, '等待确认'), phase_tone)
+            self.result_note.setText('补采会保留参考位置。\n完成后检查三维表面质量。')
+        self.problem.setVisible(c.phase == 'failed')
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton
@@ -1452,10 +1600,10 @@ class RegionPage(StatusPanel):
 
     def update_state(self, s):
         r = s.region
-        self.value(self.work, "✓ 已标记" if r.has_work else "待标记", "good" if r.has_work else "")
+        self.value(self.work, "● 已标记" if r.has_work else "待标记", "good" if r.has_work else "")
         self.value(self.forbidden, "已标记" if r.has_forbidden else "尚未标记")
         names = {
-            "unchecked": "待检查", "checking": "检查中…", "valid": "✓ 已确认",
+            "unchecked": "待检查", "checking": "检查中…", "valid": "● 已确认",
             "partial": "⚠ 部分未确认", "missing": "阻断 · 局部缺失",
         }
         self.value(self.support, names.get(r.support, "待检查"), "bad" if r.support in ("missing", "partial") else "good" if r.support == "valid" else "")
@@ -1549,18 +1697,18 @@ class PlanningPage(StatusPanel):
         self.error.setVisible(bool(error))
         ready = p.phase in ("ready", "failed")
         stats = s.replay_stats
-        self.value(self.region, "✓ 原始规划记录" if s.replay_mode and ready else "✓ 已规划" if ready else "等待生成", "good" if ready else "")
-        self.value(self.forbidden, "原始禁入区记录" if s.replay_mode and ready else "✓ 未进入 · 模拟" if ready else "等待检查", "good" if ready else "")
+        self.value(self.region, "● 原始规划记录" if s.replay_mode and ready else "● 已规划" if ready else "等待生成", "good" if ready else "")
+        self.value(self.forbidden, "原始禁入区记录" if s.replay_mode and ready else "● 未进入 · 模拟" if ready else "等待检查", "good" if ready else "")
         if s.replay_mode and ready:
             geometry = stats.get("geometry_status", "已记录")
             geometry_label = "部分未确认" if "unconfirmed" in geometry else "已确认"
             self.value(self.geometry, geometry_label, "bad" if "unconfirmed" in geometry else "good")
             gaps = int(stats.get("gap_count", 0))
-            continuity = f"局部断开 · {gaps} 个缺口" if gaps else "✓ 连续"
+            continuity = f"局部断开 · {gaps} 个缺口" if gaps else "● 连续"
             self.value(self.continuity, continuity, "bad" if gaps else "good")
         else:
-            self.value(self.geometry, "✓ 有效 · 模拟", "good")
-            self.value(self.continuity, "局部断开" if p.phase == "failed" else "✓ 段内连续 · 模拟" if ready else "等待生成", "bad" if p.phase == "failed" else "good" if ready else "")
+            self.value(self.geometry, "● 有效 · 模拟", "good")
+            self.value(self.continuity, "局部断开" if p.phase == "failed" else "● 段内连续 · 模拟" if ready else "等待生成", "bad" if p.phase == "failed" else "good" if ready else "")
         self.route_issue.setVisible(p.phase == "failed")
         self.edge_issue.setVisible(ready and (not s.replay_mode or stats.get("coverage_status") == "partial"))
 
@@ -1569,7 +1717,7 @@ class PlanningPage(StatusPanel):
 class ConfirmationPage(StatusPanel):
     def __init__(self):
         super().__init__()
-        self.section("运行预览")
+        self.section("规划确认")
         self.patient = self.row("患者")
         self.task = self.row("目标区域")
         self.model = self.row("采集模型")
@@ -1617,18 +1765,18 @@ class ConfirmationPage(StatusPanel):
             self.warning.setText(f"存在 {gaps} 个路线缺口，查看轨迹端点  →" if gaps else "查看边缘未覆盖位置  →")
             self.warning.setVisible(bool(gaps or coverage == "partial"))
             self.checks.setText(
-                "✓ 规划区与三维支持记录已载入\n"
+                "● 规划区与三维支持记录已载入\n"
                 f"• 覆盖状态：{coverage}\n"
                 f"• 扫描缺口：{gaps} 个；路线仅供只读核对"
             )
         else:
             self.warning.setText("边缘未覆盖区域需核对  →")
             self.warning.setVisible(True)
-            self.checks.setText("✓ 规划区与三维支持已检查\n✓ 禁入区未进入（模拟）\n✓ 扫描段连续（模拟）" if s.plan_current else "当前规划需要重新检查。")
+            self.checks.setText("● 规划区与三维支持已检查\n● 禁入区未进入（模拟）\n● 扫描段连续（模拟）" if s.plan_current else "当前规划需要重新检查。")
         self.saved.setText(
             "项目回放为只读记录，不保存、不覆盖原始数据。"
             if s.replay_mode else
-            "✓ 本版本已保存，可在历史中查看。" if p.saved_id else
+            "● 本版本已保存，可在历史中查看。" if p.saved_id else
             "保存后保留当前模型来源、区域、参数与检查结果。"
         )
 
@@ -1648,6 +1796,7 @@ class ViewportScene:
     segments: list[RouteSegment] = field(default_factory=list)
     capture_phase: str = "idle"
     capture_progress: int = 0
+    reference_ready: bool = False
     scenario: str = "normal"
     region_complete: bool = False
     geometry_repaired: bool = False
@@ -1664,6 +1813,7 @@ def scene_from_state(s):
         strokes=deepcopy(s.region.strokes), segments=deepcopy(s.plan.segments),
         capture_phase={"passed": "quality_good", "failed": "quality_bad"}.get(s.capture.phase, s.capture.phase),
         capture_progress=s.capture.frames, scenario=s.scenario,
+        reference_ready=s.capture.reference_ready,
         region_complete=s.region.support in ("valid", "missing"),
         geometry_repaired=s.region.geometry_repaired,
         trajectory_generated=s.plan.phase in ("ready", "failed"),
@@ -1683,16 +1833,39 @@ class Medical3DViewport(QWidget):
     def reset_view(self) -> None:
         raise NotImplementedError
 
+    def set_navigation_tool(self, tool: str) -> None:
+        raise NotImplementedError
+
+    def zoom_in(self) -> None:
+        raise NotImplementedError
+
 
 def create_viewport(parent=None) -> Medical3DViewport:
     return MockViewport(parent)
 
-"""QPainter demonstration viewport. Workflow decisions belong to the controller."""
+"""Illustrative QPainter viewport; coordinates stay stable for marked regions."""
 from copy import deepcopy
-from math import sin
+from math import cos, exp, pi, sin
+from random import Random
+
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QRadialGradient
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
 from PySide6.QtWidgets import QLabel
+
+
+
+def color(name, alpha=None):
+    result = QColor(COLORS.get(name, name))
+    if alpha is not None:
+        result.setAlpha(alpha)
+    return result
+
+
+def font(size, weight=QFont.Normal):
+    result = QFont("Microsoft YaHei")
+    result.setPixelSize(size)
+    result.setWeight(weight)
+    return result
 
 
 class MockViewport(Medical3DViewport):
@@ -1702,50 +1875,74 @@ class MockViewport(Medical3DViewport):
         self.setMinimumSize(520, 380)
         self.setMouseTracking(True)
         self._drawing = None
+        self._navigation_tool = "select"
         self._zoom = 1.0
         self._pan = QPointF()
         self._pan_last = None
         self._scale, self._offset = 1.0, QPointF()
-        # Enable a quiet breathing highlight only while an actionable issue
-        # is present.  It draws attention without distracting from planning.
         self._pulse_phase = 0.0
         self._pulse_timer = QTimer(self)
         self._pulse_timer.setInterval(55)
         self._pulse_timer.timeout.connect(self._pulse_tick)
+        self._surface_points = self._make_surface_points()
         self.tag = QLabel(self)
         self.tag.setObjectName("viewportTag")
+        self.tag.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.hint = QLabel(self)
         self.hint.setObjectName("viewportHint")
         self.hint.setWordWrap(True)
-        self.hint.setFixedWidth(224)
+        self.hint.setFixedWidth(228)
+        self.hint.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.legend = QLabel(self)
         self.legend.setObjectName("viewportLegend")
-        self.setToolTip("左键绘制规划区 · 右键平移 · 滚轮缩放")
+        self.legend.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.legend.hide()
+        self.setToolTip("模拟数据 · 左键标记 · 右键平移 · 滚轮缩放")
+        self.set_scene(self.state)
 
     def set_scene(self, scene):
         self.state = deepcopy(scene)
         self._drawing = None
-        self.tag.setText(f"{scene.view} · 实时画面")
+        self.tag.setText(f"{scene.view} · {'等待画面' if self._is_empty() else '模拟数据'}")
         missing = scene.scenario == "geometry" and scene.region_complete and not scene.geometry_repaired
-        problem = "该区域缺少可靠三维数据。已画选区保留，补采后可继续。" if missing else "左侧三维数据缺失，请移动相机继续补采。" if scene.capture_phase == "quality_bad" else "扫描线在高亮位置断开，请返回规划检查处理。" if scene.trajectory_failed else ""
+        problem = (
+            "三维数据缺失\n已画区域保留，返回补采后继续。" if missing
+            else "采集质量不足\n移动相机补充高亮区域。" if scene.capture_phase == "quality_bad"
+            else "轨迹断开\n请返回规划检查高亮位置。" if scene.trajectory_failed
+            else ""
+        )
         self.hint.setText(problem)
         self.hint.setVisible(bool(problem))
-        if scene.stage == 0:
-            legend = "绿色 · 可靠采集   灰色 · 未采集   黄色 · 待检查   红色 · 不可用"
-        elif scene.stage == 1:
-            legend = "绿色 · 规划区   红色 · 禁入区   紫色 · 缺失三维"
-        else:
-            legend = "黄色 · 扫描段   蓝色虚线 · 不可治疗连接   红色 · 禁入区"
-        self.legend.setText(legend)
-        self.legend.setVisible(False)
-        has_issue = bool(problem) or self.state.issue_focus in ("geometry", "route", "edge")
-        if has_issue:
+        if problem or scene.issue_focus in ("geometry", "route", "edge"):
             if not self._pulse_timer.isActive():
                 self._pulse_timer.start()
         else:
             self._pulse_timer.stop()
         self._position_overlays()
-        self.setCursor(Qt.CrossCursor if scene.editable else Qt.ArrowCursor)
+        self._update_cursor()
+        self.update()
+
+    def _is_empty(self):
+        return self.state.stage == 0 and self.state.capture_phase == "idle"
+
+    def set_navigation_tool(self, tool):
+        if tool not in ("select", "pan", "zoom"):
+            raise ValueError(f"未知视图工具: {tool}")
+        self._navigation_tool = tool
+        self._pan_last = None
+        self._update_cursor()
+
+    def _update_cursor(self):
+        if self._navigation_tool == "pan":
+            cursor = Qt.OpenHandCursor
+        elif self._navigation_tool == "zoom" or self.state.editable:
+            cursor = Qt.CrossCursor
+        else:
+            cursor = Qt.ArrowCursor
+        self.setCursor(cursor)
+
+    def zoom_in(self):
+        self._zoom = min(2.2, self._zoom * 1.15)
         self.update()
 
     def reset_view(self):
@@ -1754,37 +1951,39 @@ class MockViewport(Medical3DViewport):
         self.update()
 
     def _pulse_tick(self):
-        self._pulse_phase = (self._pulse_phase + 0.22) % (2 * 3.141592653589793)
+        self._pulse_phase = (self._pulse_phase + 0.22) % (2 * pi)
         self.update()
 
-    def _pulse_strength(self) -> float:
+    def _pulse_strength(self):
         return 0.5 + 0.5 * sin(self._pulse_phase)
 
     def _position_overlays(self):
         self.tag.adjustSize()
-        self.tag.move(18, 16)
+        self.tag.move(136 if self.state.stage == 1 else 16, 14)
         self.hint.adjustSize()
-        self.hint.move(self.width()-self.hint.width()-18, 16)
-        self.legend.adjustSize()
-        self.legend.move(18, self.height()-self.legend.height()-14)
+        self.hint.move(max(16, self.width() - self.hint.width() - 16), 14)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._position_overlays()
 
     def _view_transform(self):
-        scale = min(self.width()/850, self.height()/700) * self._zoom
-        offset = QPointF((self.width()-850*scale)/2, (self.height()-700*scale)/2) + self._pan
+        scale = min(self.width() / 850, self.height() / 700) * self._zoom
+        offset = QPointF((self.width() - 850 * scale) / 2, (self.height() - 700 * scale) / 2) + self._pan
         self._scale, self._offset = scale, offset
         return scale, offset
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(self.rect(), QColor("#080d12"))
-        if self.state.view not in ("RGB", "固定 RGB", "RGB 路线图"):
-            self._draw_space_grid(p)
+        p.fillRect(self.rect(), color("viewport"))
+        self._draw_space_grid(p)
+        if self._is_empty():
+            self._draw_empty(p)
+            p.end()
+            return
         scale, offset = self._view_transform()
+        p.save()
         p.translate(offset)
         p.scale(scale, scale)
         self._draw_surface(p)
@@ -1802,39 +2001,224 @@ class MockViewport(Medical3DViewport):
             elif self.state.trajectory_failed or self.state.issue_focus in ("route", "edge"):
                 x, y = self._work_center()
                 if self.state.issue_focus == "edge" and not self.state.trajectory_failed:
-                    self._issue_patch(p, x-60, y+70, QColor("#ffd166"), "边缘未覆盖")
+                    self._issue_patch(p, x - 60, y + 70, color("warning"), "边缘未覆盖")
                 else:
-                    self._issue_patch(p, x, y, QColor("#ef476f"), "断开")
+                    self._issue_patch(p, x, y, color("error"), "轨迹断开")
+        if self.state.reference_ready:
+            self._draw_reference(p)
+        p.restore()
+        if self.state.show_axes or self.state.view in ("三维", "点云", "模型", "三维模型"):
+            self._draw_axes(p)
+        self._draw_legend(p)
+        p.setFont(font(12))
+        p.setPen(color("subtle"))
+        p.drawText(QRectF(16, self.height() - 28, max(100, self.width() - 245), 18), Qt.AlignLeft | Qt.AlignVCenter, "模拟表面 · 仅用于交互演示")
         p.end()
 
+    def _draw_space_grid(self, p):
+        w, h = self.width(), self.height()
+        p.save()
+        p.setPen(QPen(color("grid", 76), 1))
+        horizon = h * 0.57
+        for x in range(0, w + 1, 64):
+            p.drawLine(QPointF(x, 0), QPointF(x, horizon))
+        for y in range(0, int(horizon), 64):
+            p.drawLine(QPointF(0, y), QPointF(w, y))
+        for x in range(-w, 2 * w + 1, max(70, w // 10)):
+            p.drawLine(QPointF(w * .5, horizon - h * .12), QPointF(x, h))
+        for fraction in (.06, .16, .30, .49, .72, 1.0):
+            y = horizon + (h - horizon) * fraction
+            p.drawLine(QPointF(0, y), QPointF(w, y))
+        p.restore()
+
+    def _draw_empty(self, p):
+        p.save()
+        cx, cy = self.width() / 2, self.height() / 2
+        frame_w = min(self.width() * .70, 520)
+        frame_h = min(self.height() * .54, 310)
+        rect = QRectF(cx - frame_w / 2, cy - frame_h / 2 - 14, frame_w, frame_h)
+        p.setPen(QPen(color("border"), 1.5))
+        corner = 25
+        for x, y, sx, sy in ((rect.left(), rect.top(), 1, 1), (rect.right(), rect.top(), -1, 1), (rect.left(), rect.bottom(), 1, -1), (rect.right(), rect.bottom(), -1, -1)):
+            p.drawLine(QPointF(x, y), QPointF(x + sx * corner, y))
+            p.drawLine(QPointF(x, y), QPointF(x, y + sy * corner))
+        icon_center = QPointF(cx, cy - 50)
+        p.setPen(QPen(color("subtle"), 1.5))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(cx - 28, cy - 70, 56, 39), 4, 4)
+        p.drawEllipse(icon_center, 10, 10)
+        p.drawLine(QPointF(cx - 12, cy - 70), QPointF(cx - 6, cy - 77))
+        p.drawLine(QPointF(cx - 6, cy - 77), QPointF(cx + 10, cy - 77))
+        p.drawLine(QPointF(cx + 10, cy - 77), QPointF(cx + 16, cy - 70))
+        p.setFont(font(22, QFont.DemiBold))
+        p.setPen(color("text"))
+        p.drawText(QRectF(cx - 210, cy - 5, 420, 36), Qt.AlignCenter, "等待相机画面")
+        p.setFont(font(14))
+        p.setPen(color("muted"))
+        p.drawText(QRectF(cx - 220, cy + 37, 440, 25), Qt.AlignCenter, "请确认 Femto Bolt 已连接")
+        p.setPen(QPen(color("subtle", 130), 1))
+        cross_y = rect.bottom() - 21
+        p.drawLine(QPointF(cx - 5, cross_y), QPointF(cx + 5, cross_y))
+        p.drawLine(QPointF(cx, cross_y - 5), QPointF(cx, cross_y + 5))
+        p.setFont(font(12))
+        p.setPen(color("subtle"))
+        p.drawText(QRectF(18, self.height() - 33, self.width() - 36, 20), Qt.AlignLeft | Qt.AlignVCenter, "参考位置未建立  /  W0 待建立")
+        p.restore()
+
+    @staticmethod
+    def _surface_path():
+        path = QPainterPath(QPointF(369, 59))
+        path.cubicTo(393, 66, 438, 66, 461, 59)
+        path.cubicTo(462, 88, 471, 107, 490, 117)
+        path.cubicTo(522, 127, 578, 134, 608, 156)
+        path.cubicTo(638, 177, 651, 212, 647, 240)
+        path.cubicTo(635, 263, 613, 277, 588, 282)
+        path.cubicTo(579, 326, 566, 357, 566, 408)
+        path.cubicTo(565, 457, 557, 480, 563, 518)
+        path.cubicTo(567, 551, 574, 579, 551, 600)
+        path.cubicTo(500, 621, 335, 621, 281, 600)
+        path.cubicTo(258, 579, 265, 551, 269, 518)
+        path.cubicTo(275, 480, 267, 457, 266, 408)
+        path.cubicTo(266, 357, 253, 326, 244, 282)
+        path.cubicTo(219, 277, 197, 263, 185, 240)
+        path.cubicTo(181, 212, 194, 177, 224, 156)
+        path.cubicTo(254, 134, 310, 127, 342, 117)
+        path.cubicTo(361, 107, 368, 88, 369, 59)
+        path.closeSubpath()
+        return path
+
+    def _make_surface_points(self):
+        rng = Random(732)
+        path = self._surface_path()
+        points = []
+        for y in range(58, 618, 5):
+            for x in range(180, 652, 5):
+                px, py = x + rng.uniform(-2, 2), y + rng.uniform(-2, 2)
+                if not path.contains(QPointF(px, py)):
+                    continue
+                center_light = max(0, cos((px - 416) / 240 * pi / 2))
+                chest = exp(-((py - 233) / 90) ** 2) * (.65 + .35 * cos((px - 416) / 78))
+                side_light = .10 * sin(px * .043 + py * .012)
+                strength = max(.18, min(1, .20 + .49 * center_light + .19 * chest + side_light + rng.uniform(-.14, .14)))
+                points.append((px, py, strength, rng.uniform(.7, 1.2)))
+        return points
+
+    @staticmethod
+    def _acquired_path():
+        path = QPainterPath(QPointF(338, 218))
+        path.cubicTo(371, 195, 414, 210, 438, 199)
+        path.cubicTo(466, 192, 483, 214, 478, 237)
+        path.cubicTo(497, 248, 484, 277, 491, 302)
+        path.cubicTo(482, 322, 490, 353, 474, 369)
+        path.cubicTo(480, 393, 458, 410, 465, 435)
+        path.cubicTo(452, 453, 464, 480, 440, 494)
+        path.cubicTo(414, 504, 397, 484, 375, 491)
+        path.cubicTo(353, 479, 325, 474, 320, 450)
+        path.cubicTo(301, 428, 319, 406, 302, 384)
+        path.cubicTo(287, 361, 305, 338, 297, 313)
+        path.cubicTo(293, 286, 317, 271, 314, 249)
+        path.cubicTo(312, 234, 326, 230, 338, 218)
+        path.closeSubpath()
+        return path
+
+    def _draw_surface(self, p):
+        body = self._surface_path()
+        rgb = self.state.view in ("RGB", "固定 RGB", "RGB 路线图", "选区 RGB")
+        cloud = self.state.view == "点云"
+        depth_mode = self.state.view == "深度"
+        mesh = not (rgb or cloud or depth_mode)
+        p.save()
+        p.setPen(Qt.NoPen)
+        p.setBrush(color("panel", 120))
+        p.drawEllipse(QRectF(235, 624, 365, 18))
+        gradient = QLinearGradient(220, 0, 610, 0)
+        gradient.setColorAt(0, color("viewport"))
+        gradient.setColorAt(.30, color("subtle" if rgb else "secondary"))
+        gradient.setColorAt(.62, color("muted" if rgb else "hover" if mesh else "control"))
+        gradient.setColorAt(1, color("viewport"))
+        p.setBrush(gradient)
+        p.setPen(QPen(color("muted", 90), 1.1))
+        p.drawPath(body)
+        p.setClipPath(body)
+        sheen = QRadialGradient(QPointF(387, 254), 270)
+        sheen.setColorAt(0, color("text" if rgb else "muted", 40 if rgb else 35))
+        sheen.setColorAt(1, color("viewport", 0))
+        p.fillRect(QRectF(175, 55, 485, 570), sheen)
+        if rgb or mesh:
+            # Broad matte highlights describe volume without implying a photo.
+            for cx, cy, radius, strength in ((334, 238, 116, 22), (490, 238, 116, 17), (405, 429, 155, 22)):
+                contour = QRadialGradient(QPointF(cx, cy), radius)
+                contour.setColorAt(0, color("text", strength))
+                contour.setColorAt(1, color("text", 0))
+                p.fillRect(QRectF(cx - radius, cy - radius, radius * 2, radius * 2), contour)
+        if depth_mode:
+            depth = QLinearGradient(0, 70, 0, 620)
+            depth.setColorAt(0, color("primary_pressed"))
+            depth.setColorAt(.25, color("primary_hover"))
+            depth.setColorAt(.58, color("good"))
+            depth.setColorAt(.84, color("warning"))
+            depth.setColorAt(1, color("pending"))
+            p.fillPath(body, depth)
+        p.setBrush(Qt.NoBrush)
+        if mesh or depth_mode:
+            for y in range(136, 613, 23 if mesh else 35):
+                curve = QPainterPath(QPointF(178, y))
+                curve.cubicTo(294, y + 31, 505, y + 31, 655, y - 7)
+                p.setPen(QPen(color("muted", 94) if mesh else color("viewport", 45), .9))
+                p.drawPath(curve)
+        if mesh:
+            for x in range(230, 616, 31):
+                curve = QPainterPath(QPointF(x, 118))
+                curve.cubicTo(x + (416 - x) * .10, 283, x + (416 - x) * .19, 393, x, 612)
+                p.setPen(QPen(color("muted", 62), .8))
+                p.drawPath(curve)
+        if cloud:
+            for px, py, strength, radius in self._surface_points:
+                alpha = int(44 + strength * 150)
+                p.setPen(QPen(color("muted" if strength < .55 else "text", alpha), radius * 1.1))
+                p.drawPoint(QPointF(px, py))
+        p.restore()
+
     def _draw_capture(self, p):
-        if self.state.capture_phase == "idle":
-            return
+        progress = min(1.0, max(.12, self.state.capture_progress / 6))
+        acquired = self._acquired_path()
         p.save()
         p.setClipPath(self._surface_path())
-        p.setPen(Qt.NoPen)
-        height = 60 + self.state.capture_progress*74
-        p.fillRect(QRectF(180, 112, 480, min(500, height)), QColor(34, 201, 151, 68))
-        if self.state.capture_phase == "capturing":
-            p.setPen(QPen(QColor("#06d6a0"), 1.8))
-            p.drawLine(QPointF(180, min(600, 112+height)), QPointF(650, min(600, 112+height)))
-            p.setBrush(QColor(255, 209, 102, 70))
-            p.setPen(Qt.NoPen)
-            p.drawEllipse(QRectF(480, 380, 90, 130))
+        p.setClipRect(QRectF(175, 90, 490, 130 + 420 * progress), Qt.IntersectClip)
+        p.setBrush(color("good", 25 if self.state.view == "点云" else 42 if self.state.view != "深度" else 0))
+        p.setPen(QPen(color("good", 165), 1.35))
+        p.drawPath(acquired)
+        if self.state.view == "点云":
+            for px, py, strength, radius in self._surface_points:
+                if acquired.contains(QPointF(px, py)):
+                    p.setPen(QPen(color("good", int(95 + 150 * strength)), radius * 1.4))
+                    p.drawPoint(QPointF(px, py))
+                elif 470 < px < 518 + 7 * sin(py / 22) and 208 < py < 502:
+                    p.setPen(QPen(color("pending", 185), radius * 1.25))
+                    p.drawPoint(QPointF(px, py))
+        else:
+            pending = QPainterPath(QPointF(489, 212))
+            pending.cubicTo(525, 262, 513, 313, 515, 363)
+            pending.cubicTo(506, 406, 521, 460, 484, 497)
+            p.setPen(QPen(color("pending", 160), 2, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawPath(pending)
         p.restore()
         if self.state.capture_phase == "quality_bad":
-            self._issue_patch(p, 315, 490, QColor("#ef476f"), "待补采")
+            self._issue_patch(p, 315, 490, color("warning"), "待补采")
         if self.state.issue_focus == "geometry":
+            p.save()
+            p.setClipPath(self._surface_path())
             self._draw_strokes(p)
+            p.restore()
             self._draw_geometry_issue(p)
 
     def _draw_strokes(self, p):
         for stroke in self.state.strokes:
             if not stroke.points:
                 continue
-            color = QColor(6, 214, 160, 112) if stroke.kind == "work" else QColor(239, 71, 111, 165)
             p.setBrush(Qt.NoBrush)
-            p.setPen(QPen(color, 66, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.setPen(QPen(color("good", 102) if stroke.kind == "work" else color("error", 125), 66, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             if len(stroke.points) == 1:
                 p.drawPoint(QPointF(*stroke.points[0]))
             else:
@@ -1846,20 +2230,104 @@ class MockViewport(Medical3DViewport):
     def _draw_route(self, p):
         p.setBrush(Qt.NoBrush)
         for segment in self.state.segments:
-            p.setPen(QPen(QColor("#fcca46" if segment.kind == "scan" else "#48cae4"), 2.6 if segment.kind == "scan" else 1.8, Qt.SolidLine if segment.kind == "scan" else Qt.DashLine, Qt.RoundCap))
+            if not segment.points:
+                continue
+            p.setPen(QPen(color("warning" if segment.kind == "scan" else "primary"), 2.6 if segment.kind == "scan" else 1.8, Qt.SolidLine if segment.kind == "scan" else Qt.DashLine, Qt.RoundCap))
             path = QPainterPath(QPointF(*segment.points[0]))
             for point in segment.points[1:]:
                 path.lineTo(QPointF(*point))
             p.drawPath(path)
 
+    def _draw_reference(self, p):
+        p.save()
+        origin = QPointF(415, 392)
+        p.setPen(QPen(color("primary_hover"), 1.6))
+        p.setBrush(color("viewport", 180))
+        p.drawEllipse(origin, 10, 10)
+        p.drawLine(origin + QPointF(-18, 0), origin + QPointF(18, 0))
+        p.drawLine(origin + QPointF(0, -18), origin + QPointF(0, 18))
+        p.setFont(font(14, QFont.DemiBold))
+        p.setPen(color("text"))
+        p.drawText(origin + QPointF(17, -14), "W0")
+        p.restore()
+
+    def _draw_axes(self, p):
+        p.save()
+        origin = QPointF(44, self.height() - 66)
+        p.setFont(font(12, QFont.DemiBold))
+        for dx, dy, name, tone in ((38, 14, "X", "error"), (29, -20, "Y", "good"), (0, -43, "Z", "primary")):
+            target = origin + QPointF(dx, dy)
+            p.setPen(QPen(color(tone), 1.7))
+            p.drawLine(origin, target)
+            p.drawEllipse(target, 1.8, 1.8)
+            p.drawText(target + QPointF(5, -2), name)
+        p.restore()
+
+    def _draw_legend(self, p):
+        p.save()
+        if self.state.stage == 0:
+            rows = [("good", "已采区域"), ("pending", "待补采"), ("primary", "参考位置（W0）" if self.state.reference_ready else "参考位置待建立")]
+        elif self.state.stage == 1:
+            rows = [("good", "规划区"), ("error", "禁入区")]
+            if self.state.scenario == "geometry" and not self.state.geometry_repaired:
+                rows.append(("warning", "缺失三维数据"))
+        else:
+            rows = [("warning", "扫描段"), ("primary", "连接段（不计覆盖）"), ("error", "禁入区")]
+        width, height = 190, 18 + 25 * len(rows)
+        x, y = self.width() - width - 16, self.height() - height - 16
+        p.setBrush(color("panel", 238))
+        p.setPen(QPen(color("border"), 1))
+        p.drawRoundedRect(QRectF(x, y, width, height), 5, 5)
+        p.setFont(font(12))
+        for index, (tone, label) in enumerate(rows):
+            cy = y + 19 + index * 25
+            p.setPen(Qt.NoPen)
+            p.setBrush(color(tone))
+            p.drawEllipse(QPointF(x + 17, cy), 4, 4)
+            p.setPen(color("muted"))
+            p.drawText(QRectF(x + 30, cy - 10, width - 36, 20), Qt.AlignVCenter, label)
+        p.restore()
+
+    def _draw_geometry_issue(self, p):
+        if self.state.scenario == "geometry" and self.state.region_complete and not self.state.geometry_repaired:
+            x, y = self._work_center()
+            self._issue_patch(p, x, y, color("warning"), "缺失三维")
+
+    def _work_center(self):
+        points = [point for stroke in self.state.strokes if stroke.kind == "work" for point in stroke.points]
+        if not points:
+            return 390, 430
+        return sum(point[0] for point in points) / len(points), sum(point[1] for point in points) / len(points)
+
+    def _issue_patch(self, p, x, y, tone, label):
+        p.save()
+        pulse = self._pulse_strength()
+        fill, outline = QColor(tone), QColor(tone)
+        fill.setAlpha(35 + int(25 * pulse))
+        outline.setAlpha(145 + int(85 * pulse))
+        p.setBrush(fill)
+        p.setPen(QPen(outline, 1.6))
+        p.drawEllipse(QPointF(x, y), 48 + 5 * pulse, 37 + 4 * pulse)
+        p.setBrush(color("panel", 240))
+        p.drawRoundedRect(QRectF(x + 35, y - 50, 112, 30), 4, 4)
+        p.setFont(font(13, QFont.DemiBold))
+        p.setPen(color("text"))
+        p.drawText(QRectF(x + 35, y - 50, 112, 30), Qt.AlignCenter, label)
+        p.restore()
+
     def _scene_point(self, position):
         scale, offset = self._view_transform()
-        return ((position.x()-offset.x())/scale, (position.y()-offset.y())/scale)
+        return (position.x() - offset.x()) / scale, (position.y() - offset.y()) / scale
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.RightButton or (event.button() == Qt.LeftButton and self._navigation_tool == "pan"):
             self._pan_last = event.position()
             self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
+        if event.button() == Qt.LeftButton and self._navigation_tool == "zoom":
+            self.zoom_in()
+            event.accept()
             return
         if not self.state.editable or event.button() != Qt.LeftButton:
             return super().mousePressEvent(event)
@@ -1871,6 +2339,7 @@ class MockViewport(Medical3DViewport):
             if candidates and min(candidates)[0] <= 40:
                 self.state.strokes.pop(min(candidates)[1])
                 self.regions_edited.emit(deepcopy(self.state.strokes))
+                self.update()
             return
         self._drawing = Stroke(self.state.tool, [(x, y)])
         self.state.strokes.append(self._drawing)
@@ -1889,9 +2358,9 @@ class MockViewport(Medical3DViewport):
                 self.update()
 
     def mouseReleaseEvent(self, event):
-        if event.button() == Qt.RightButton:
+        if self._pan_last is not None:
             self._pan_last = None
-            self.setCursor(Qt.CrossCursor if self.state.editable else Qt.ArrowCursor)
+            self._update_cursor()
             return
         if self._drawing is not None:
             self._drawing = None
@@ -1900,146 +2369,9 @@ class MockViewport(Medical3DViewport):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
-        self._zoom = min(2.2, max(0.65, self._zoom * (1.1 if event.angleDelta().y() > 0 else 1/1.1)))
+        self._zoom = min(2.2, max(.65, self._zoom * (1.1 if event.angleDelta().y() > 0 else 1 / 1.1)))
         self.update()
         event.accept()
-
-    def _draw_space_grid(self, p: QPainter) -> None:
-        w, h = self.width(), self.height()
-        horizon = h * 0.55
-        center = w * 0.5
-        p.setPen(QPen(QColor(0, 180, 216, 14), 1))
-        for x in range(0, w + 1, 42):
-            p.drawLine(QPointF(x, 0), QPointF(x, horizon))
-        for y in range(0, int(horizon), 42):
-            p.drawLine(QPointF(0, y), QPointF(w, y))
-        p.setPen(QPen(QColor(72, 202, 228, 22), 1))
-        for x in range(-w, 2 * w + 1, max(48, w // 13)):
-            p.drawLine(QPointF(center, horizon), QPointF(x, h))
-        for fraction in (0.08, 0.16, 0.27, 0.40, 0.57, 0.77, 1.0):
-            y = horizon + (h - horizon) * fraction
-            p.drawLine(QPointF(0, y), QPointF(w, y))
-        if not self.state.show_axes:
-            return
-        origin = QPointF(83, h - 78)
-        axes = ((74, 0, "X", "#ef476f"), (0, -64, "Y", "#06d6a0"), (-42, 27, "Z", "#48cae4"))
-        p.setFont(QFont("Segoe UI", 9, QFont.DemiBold))
-        for dx, dy, name, color in axes:
-            pen = QPen(QColor(color), 2)
-            p.setPen(pen)
-            target = origin + QPointF(dx, dy)
-            p.drawLine(origin, target)
-            p.drawEllipse(target, 2.5, 2.5)
-            p.drawText(target + QPointF(5, -4), name)
-        p.setPen(QColor("#9aabb9"))
-        p.drawText(origin + QPointF(-13, 22), "参考")
-
-    def _surface_path(self) -> QPainterPath:
-        path = QPainterPath(QPointF(367, 58))
-        path.cubicTo(391, 66, 440, 66, 463, 58)
-        path.cubicTo(466, 82, 471, 106, 490, 115)
-        path.cubicTo(548, 121, 606, 144, 638, 182)
-        path.cubicTo(656, 204, 655, 234, 640, 252)
-        path.cubicTo(626, 271, 608, 275, 590, 278)
-        path.cubicTo(578, 354, 584, 456, 570, 534)
-        path.cubicTo(567, 560, 562, 581, 548, 596)
-        path.cubicTo(494, 620, 338, 620, 282, 596)
-        path.cubicTo(268, 581, 262, 560, 259, 534)
-        path.cubicTo(246, 453, 253, 351, 239, 278)
-        path.cubicTo(208, 275, 186, 259, 176, 237)
-        path.cubicTo(166, 209, 184, 177, 213, 157)
-        path.cubicTo(246, 135, 292, 120, 340, 115)
-        path.cubicTo(359, 106, 363, 82, 367, 58)
-        path.closeSubpath()
-        return path
-
-    def _draw_surface(self, p: QPainter) -> None:
-        body = self._surface_path()
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(6, 214, 160, 12))
-        
-        p.setBrush(QColor(0, 0, 0, 95))
-        p.drawEllipse(QRectF(220, 617, 390, 26))
-        if self.state.view in ("RGB", "固定 RGB", "RGB 路线图"):
-            surface_color = "#26323b"
-        elif self.state.view == "深度":
-            surface_color = "#173445"
-        else:
-            surface_color = "#172530"
-        for width, alpha in ((3, 18),):
-            p.setPen(QPen(QColor(0, 180, 216, alpha), width))
-            p.setBrush(Qt.NoBrush)
-            p.drawPath(body)
-        p.setBrush(QColor(surface_color))
-        p.setPen(QPen(QColor("#8ba6ae"), 1.4))
-        p.drawPath(body)
-        p.save()
-        p.setClipPath(body)
-        sheen = QRadialGradient(QPointF(418, 310), 290)
-        sheen.setColorAt(0, QColor(57, 166, 183, 34))
-        sheen.setColorAt(0.8, QColor(0, 0, 0, 0))
-        p.fillRect(QRectF(165, 55, 500, 565), sheen)
-        p.setBrush(Qt.NoBrush)
-        rgb = self.state.view in ("RGB", "固定 RGB", "RGB 路线图")
-        for y in range(150, 610, 29):
-            narrowing = abs(y - 355) * 0.07
-            curve = QPainterPath(QPointF(207 + narrowing, y))
-            curve.cubicTo(335, y + 18, 498, y + 18, 624 - narrowing, y)
-            p.setPen(QPen(QColor(105, 198, 209, 8 if rgb else 48), 1))
-            p.drawPath(curve)
-        for x in range(250, 620, 34):
-            curve = QPainterPath(QPointF(x, 112))
-            curve.cubicTo(x - 31, 270, x + 29, 420, x, 605)
-            p.setPen(QPen(QColor(91, 170, 185, 5 if rgb else 30), 1))
-            p.drawPath(curve)
-        midline = QPainterPath(QPointF(415, 150))
-        midline.cubicTo(406, 260, 420, 420, 415, 570)
-        p.setPen(QPen(QColor(123, 221, 225, 41), 1))
-        p.drawPath(midline)
-        p.setPen(QPen(QColor(131, 218, 223, 60), 1))
-        p.setBrush(QColor("#112a35"))
-        p.drawEllipse(QPointF(415, 407), 3.4, 3.4)
-        p.restore()
-        if self.state.view == "点云":
-            p.save()
-            p.setClipPath(body)
-            p.setPen(QPen(QColor("#b5f0ed"), 2))
-            for y in range(95, 608, 12):
-                for x in range(180 + (y % 3) * 4, 653, 12):
-                    p.drawPoint(x, y)
-            p.restore()
-        p.setPen(QColor("#85a4b1"))
-        p.setFont(QFont("Microsoft YaHei", 9))
-        p.drawText(QPointF(270, 675), "模拟患者表面 · 仅用于交互演示")
-
-    def _draw_geometry_issue(self, p: QPainter) -> None:
-        if self.state.scenario == "geometry" and self.state.region_complete and not self.state.geometry_repaired:
-            x, y = self._work_center()
-            self._issue_patch(p, x, y, QColor("#9d4edd"), "缺失几何")
-
-    def _work_center(self) -> tuple[float, float]:
-        pts = [point for stroke in self.state.strokes if stroke.kind == "work" for point in stroke.points]
-        if not pts:
-            return 390, 430
-        return (sum(point[0] for point in pts) / len(pts), sum(point[1] for point in pts) / len(pts))
-
-    def _issue_patch(self, p: QPainter, x: float, y: float, color: QColor, label: str) -> None:
-        pulse = self._pulse_strength()
-        fill_alpha = 78 + int(60 * pulse)
-        outer_alpha = 120 + int(90 * pulse)
-        radius_x, radius_y = 48 + 7 * pulse, 37 + 5 * pulse
-        p.setBrush(QColor(color.red(), color.green(), color.blue(), fill_alpha))
-        p.setPen(QPen(QColor(color.red(), color.green(), color.blue(), outer_alpha), 3.5))
-        p.drawEllipse(QPointF(x, y), radius_x, radius_y)
-        # A second, faint ring reads as a breathing alert at a glance.
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 42 + int(55 * pulse)), 1.4))
-        p.drawEllipse(QPointF(x, y), radius_x + 9 + 4 * pulse, radius_y + 7 + 3 * pulse)
-        p.setBrush(QColor("#161d27"))
-        p.setPen(QPen(QColor(color.red(), color.green(), color.blue(), 220), 2))
-        p.drawRoundedRect(QRectF(x + 35, y - 50, 112, 30), 4, 4)
-        p.setPen(QColor("#ffffff"))
-        p.drawText(QRectF(x + 35, y - 50, 112, 30), Qt.AlignCenter, label)
 
 """Software display of saved project vertices. No reconstruction or replanning."""
 from math import sin, cos, radians, ceil
@@ -2061,6 +2393,7 @@ class ReplayViewport(QWidget):
         self.pan = QPointF()
         self.yaw = self.pitch = 0.0
         self.drag = None
+        self.navigation_tool = "select"
         self.focus = ""
         self.images = {}
         self.cache = None
@@ -2107,6 +2440,17 @@ class ReplayViewport(QWidget):
         self.cache_key = None
         self.update()
 
+    def set_navigation_tool(self, tool):
+        if tool not in ("select", "pan", "zoom"):
+            raise ValueError(f"未知视图工具: {tool}")
+        self.navigation_tool = tool
+        self.drag = None
+        self.setCursor(Qt.OpenHandCursor if tool == "pan" else Qt.CrossCursor if tool == "zoom" else Qt.ArrowCursor)
+
+    def zoom_in(self):
+        self.zoom = min(6, self.zoom * 1.15)
+        self.update()
+
     def focus_issue(self, kind):
         self.focus = "gap" if kind == "route" else kind
         if self.focus in ("gap", "geometry", "capture", "edge"):
@@ -2148,9 +2492,10 @@ class ReplayViewport(QWidget):
             return self.cache
         self.prepare_projection()
         image = QImage(self.size(), QImage.Format_RGB32)
-        image.fill(QColor("#0b0e11"))
+        image.fill(QColor(COLORS["viewport"]))
         p = QPainter(image)
         p.setClipRect(image.rect())
+        self.draw_grid(p)
         if self.mode == "点云":
             cloud = list(zip(self.data.cloud_points, self.data.cloud_colors))
             if len(cloud) > 12000:
@@ -2191,7 +2536,7 @@ class ReplayViewport(QWidget):
                 for role, points in self.route_groups:
                     if len(points) < 2:
                         continue
-                    p.setPen(QPen(QColor("#fcca46" if role == "scan" else "#48cae4"), 1.45, Qt.SolidLine if role == "scan" else Qt.DashLine))
+                    p.setPen(QPen(QColor(COLORS["warning" if role == "scan" else "primary"]), 1.45, Qt.SolidLine if role == "scan" else Qt.DashLine))
                     poly = QPainterPath()
                     for index, point in enumerate(points):
                         x, y, _ = self.project(point)
@@ -2206,9 +2551,10 @@ class ReplayViewport(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#0b0e11"))
+        p.fillRect(self.rect(), QColor(COLORS["viewport"]))
         if not self.data:
-            p.setPen(QColor("#b8cdd8"))
+            self.draw_grid(p)
+            p.setPen(QColor(COLORS["muted"]))
             p.drawText(self.rect(), Qt.AlignCenter, "正在读取已保存的项目数据…")
             p.end()
             return
@@ -2233,47 +2579,61 @@ class ReplayViewport(QWidget):
             top = self.height() * 0.18
             width = self.width() * 0.52
             height = self.height() * 0.58
-            p.setBrush(QColor(157, 78, 221, 18 + int(20 * pulse)))
-            p.setPen(QPen(QColor(157, 78, 221, 125 + int(80 * pulse)), 2.0 + 1.2 * pulse))
-            p.drawRoundedRect(QRectF(left, top, width, height), 10, 10)
-            p.setBrush(QColor(22, 29, 39, 230))
-            p.setPen(QPen(QColor(157, 78, 221, 200), 1))
+            p.setBrush(QColor(242, 184, 75, 18 + int(20 * pulse)))
+            p.setPen(QPen(QColor(242, 184, 75, 125 + int(80 * pulse)), 2.0))
+            p.drawRoundedRect(QRectF(left, top, width, height), 5, 5)
+            p.setBrush(QColor(13, 27, 41, 230))
+            p.setPen(QPen(QColor(COLORS["warning"]), 1))
             p.drawRoundedRect(QRectF(left + 14, top + 14, 188, 30), 5, 5)
-            p.setPen(QColor("#eadcff"))
+            p.setPen(QColor(COLORS["text"]))
             p.drawText(QRectF(left + 24, top + 14, 168, 30), Qt.AlignVCenter, "三维表面支持未确认")
-        p.setPen(QColor("#e7edf4"))
-        p.fillRect(QRectF(12, 12, 188, 28), QColor(11, 17, 24, 220))
+        p.setPen(QColor(COLORS["text"]))
+        p.fillRect(QRectF(12, 12, 188, 28), QColor(13, 27, 41, 230))
         p.drawText(QRectF(22, 12, 178, 28), Qt.AlignVCenter, f"{self.mode} · 项目回放")
         p.end()
+
+    def draw_grid(self, p):
+        """A visual orientation backdrop, not a measured coordinate grid."""
+        p.save()
+        grid = QColor(COLORS["grid"])
+        grid.setAlpha(76)
+        p.setPen(QPen(grid, 1))
+        horizon = self.height() * .57
+        for x in range(-self.width(), 2 * self.width(), max(72, self.width() // 10)):
+            p.drawLine(QPointF(self.width() * .5, horizon), QPointF(x, self.height()))
+        for fraction in (.08, .18, .33, .53, .77, 1):
+            y = horizon + (self.height() - horizon) * fraction
+            p.drawLine(QPointF(0, y), QPointF(self.width(), y))
+        p.restore()
 
     def draw_gaps(self, p):
         if self.stage < 2:
             return
         p.setRenderHint(QPainter.Antialiasing)
         pulse = self._pulse_strength() if self.focus == "gap" else 0.0
-        p.setBrush(QColor("#161d27"))
+        p.setBrush(QColor(COLORS["panel"]))
         gaps = [item for item in self.data.trajectory["ordered_items"] if item["kind"] == "gap"]
         for item in gaps:
             for key in ("previous_point", "next_point"):
                 x, y, _ = self.project(item[key]["xyz_m"])
                 radius = 3 + 2 * pulse
-                p.setPen(QPen(QColor(239, 71, 111, 185 + int(60 * pulse)), 1.6 + 1.0 * pulse))
+                p.setPen(QPen(QColor(240, 100, 100, 185 + int(60 * pulse)), 1.6 + 1.0 * pulse))
                 p.drawEllipse(QPointF(x, y), radius, radius)
                 if self.focus == "gap":
                     p.setBrush(Qt.NoBrush)
-                    p.setPen(QPen(QColor(239, 71, 111, 50 + int(85 * pulse)), 1.1))
+                    p.setPen(QPen(QColor(240, 100, 100, 50 + int(85 * pulse)), 1.1))
                     p.drawEllipse(QPointF(x, y), radius + 5 + 3 * pulse, radius + 5 + 3 * pulse)
-                    p.setBrush(QColor("#161d27"))
+                    p.setBrush(QColor(COLORS["panel"]))
         if self.focus == "gap":
-            p.setPen(QColor("#ffd166"))
-            p.drawText(22, 68, "粉色圆点：断开段端点（缺口之间不连线）")
+            p.setPen(QColor(COLORS["warning"]))
+            p.drawText(22, 68, "红色圆点：断开段端点（缺口之间不连线）")
 
     def draw_focus_marker(self, p):
         """Pulse a focused geometry/edge area on both mesh and image views."""
         if self.focus not in ("geometry", "edge"):
             return
         pulse = self._pulse_strength()
-        color = QColor("#9d4edd" if self.focus == "geometry" else "#ffd166")
+        color = QColor(COLORS["warning"])
         if self.is_3d() and getattr(self, "selected_vertices", None):
             vertices = self.data.region_vertices if self.region_mesh_selection else self.data.vertices
             points = [self.project(vertices[index]) for index in self.selected_vertices if index < len(vertices)]
@@ -2294,6 +2654,10 @@ class ReplayViewport(QWidget):
         p.drawEllipse(QPointF(cx, cy), radius + 10 + 4 * pulse, radius * .72 + 7 + 3 * pulse)
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.navigation_tool == "zoom":
+            self.zoom_in()
+            event.accept()
+            return
         if event.button() in (Qt.LeftButton, Qt.RightButton):
             self.drag = (event.button(), event.position())
 
@@ -2302,10 +2666,10 @@ class ReplayViewport(QWidget):
             button, previous = self.drag
             delta = event.position()-previous
             self.drag = (button, event.position())
-            if button == Qt.LeftButton and self.is_3d():
+            if button == Qt.LeftButton and self.is_3d() and self.navigation_tool == "select":
                 self.yaw += delta.x()*.35
                 self.pitch = min(85, max(-85, self.pitch+delta.y()*.35))
-            elif button == Qt.RightButton:
+            elif button == Qt.RightButton or self.navigation_tool == "pan":
                 self.pan += delta
             self._redraw_timer.start()
 
@@ -2322,7 +2686,7 @@ class ReplayViewport(QWidget):
 def current_notice(s):
     if s.replay_mode:
         if s.stage == 2 and s.plan.phase == "failed":
-            return "项目回放 · 只读核对：原始扫描路线存在局部断开，请查看粉色端点。", "warning"
+            return "项目回放 · 只读核对：原始扫描路线存在局部断开，请查看高亮端点。", "warning"
         if s.stage == 3 and s.plan.phase == "failed":
             return "项目回放 · 只读结果：当前规划存在断开段，不能作为执行路线。", "error"
         if s.stage == 1:
@@ -2346,7 +2710,7 @@ def current_notice(s):
         return {
             "unchecked": ("标出规划区与禁入区，完成后确认标记并检查三维几何。", "normal"),
             "checking": ("正在检查选区对应的三维几何，已画标记会保留。", "normal"),
-            "missing": ("紫色区域缺少可靠三维数据，请返回补采。", "error"),
+            "missing": ("高亮区域缺少可靠三维数据，请返回补采。", "error"),
             "valid": ("三维支持已确认。可继续修改标记或生成规划预览。", "normal"),
             "partial": ("部分三维支持未确认。可查看规划预览，但不能视为治疗覆盖已确认。", "warning"),
         }[s.region.support]
@@ -2367,13 +2731,13 @@ def current_notice(s):
 
 """Application composition. Pages emit intents; the controller owns transitions."""
 from pathlib import Path
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QImage, QKeySequence, QShortcut
-from PySide6.QtWidgets import QCheckBox, QDockWidget, QFrame, QHBoxLayout, QListWidget, QMainWindow, QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QDialog, QDockWidget, QFrame, QHBoxLayout, QListWidget, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, records_dir=None, viewport_factory=create_viewport):
+    def __init__(self, records_dir=None, viewport_factory=create_viewport, use_project_replay=False):
         super().__init__()
         self.setWindowTitle("Femto Bolt · 三维采集与轨迹规划工作台")
         self.resize(1600, 900)
@@ -2385,10 +2749,11 @@ class MainWindow(QMainWindow):
         # In the modular app source_dir is <project>/prototype/app; in the
         # generated standalone it is <project>/prototype.
         project_root = source_dir.parents[1] if source_dir.name == "app" else source_dir.parent
-        try:
-            self.project_replay = load_project_data(project_root)
-        except Exception as exc:
-            self.replay_error = str(exc)
+        if use_project_replay:
+            try:
+                self.project_replay = load_project_data(project_root)
+            except Exception as exc:
+                self.replay_error = str(exc)
         root = QWidget()
         root.setObjectName("root")
         self.setCentralWidget(root)
@@ -2416,13 +2781,13 @@ class MainWindow(QMainWindow):
         center.setObjectName("center")
         work = QVBoxLayout(center)
         self.work_layout = work
-        work.setContentsMargins(0, 0, 0, 0)
-        work.setSpacing(0)
+        work.setContentsMargins(10, 8, 10, 8)
+        work.setSpacing(6)
         title_bar = QFrame()
         title_bar.setObjectName("titleBar")
-        title_bar.setFixedHeight(94)
+        title_bar.setFixedHeight(64)
         title_row = QHBoxLayout(title_bar)
-        title_row.setContentsMargins(16, 10, 16, 9)
+        title_row.setContentsMargins(4, 4, 4, 4)
         title_col = QVBoxLayout()
         title_col.setSpacing(3)
         self.page_title = text_label("", "pageTitle")
@@ -2439,36 +2804,48 @@ class MainWindow(QMainWindow):
         view_bar.setObjectName("viewBar")
         view_bar.setFixedHeight(54)
         view_row = QHBoxLayout(view_bar)
-        view_row.setContentsMargins(16, 4, 16, 4)
+        view_row.setContentsMargins(6, 5, 6, 5)
         view_row.setSpacing(4)
         self.view_labels = {"RGB": "▣  RGB", "深度": "≋  深度", "点云": "⠿  点云", "模型": "◇  模型"}
         self.view_buttons = []
-        for _ in range(4):
+        for _ in range(3):
             btn = QPushButton()
             btn.setObjectName("viewButton")
-            btn.setMinimumSize(92, 44)
-            btn.clicked.connect(lambda _=False, b=btn: self.controller.set_view(b.property("view_name")))
+            btn.setFixedHeight(42)
+            btn.setMinimumWidth(110)
+            btn.clicked.connect(lambda _=False, b=btn: self.choose_view(b.property("view_name")))
             view_row.addWidget(btn)
             self.view_buttons.append(btn)
         view_row.addStretch()
-        self.fit_button = QPushButton("适配")
-        self.zoom_button = QPushButton("⌕")
-        self.one_button = QPushButton("1:1")
-        self.full_button = QPushButton("□")
-        for button, tip in (
-            (self.fit_button, "适配窗口"),
-            (self.zoom_button, "缩放"),
-            (self.one_button, "原始比例"),
-            (self.full_button, "全屏显示"),
+        self.fit_button = QPushButton("⊡")
+        self.zoom_button = QPushButton("＋")
+        self.one_button = QPushButton("↔")
+        self.full_button = QPushButton("⛶")
+        for button, icon, tip in (
+            (self.fit_button, "fit", "适配窗口"),
+            (self.zoom_button, "zoom", "放大视图；滚轮可缩小"),
+            (self.one_button, "pan", "平移视图；再次点击返回选择"),
+            (self.full_button, "fullscreen", "全屏显示"),
         ):
+            button.setText("")
+            button.setIcon(workstation_icon(icon))
+            button.setIconSize(QSize(22, 22))
+            button.setAccessibleName(tip)
             button.setObjectName("viewTool")
-            button.setMinimumSize(44, 40)
+            button.setFixedSize(40, 40)
             button.setToolTip(tip)
             view_row.addWidget(button)
-        self.reset_button = QPushButton("复位视图")
-        self.reset_button.setObjectName("quietButton")
-        self.reset_button.setMinimumHeight(40)
-        self.reset_button.setToolTip("恢复默认视图")
+        self.reset_button = QPushButton()
+        self.reset_button.setIcon(workstation_icon("cube"))
+        self.reset_button.setIconSize(QSize(22, 22))
+        self.reset_button.setAccessibleName("三维显示方式")
+        self.reset_button.setObjectName("viewTool")
+        self.reset_button.setFixedSize(40,40)
+        self.reset_button.setToolTip("三维显示方式")
+        mode_menu = QMenu(self.reset_button)
+        for mode in ("点云", "模型"):
+            mode_menu.addAction(mode, lambda mode=mode: self.controller.set_view(mode))
+        self.reset_button.setMenu(mode_menu)
         view_row.addWidget(self.reset_button)
         work.addWidget(view_bar)
 
@@ -2494,9 +2871,10 @@ class MainWindow(QMainWindow):
         else:
             self.viewport = viewport_factory(center)
         self.viewport.regions_edited.connect(self.controller.set_regions)
-        self.reset_button.clicked.connect(self.viewport.reset_view)
-        self.fit_button.clicked.connect(self.viewport.reset_view)
-        self.one_button.clicked.connect(self.viewport.reset_view)
+        self._navigation_tool = "select"
+        self.fit_button.clicked.connect(lambda: self.viewport.reset_view())
+        self.zoom_button.clicked.connect(lambda: self.viewport.zoom_in())
+        self.one_button.clicked.connect(self.toggle_pan)
         self.full_button.clicked.connect(self.toggle_maximized)
         work.addWidget(self.viewport, 1)
         self.palette = ToolPalette(self.viewport)
@@ -2526,6 +2904,7 @@ class MainWindow(QMainWindow):
         column.addLayout(body, 1)
         self.action_bar = ActionBar()
         self.action_bar.action_requested.connect(self.perform_action)
+        self.action_bar.details_requested.connect(self.show_status_details)
         column.addWidget(self.action_bar)
         self.build_drawers()
         shortcut = QShortcut(QKeySequence.Undo, self)
@@ -2545,7 +2924,7 @@ class MainWindow(QMainWindow):
             self._switch_to_mock_viewport()
         self.header.update_state(s)
         self.sidebar.update_state(s)
-        self.page_title.setText(("三维采集", "区域标记", "轨迹规划", "运行预览")[s.stage])
+        self.page_title.setText(("三维采集", "区域标记", "轨迹规划", "规划确认")[s.stage])
         self.page_subtitle.setText((
             "调整相机位置，采集完整的目标表面",
             "在固定视角标出目标规划区和禁入区",
@@ -2559,13 +2938,15 @@ class MainWindow(QMainWindow):
         tone(self.reference, "good" if s.capture.reference_ready else "")
         self.page_stack.setCurrentIndex(s.stage)
         self.pages[s.stage].update_state(s)
-        names = VIEWS[s.stage]
+        names = ("RGB", "深度", "三维预览") if s.stage == 0 else VIEWS[s.stage]
         for i, btn in enumerate(self.view_buttons):
             btn.setVisible(i < len(names))
             if i < len(names):
                 btn.setProperty("view_name", names[i])
-                btn.setText(self.view_labels.get(names[i], names[i]))
-                tone(btn, "active" if names[i] == s.view else "")
+                btn.setText(names[i])
+                selected = names[i] == s.view or names[i] == "三维预览" and s.view in ("点云","模型")
+                tone(btn, "active" if selected else "")
+        self.reset_button.setVisible(s.stage == 0 and s.view in ("点云","模型"))
         if s.replay_mode and isinstance(self.viewport, ReplayViewport):
             self.viewport.set_view(s.stage, s.view)
             self.viewport.focus_issue(s.issue_focus)
@@ -2591,18 +2972,8 @@ class MainWindow(QMainWindow):
         old.deleteLater()
         self.viewport = create_viewport(self.center)
         self.work_layout.addWidget(self.viewport, 1)
-        try:
-            self.reset_button.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.reset_button.clicked.connect(self.viewport.reset_view)
-        try:
-            self.fit_button.clicked.disconnect()
-            self.one_button.clicked.disconnect()
-        except RuntimeError:
-            pass
-        self.fit_button.clicked.connect(self.viewport.reset_view)
-        self.one_button.clicked.connect(self.viewport.reset_view)
+        self._navigation_tool = "select"
+        tone(self.one_button, "")
         self.viewport.regions_edited.connect(self.controller.set_regions)
         self.viewport.installEventFilter(self)
         self.palette.deleteLater()
@@ -2617,8 +2988,30 @@ class MainWindow(QMainWindow):
     def _status_summary(s):
         if s.replay_mode:
             project = s.replay_label.replace("项目回放 · ", "")
-            return f"{project}  |  ● 相机：回放  |  FPS —  |  分辨率 —  |  GPU —  |  存储 —"
-        return f"{s.patient.identifier}  |  ● 相机：已连接  |  FPS 30  |  1920 × 1080  |  GPU 28%  |  存储 12.4 / 100 GB"
+            return f"项目回放 · 只读  |  {project}  |  相机未连接"
+        return f"原型演示 · 未连接设备  |  {s.patient.identifier}  |  模拟采集 {s.capture.frames} 帧"
+
+    def choose_view(self, name):
+        self.controller.set_view("点云" if name == "三维预览" else name)
+
+    def toggle_pan(self):
+        self._navigation_tool = "select" if self._navigation_tool == "pan" else "pan"
+        self.viewport.set_navigation_tool(self._navigation_tool)
+        tone(self.one_button, "active" if self._navigation_tool == "pan" else "")
+
+    def show_status_details(self):
+        s=self.controller.state
+        notice, severity=current_notice(s)
+        dialog=QDialog(self)
+        dialog.setWindowTitle("当前任务状态")
+        dialog.resize(580,360)
+        column=QVBoxLayout(dialog)
+        content=QTextBrowser()
+        content.setPlainText(notice+"\n\n"+self._status_summary(s)+"\n\n"+self.developer_info.text())
+        column.addWidget(content)
+        close=QPushButton("关闭");close.clicked.connect(dialog.accept)
+        column.addWidget(close,alignment=Qt.AlignRight)
+        dialog.exec()
 
     def toggle_maximized(self):
         self.showNormal() if self.isMaximized() else self.showMaximized()
@@ -2747,11 +3140,12 @@ class MainWindow(QMainWindow):
         self.controller.operation_timer.stop()
         event.accept()
 
-MEDICAL_QSS = '/* Medical Dark Pro — high contrast, touch-ready Qt workstation theme */\nQWidget { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; font-size: 13px; color: #e6edf3; selection-background-color: #1d596a; }\nQWidget#root, QWidget#center { background: #0b1118; }\nQFrame#patientHeader { background: #111923; border-bottom: 1px solid #263443; }\nQLabel#brandLogo { background: transparent; }\nQFrame#headerSeparator { background: #263443; max-width: 1px; }\nQLabel#brand { color: #e6edf3; font-size: 18px; font-weight: 700; letter-spacing: .2px; }\nQLabel#brandCaption { color: #86a2b5; font-size: 11px; }\nQLabel#patientName { color: #f1f7fb; font-size: 14px; font-weight: 600; }\nQLabel#muted { color: #8b9aaa; font-size: 11px; }\nQLabel#deviceReady { color: #22c997; font-size: 13px; font-weight: 600; }\nQLabel#modeBadge { color: #8b9aaa; font-size: 11px; padding-top: 2px; }\nQComboBox#scenario { background: #151f2b; color: #e6edf3; border: 1px solid #263443; border-radius: 5px; padding: 6px 9px; min-height: 28px; }\nQComboBox#scenario:hover { border-color: #3c8795; }\nQComboBox#scenario QAbstractItemView { background: #111923; color: #e6edf3; selection-background-color: #1d596a; }\nQLabel#globalStatus { background: #102c2d; color: #a5f3d4; border-bottom: 1px solid #1d655d; padding: 5px 22px; font-size: 12px; }\nQLabel#globalStatus[tone="warning"] { background: #342b16; color: #ffd166; border-color: #806320; }\nQLabel#globalStatus[tone="error"] { background: #351c29; color: #ff9ab4; border-color: #8a2d4b; }\nQFrame#workflowSidebar { background: #0f171f; border-right: 1px solid #263443; }\nQLabel#sidebarHeading { color: #7e98aa; font-size: 11px; letter-spacing: 1px; padding: 0 10px 10px 10px; }\nQPushButton#workflowStep { background: transparent; border: none; padding: 0; text-align: left; }\nQPushButton#workflowStep:hover { background: #12232d; }\nQPushButton#workflowStep:disabled { color: #607181; }\nQPushButton#stepButton { background: transparent; border: 1px solid transparent; border-radius: 5px; text-align: left; padding: 6px 7px; font-size: 11px; color: #a8bdca; }\nQPushButton#stepButton:hover { background: #18232f; border-color: #2d4557; }\nQPushButton#stepButton[tone="active"] { background: #172f39; border: none; border-left: 2px solid #10bfe3; color: #e6edf3; font-weight: 600; }\nQPushButton#stepButton[tone="done"] { color: #79e4c2; }\nQPushButton#stepButton[tone="warning"] { color: #ffd166; }\nQPushButton#stepButton:disabled { color: #5f7483; }\nQLabel#prototypeBadge { color: #70d5e4; border-top: 1px solid #2b3b4d; padding-top: 12px; font-size: 11px; }\nQFrame#titleBar { background: #111923; border-bottom: 1px solid #263443; }\nQLabel#pageTitle { color: #e6edf3; font-size: 20px; font-weight: 650; }\nQLabel#pageSubtitle { color: #8b9aaa; font-size: 12px; }\nQLabel#referenceStatus { color: #8b9aaa; font-size: 11px; }\nQLabel#referenceStatus[tone="good"] { color: #68dfbd; }\nQFrame#viewBar { background: #151f2b; border-bottom: 1px solid #263443; }\nQPushButton#viewButton { background: transparent; color: #8ea7b7; border: 1px solid transparent; border-radius: 4px; padding: 4px 11px; }\nQPushButton#viewButton:hover { background: #182a33; color: #d9e8ed; }\nQPushButton#viewButton[tone="active"] { background: #18353e; border-color: #2f7180; color: #e6edf3; }\nQPushButton#viewTool { background: transparent; color: #aab7c2; border: none; border-radius: 4px; padding: 4px 9px; font-size: 12px; }\nQPushButton#viewTool:hover { background: #182a33; color: #e6edf3; }\nQScrollArea#rightPanel { background: #111923; border: none; }\nQWidget#statusPanel { background: #111923; }\nQLabel#sectionTitle { color: #e7edf4; font-size: 17px; font-weight: 600; padding: 5px 0 6px 0; }\nQLabel#rowName { color: #8998a8; font-size: 13px; }\nQLabel#rowValue { color: #e7edf4; font-size: 13px; font-weight: 500; }\nQLabel#rowValue[tone="good"], QLabel#phaseLabel[tone="good"] { color: #06d6a0; }\nQLabel#rowValue[tone="warning"], QLabel#phaseLabel[tone="warning"] { color: #ffd166; }\nQLabel#rowValue[tone="bad"], QLabel#phaseLabel[tone="bad"] { color: #ef476f; }\nQLabel#phaseLabel { color: #dcebf2; font-size: 18px; font-weight: 650; padding: 4px 0 8px 0; }\nQLabel#panelHint { background: transparent; border-left: 2px solid #2f7185; padding: 6px 9px; color: #9eb1bd; font-size: 11px; }\nQLabel#checkSummary { color: #9deacb; font-size: 12px; padding: 5px 0; }\nQLabel#savedNotice { color: #8fd2ca; font-size: 12px; padding-top: 8px; }\nQPushButton#inspectionCard { background: transparent; border: none; border-left: 2px solid #2a3b4f; border-radius: 4px; color: #cfe2ea; text-align: left; padding: 7px 10px; }\nQPushButton#inspectionCard:hover { background: #18232f; border-left-color: #3c8795; }\nQPushButton#inspectionCard[tone="good"] { border-left: 3px solid #06d6a0; color: #a8efd7; }\nQPushButton#inspectionCard[tone="warning"] { border-left: 3px solid #ffd166; color: #ffe5a2; }\nQPushButton#inspectionCard[tone="bad"] { border-left: 3px solid #ef476f; color: #ffb1c3; }\nQLabel#spacingValue { color: #7de7f1; font-size: 19px; font-weight: 650; padding: 8px 0; }\nQLabel#spacingValue[tone="bad"], QLabel#inlineError { color: #ff8daa; }\nQLabel#inlineError { font-size: 12px; }\nQFrame#divider { background: #202a37; border: none; }\nQPushButton#issueButton { background: #3a2d18; color: #ffd166; border: 1px solid #8d7028; border-radius: 5px; text-align: left; padding: 8px 10px; font-size: 12px; }\nQPushButton#issueButton:hover { background: #4b381b; border-color: #ffd166; }\nQPushButton#quietButton, QToolButton#detailsButton { background: #17212c; color: #b9d0dc; border: 1px solid #385067; border-radius: 5px; padding: 5px 11px; }\nQPushButton#quietButton:hover, QToolButton#detailsButton:hover { background: #1d3948; border-color: #3c8795; }\nQPushButton#quietButton:disabled { color: #607584; border-color: #2b3b4b; }\nQLineEdit#parameterInput { background: #0f1822; color: #e0f8fb; border: 1px solid #42627a; border-radius: 5px; padding: 2px 8px; font-size: 14px; }\nQLineEdit#parameterInput:focus { border: 1px solid #3c8795; }\nQLineEdit#parameterInput:disabled { color: #617888; border-color: #2b3b4b; background: #141d27; }\nQRadioButton { spacing: 8px; font-size: 12px; }\nQRadioButton::indicator { width: 14px; height: 14px; border-radius: 8px; border: 1px solid #5d7b8d; background: #101a24; }\nQRadioButton::indicator:checked { background: #2e8492; border: 2px solid #c9f7ff; }\nQProgressBar#captureProgress { background: #0c141d; border: 1px solid #365268; border-radius: 4px; min-height: 22px; color: #e0f2f2; text-align: center; font-size: 11px; }\nQProgressBar#captureProgress::chunk { background: #22c997; border-radius: 3px; }\nQProgressBar#inspectorProgress { background: #14202c; border: none; border-radius: 4px; min-height: 8px; max-height: 8px; }\nQProgressBar#inspectorProgress::chunk { background: #12bfe6; border-radius: 4px; }\nQFrame#actionBar { background: #111923; border-top: 1px solid #263443; }\nQLabel#actionNotice { color: #b9eedb; font-size: 12px; padding: 0 8px; }\nQLabel#actionNotice[tone="warning"] { color: #ffd166; }\nQLabel#actionNotice[tone="error"] { color: #ff9ab4; }\nQLabel#statusTelemetry { color: #8193a2; font-size: 11px; padding-left: 8px; }\nQPushButton#primaryButton { background: #10bfe3; border: 1px solid #10bfe3; border-radius: 5px; color: #06151b; font-size: 14px; font-weight: 700; padding: 7px 20px; }\nQPushButton#primaryButton:hover { background: #25c9e7; border-color: #67dced; }\nQPushButton#primaryButton:pressed { background: #0e98b4; }\nQPushButton#primaryButton:disabled { background: #2d4350; border-color: #415867; color: #8aa0aa; }\nQPushButton#secondaryButton { background: #192632; border: 1px solid #4a6275; border-radius: 6px; padding: 7px 16px; color: #d7e8ef; }\nQPushButton#secondaryButton:hover { background: #214052; border-color: #456273; }\nQFrame#toolPalette { background: rgba(21, 31, 43, 240); border: 1px solid #263443; border-radius: 6px; }\nQPushButton#toolButton { background: transparent; border: 1px solid transparent; border-radius: 4px; color: #cbe0e8; padding: 5px 7px; text-align: left; font-size: 12px; }\nQPushButton#toolButton[tone="active"] { background: #1a3a46; border-color: #3c8795; color: #ffffff; }\nQPushButton#toolButton:hover { background: #1c3742; }\nQPushButton#toolButton:disabled { color: #607b89; }\nQLabel#viewportTag { background: rgba(8, 17, 26, 225); color: #c3e8ef; padding: 6px 9px; border-radius: 5px; font-size: 11px; }\nQLabel#viewportHint { background: #3b202b; color: #ffb2c3; border-left: 3px solid #ef476f; border-radius: 5px; padding: 10px; font-size: 12px; }\nQLabel#viewportLegend { background: rgba(8, 17, 26, 225); color: #c3dbe4; padding: 7px 9px; border-radius: 5px; font-size: 11px; }\nQDockWidget { color: #dcebf2; background: #161d27; }\nQDockWidget > QWidget { background: #161d27; }\nQListWidget, QTextBrowser { background: #111a24; border: 1px solid #30465a; color: #d0e0e7; padding: 7px; }\nQListWidget::item { min-height: 54px; padding: 8px; border-bottom: 1px solid #26384a; }\nQListWidget::item:selected { background: #07566a; color: #ffffff; }\nQScrollBar:vertical { background: #111a24; width: 8px; }\nQScrollBar::handle:vertical { background: #42627a; min-height: 24px; border-radius: 4px; }\n'
+MEDICAL_QSS = '/* Fixed navy workstation palette; QPainter tokens: styles/tokens.py. */\nQWidget { font-family: "Microsoft YaHei", "Segoe UI"; font-size: 14px; color: #EAF2F8; selection-background-color: #086E91; selection-color: #EAF2F8; }\nQMainWindow, QWidget#root, QWidget#appRoot, QWidget#center { background: #08131F; }\nQLabel { background: transparent; }\nQFrame#patientHeader { background: #0B1927; border-bottom: 1px solid #20384A; }\nQLabel#brand { font-size: 28px; font-weight: 700; }\nQLabel#brandLogo { background: transparent; }\nQFrame#headerSeparator { background: #20384A; max-width: 1px; }\nQLabel#brandCaption, QLabel#patientName { color: #91A9BB; font-size: 13px; }\nQLabel#muted, QLabel[role="secondary"] { color: #91A9BB; font-size: 13px; }\nQLabel#modeBadge, QLabel#deviceReady { color: #91A9BB; font-size: 12px; }\nQLabel#referenceStatus { font-size: 14px; }\nQFrame[panel="primary"], QFrame#workflowSidebar { background: #0D1B29; border: 1px solid #20384A; }\nQFrame[panel="secondary"], QFrame#devicePanel { background: #102233; border: 1px solid #20384A; border-radius: 5px; }\nQFrame#workflowSidebar { border-left: none; border-top: none; border-bottom: none; }\nQScrollArea#stepScroll, QScrollArea#stepScroll > QWidget > QWidget { background: #0D1B29; border: none; }\nQScrollArea#workflowScroll, QWidget#workflowSteps { background: #0D1B29; border: none; }\nQLabel#sidebarHeading, QLabel#deviceTitle, QLabel#sectionTitle, QLabel[role="panelTitle"] { color: #EAF2F8; font-size: 18px; font-weight: 600; }\nQLabel#sidebarHeading { padding: 0 8px 2px 8px; }\nQLabel#deviceRowName { color: #91A9BB; font-size: 12px; }\nQLabel#deviceRowValue { font-size: 12px; }\nQLabel#prototypeBadge { color: #637B8D; font-size: 12px; }\nQPushButton#workflowStep { background: transparent; border: none; padding: 0; min-height: 80px; max-height: 80px; text-align: left; }\nQPushButton#workflowStep:focus { outline: none; }\nQFrame#titleBar { background: #08131F; }\nQLabel#pageTitle { color: #EAF2F8; font-size: 24px; font-weight: 700; }\nQLabel#pageSubtitle { color: #91A9BB; font-size: 13px; }\nQFrame#viewBar { background: #102233; border: 1px solid #20384A; border-radius: 5px; }\nQPushButton, QToolButton { min-height: 40px; padding: 0 16px; background: #142A3D; color: #EAF2F8; border: 1px solid #29465D; border-radius: 5px; font-size: 15px; }\nQPushButton:hover, QToolButton:hover { background: #193B55; border-color: #3E6682; }\nQPushButton:pressed, QToolButton:pressed { background: #103D57; border-color: #087FA8; }\nQPushButton:focus, QToolButton:focus { border-color: #0A91F5; }\nQPushButton#viewButton { min-width: 90px; padding: 0 10px; }\nQPushButton#viewButton[tone="active"], QPushButton[state="active"], QPushButton#toolButton[tone="active"] { background: #0A587A; border-color: #10A8D4; color: #EAF2F8; }\nQPushButton#viewTool { min-height: 38px; max-height: 38px; min-width: 38px; max-width: 38px; padding: 0; }\nQPushButton#viewTool[tone="active"] { background: #086E91; border-color: #10A8D4; }\nQPushButton#quietButton, QToolButton#detailsButton, QToolButton#moreButton { background: #102233; border-color: #20384A; color: #91A9BB; }\nQPushButton#quietButton:hover, QToolButton#detailsButton:hover, QToolButton#moreButton:hover { background: #193B55; color: #EAF2F8; border-color: #3E6682; }\nQPushButton#primaryButton, QPushButton[role="primary"] { min-height: 0; background: #087DDE; border: 1px solid #1597F5; border-radius: 6px; padding: 0 16px; color: #EAF2F8; font-size: 16px; font-weight: 600; }\nQPushButton#primaryButton:hover, QPushButton[role="primary"]:hover { background: #0A91F5; }\nQPushButton#primaryButton:pressed, QPushButton[role="primary"]:pressed { background: #0567BC; }\nQPushButton:disabled, QToolButton:disabled, QPushButton#primaryButton:disabled, QPushButton#viewButton:disabled, QPushButton#quietButton:disabled, QPushButton[role="primary"]:disabled { background: #112231; color: #52697B; border-color: #1C3345; }\nQPushButton#secondaryButton { background: #142A3D; }\nQScrollArea#rightPanel, QWidget#statusPanel { background: #0D1B29; border: none; }\nQScrollArea#rightPanel { border-left: 1px solid #20384A; }\nQLabel#sectionTitle { padding: 5px 0 6px 0; }\nQLabel#phaseLabel { font-size: 24px; font-weight: 700; padding: 4px 0 8px 0; }\nQLabel#metricValue { font-size: 24px; font-weight: 600; }\nQLabel#rowName { color: #91A9BB; font-size: 14px; }\nQLabel#rowValue { font-size: 14px; }\nQLabel#panelHint { color: #91A9BB; font-size: 13px; padding: 4px 0; }\nQLabel#checkSummary, QLabel#savedNotice { color: #22D3A6; font-size: 13px; padding: 5px 0; }\nQFrame#divider { background: #20384A; border: none; }\nQLabel[tone="good"], QLabel[state="good"] { color: #22D3A6; }\nQLabel[tone="warning"], QLabel[state="warning"] { color: #F2B84B; }\nQLabel[tone="bad"], QLabel[tone="error"], QLabel[state="error"] { color: #F06464; }\nQLabel[tone="current"] { color: #0A91F5; }\nQLabel[tone="idle"] { color: #637B8D; }\nQLabel[tone="pending"] { color: #F29B45; }\nQPushButton#inspectionCard { min-height: 42px; background: transparent; border: none; border-left: 2px solid #20384A; color: #EAF2F8; text-align: left; padding: 7px 10px; }\nQPushButton#inspectionCard:hover { background: #102233; }\nQPushButton#inspectionCard[tone="good"] { border-left-color: #22D3A6; }\nQPushButton#inspectionCard[tone="warning"] { border-left-color: #F2B84B; }\nQPushButton#inspectionCard[tone="bad"] { border-left-color: #F06464; }\nQPushButton#issueButton { background: #102233; border-color: #F29B45; color: #F2B84B; padding: 6px 10px; text-align: left; font-size: 13px; }\nQPushButton#issueButton:hover { background: #193B55; }\nQLabel#spacingValue { font-size: 24px; font-weight: 600; color: #EAF2F8; padding: 8px 0; }\nQLabel#spacingValue[tone="bad"], QLabel#inlineError { color: #F06464; }\nQLabel#inlineError { font-size: 13px; }\nQLineEdit, QLineEdit#parameterInput { background: #102233; color: #EAF2F8; border: 1px solid #29465D; border-radius: 5px; padding: 2px 8px; font-size: 15px; min-height: 34px; }\nQLineEdit:focus, QLineEdit#parameterInput:focus { border-color: #0A91F5; }\nQLineEdit:disabled, QLineEdit#parameterInput:disabled { background: #112231; color: #52697B; border-color: #1C3345; }\nQRadioButton, QCheckBox { spacing: 8px; min-height: 34px; font-size: 14px; }\nQRadioButton::indicator { width: 16px; height: 16px; border-radius: 9px; border: 1px solid #637B8D; background: #102233; }\nQRadioButton::indicator:checked { background: #087DDE; border: 2px solid #91A9BB; }\nQComboBox { background: #142A3D; color: #EAF2F8; border: 1px solid #29465D; border-radius: 5px; padding: 0 12px; min-height: 40px; }\nQComboBox:hover { background: #193B55; }\nQComboBox::drop-down { border: none; width: 22px; }\nQComboBox QAbstractItemView { background: #102233; color: #EAF2F8; selection-background-color: #086E91; padding: 4px; }\nQProgressBar#captureProgress { background: #142A3D; border: 1px solid #20384A; border-radius: 4px; min-height: 22px; text-align: center; }\nQProgressBar#captureProgress::chunk, QProgressBar#inspectorProgress::chunk { background: #22D3A6; border-radius: 3px; }\nQProgressBar#inspectorProgress { background: #142A3D; border: none; border-radius: 4px; min-height: 8px; max-height: 8px; }\nQFrame#actionBar { background: #0C2030; border-top: 1px solid #20384A; }\nQLabel#actionNotice { color: #EAF2F8; font-size: 14px; padding: 0 4px; }\nQLabel#actionNotice[tone="warning"] { color: #F2B84B; }\nQLabel#actionNotice[tone="error"] { color: #F06464; }\nQLabel#statusTelemetry { color: #637B8D; font-size: 12px; }\nQFrame#toolPalette { background: rgba(16, 34, 51, 240); border: 1px solid #20384A; border-radius: 5px; }\nQPushButton#toolButton { background: transparent; padding: 0 7px; text-align: left; font-size: 14px; }\nQLabel#viewportTag { background: rgba(13, 27, 41, 225); color: #91A9BB; padding: 6px 9px; border-radius: 4px; font-size: 12px; }\nQLabel#viewportHint { background: #102233; color: #F2B84B; border-left: 3px solid #F29B45; border-radius: 4px; padding: 10px; font-size: 13px; }\nQLabel#viewportLegend { background: rgba(13, 27, 41, 230); color: #EAF2F8; border: 1px solid #20384A; padding: 10px 12px; border-radius: 5px; font-size: 13px; }\nQDockWidget, QDockWidget > QWidget, QDialog, QMessageBox { color: #EAF2F8; background: #0D1B29; }\nQListWidget, QTextBrowser { background: #102233; border: 1px solid #20384A; color: #EAF2F8; padding: 8px; }\nQListWidget::item { min-height: 48px; padding: 8px; border-bottom: 1px solid #20384A; }\nQListWidget::item:selected { background: #086E91; }\nQMenu { background: #102233; border: 1px solid #20384A; padding: 5px; }\nQMenu::item { padding: 10px 18px; }\nQMenu::item:selected { background: #193B55; }\nQMenu::item:disabled { color: #637B8D; }\nQScrollBar:vertical { background: #0D1B29; width: 8px; }\nQScrollBar::handle:vertical { background: #29465D; min-height: 24px; border-radius: 4px; }\nQScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }\nQScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }\nQToolTip { background: #142A3D; color: #EAF2F8; border: 1px solid #29465D; padding: 6px; }\n'
 
 """Launch with: python main.py"""
 
 import sys
+import argparse
 from pathlib import Path
 
 from PySide6.QtGui import QFont
@@ -2761,12 +3155,15 @@ from PySide6.QtWidgets import QApplication
 
 
 def main() -> int:
-    app = QApplication(sys.argv)
+    parser = argparse.ArgumentParser(description="三维采集与规划工作台 · 独立界面原型")
+    parser.add_argument("--replay", action="store_true", help="只读载入已保存项目；默认使用 Mock 演示")
+    args, qt_args = parser.parse_known_args()
+    app = QApplication([sys.argv[0], *qt_args])
     app.setApplicationName("三维采集与轨迹规划工作台 · 原型")
     app.setFont(QFont("Microsoft YaHei", 10))
     qss = None
     app.setStyleSheet(MEDICAL_QSS)
-    window = MainWindow(records_dir=Path(__file__).resolve().parent / "demo_records")
+    window = MainWindow(records_dir=Path(__file__).resolve().parent / "demo_records", use_project_replay=args.replay)
     window.show()
     return app.exec()
 

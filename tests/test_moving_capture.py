@@ -9,14 +9,12 @@ from unittest import mock
 
 import femto.app.femto_control_app as control
 from tests.test_segmented_capture import make_camera, make_frame
+from tests.camera_worker_fixture import bare_camera_app
 
 
 class MovingCaptureTests(unittest.TestCase):
     def app(self):
-        app = control.FemtoControlApp.__new__(control.FemtoControlApp)
-        app.language = 'en'
-        app.event_queue = queue.Queue()
-        return app
+        return bare_camera_app()
 
     def test_camera_worker_records_unknown_moving_pose_and_valid_fixed_pose(self):
         for mode in ('moving', 'keyframe'):

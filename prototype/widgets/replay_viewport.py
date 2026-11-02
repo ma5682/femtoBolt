@@ -3,6 +3,7 @@ from math import sin, cos, radians, ceil
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QWidget
+from styles.tokens import COLORS
 
 
 class ReplayViewport(QWidget):
@@ -18,6 +19,7 @@ class ReplayViewport(QWidget):
         self.pan = QPointF()
         self.yaw = self.pitch = 0.0
         self.drag = None
+        self.navigation_tool = "select"
         self.focus = ""
         self.images = {}
         self.cache = None
@@ -64,6 +66,17 @@ class ReplayViewport(QWidget):
         self.cache_key = None
         self.update()
 
+    def set_navigation_tool(self, tool):
+        if tool not in ("select", "pan", "zoom"):
+            raise ValueError(f"未知视图工具: {tool}")
+        self.navigation_tool = tool
+        self.drag = None
+        self.setCursor(Qt.OpenHandCursor if tool == "pan" else Qt.CrossCursor if tool == "zoom" else Qt.ArrowCursor)
+
+    def zoom_in(self):
+        self.zoom = min(6, self.zoom * 1.15)
+        self.update()
+
     def focus_issue(self, kind):
         self.focus = "gap" if kind == "route" else kind
         if self.focus in ("gap", "geometry", "capture", "edge"):
@@ -105,9 +118,10 @@ class ReplayViewport(QWidget):
             return self.cache
         self.prepare_projection()
         image = QImage(self.size(), QImage.Format_RGB32)
-        image.fill(QColor("#0b0e11"))
+        image.fill(QColor(COLORS["viewport"]))
         p = QPainter(image)
         p.setClipRect(image.rect())
+        self.draw_grid(p)
         if self.mode == "点云":
             cloud = list(zip(self.data.cloud_points, self.data.cloud_colors))
             if len(cloud) > 12000:
@@ -148,7 +162,7 @@ class ReplayViewport(QWidget):
                 for role, points in self.route_groups:
                     if len(points) < 2:
                         continue
-                    p.setPen(QPen(QColor("#fcca46" if role == "scan" else "#48cae4"), 1.45, Qt.SolidLine if role == "scan" else Qt.DashLine))
+                    p.setPen(QPen(QColor(COLORS["warning" if role == "scan" else "primary"]), 1.45, Qt.SolidLine if role == "scan" else Qt.DashLine))
                     poly = QPainterPath()
                     for index, point in enumerate(points):
                         x, y, _ = self.project(point)
@@ -163,9 +177,10 @@ class ReplayViewport(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#0b0e11"))
+        p.fillRect(self.rect(), QColor(COLORS["viewport"]))
         if not self.data:
-            p.setPen(QColor("#b8cdd8"))
+            self.draw_grid(p)
+            p.setPen(QColor(COLORS["muted"]))
             p.drawText(self.rect(), Qt.AlignCenter, "正在读取已保存的项目数据…")
             p.end()
             return
@@ -190,47 +205,61 @@ class ReplayViewport(QWidget):
             top = self.height() * 0.18
             width = self.width() * 0.52
             height = self.height() * 0.58
-            p.setBrush(QColor(157, 78, 221, 18 + int(20 * pulse)))
-            p.setPen(QPen(QColor(157, 78, 221, 125 + int(80 * pulse)), 2.0 + 1.2 * pulse))
-            p.drawRoundedRect(QRectF(left, top, width, height), 10, 10)
-            p.setBrush(QColor(22, 29, 39, 230))
-            p.setPen(QPen(QColor(157, 78, 221, 200), 1))
+            p.setBrush(QColor(242, 184, 75, 18 + int(20 * pulse)))
+            p.setPen(QPen(QColor(242, 184, 75, 125 + int(80 * pulse)), 2.0))
+            p.drawRoundedRect(QRectF(left, top, width, height), 5, 5)
+            p.setBrush(QColor(13, 27, 41, 230))
+            p.setPen(QPen(QColor(COLORS["warning"]), 1))
             p.drawRoundedRect(QRectF(left + 14, top + 14, 188, 30), 5, 5)
-            p.setPen(QColor("#eadcff"))
+            p.setPen(QColor(COLORS["text"]))
             p.drawText(QRectF(left + 24, top + 14, 168, 30), Qt.AlignVCenter, "三维表面支持未确认")
-        p.setPen(QColor("#e7edf4"))
-        p.fillRect(QRectF(12, 12, 188, 28), QColor(11, 17, 24, 220))
+        p.setPen(QColor(COLORS["text"]))
+        p.fillRect(QRectF(12, 12, 188, 28), QColor(13, 27, 41, 230))
         p.drawText(QRectF(22, 12, 178, 28), Qt.AlignVCenter, f"{self.mode} · 项目回放")
         p.end()
+
+    def draw_grid(self, p):
+        """A visual orientation backdrop, not a measured coordinate grid."""
+        p.save()
+        grid = QColor(COLORS["grid"])
+        grid.setAlpha(76)
+        p.setPen(QPen(grid, 1))
+        horizon = self.height() * .57
+        for x in range(-self.width(), 2 * self.width(), max(72, self.width() // 10)):
+            p.drawLine(QPointF(self.width() * .5, horizon), QPointF(x, self.height()))
+        for fraction in (.08, .18, .33, .53, .77, 1):
+            y = horizon + (self.height() - horizon) * fraction
+            p.drawLine(QPointF(0, y), QPointF(self.width(), y))
+        p.restore()
 
     def draw_gaps(self, p):
         if self.stage < 2:
             return
         p.setRenderHint(QPainter.Antialiasing)
         pulse = self._pulse_strength() if self.focus == "gap" else 0.0
-        p.setBrush(QColor("#161d27"))
+        p.setBrush(QColor(COLORS["panel"]))
         gaps = [item for item in self.data.trajectory["ordered_items"] if item["kind"] == "gap"]
         for item in gaps:
             for key in ("previous_point", "next_point"):
                 x, y, _ = self.project(item[key]["xyz_m"])
                 radius = 3 + 2 * pulse
-                p.setPen(QPen(QColor(239, 71, 111, 185 + int(60 * pulse)), 1.6 + 1.0 * pulse))
+                p.setPen(QPen(QColor(240, 100, 100, 185 + int(60 * pulse)), 1.6 + 1.0 * pulse))
                 p.drawEllipse(QPointF(x, y), radius, radius)
                 if self.focus == "gap":
                     p.setBrush(Qt.NoBrush)
-                    p.setPen(QPen(QColor(239, 71, 111, 50 + int(85 * pulse)), 1.1))
+                    p.setPen(QPen(QColor(240, 100, 100, 50 + int(85 * pulse)), 1.1))
                     p.drawEllipse(QPointF(x, y), radius + 5 + 3 * pulse, radius + 5 + 3 * pulse)
-                    p.setBrush(QColor("#161d27"))
+                    p.setBrush(QColor(COLORS["panel"]))
         if self.focus == "gap":
-            p.setPen(QColor("#ffd166"))
-            p.drawText(22, 68, "粉色圆点：断开段端点（缺口之间不连线）")
+            p.setPen(QColor(COLORS["warning"]))
+            p.drawText(22, 68, "红色圆点：断开段端点（缺口之间不连线）")
 
     def draw_focus_marker(self, p):
         """Pulse a focused geometry/edge area on both mesh and image views."""
         if self.focus not in ("geometry", "edge"):
             return
         pulse = self._pulse_strength()
-        color = QColor("#9d4edd" if self.focus == "geometry" else "#ffd166")
+        color = QColor(COLORS["warning"])
         if self.is_3d() and getattr(self, "selected_vertices", None):
             vertices = self.data.region_vertices if self.region_mesh_selection else self.data.vertices
             points = [self.project(vertices[index]) for index in self.selected_vertices if index < len(vertices)]
@@ -251,6 +280,10 @@ class ReplayViewport(QWidget):
         p.drawEllipse(QPointF(cx, cy), radius + 10 + 4 * pulse, radius * .72 + 7 + 3 * pulse)
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.navigation_tool == "zoom":
+            self.zoom_in()
+            event.accept()
+            return
         if event.button() in (Qt.LeftButton, Qt.RightButton):
             self.drag = (event.button(), event.position())
 
@@ -259,10 +292,10 @@ class ReplayViewport(QWidget):
             button, previous = self.drag
             delta = event.position()-previous
             self.drag = (button, event.position())
-            if button == Qt.LeftButton and self.is_3d():
+            if button == Qt.LeftButton and self.is_3d() and self.navigation_tool == "select":
                 self.yaw += delta.x()*.35
                 self.pitch = min(85, max(-85, self.pitch+delta.y()*.35))
-            elif button == Qt.RightButton:
+            elif button == Qt.RightButton or self.navigation_tool == "pan":
                 self.pan += delta
             self._redraw_timer.start()
 

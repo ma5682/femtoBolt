@@ -12,7 +12,7 @@ import open3d as o3d
 from femto.viewer.live_point_cloud import CalibratedCloudBuilder, LivePointCloudPreview, focus_bounds
 from femto.geometry.pose_geometry import Intrinsics
 from femto.geometry.depth_cloud import depth_cloud
-from femto.app.femto_control_app import FemtoControlApp
+from tests.camera_worker_fixture import bare_camera_app
 
 
 class LivePointCloudTests(unittest.TestCase):
@@ -64,7 +64,7 @@ class LivePointCloudTests(unittest.TestCase):
 
 
     def test_paused_fixed_multiframe_modes_are_blocked_before_reading_or_reconstructing(self):
-        app = FemtoControlApp.__new__(FemtoControlApp)
+        app = bare_camera_app()
         app.language = "en"
         app.event_queue = queue.Queue()
         with mock.patch("femto.app.femto_control_app.run_demo") as reconstruct, mock.patch("femto.app.femto_control_app.build_fixed_keyframe_dataset") as keyframe:

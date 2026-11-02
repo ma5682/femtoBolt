@@ -70,65 +70,85 @@ class DepthDebugData:
 
 class DepthDebugViewer:
     def __init__(self, root, directory: Path):
-        import tkinter as tk
-        from tkinter import ttk
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtGui import QKeySequence, QShortcut
+        from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout
         self.root, self.data = root, DepthDebugData(directory)
-        root.title('Depth Debug Viewer · 深度真实性检查')
-        root.geometry('1200x820')
-        bar = ttk.Frame(root); bar.pack(fill='x')
-        self.mode = tk.StringVar(value=MODES[0])
-        chooser = ttk.Combobox(bar,textvariable=self.mode,values=MODES,state='readonly',width=22)
-        chooser.pack(side='left',padx=8,pady=8)
-        chooser.bind('<<ComboboxSelected>>',lambda _:self.refresh())
-        ttk.Button(bar,text='适应窗口',command=self.fit).pack(side='left')
-        ttk.Button(bar,text='1:1像素',command=lambda:self.zoom_to(1)).pack(side='left')
-        ttk.Button(bar,text='放大',command=lambda:self.zoom_to(self.zoom*1.5)).pack(side='left')
-        ttk.Button(bar,text='缩小',command=lambda:self.zoom_to(self.zoom/1.5)).pack(side='left')
-        ttk.Label(root,text='绿色：真实Depth  |  黄色：修复Depth（0.3）  |  红色：未知（0）  |  深度模式亮度表示毫米值；数字键1–4切换').pack(fill='x')
+        root.setWindowTitle('Depth Debug Viewer · 深度真实性检查')
+        root.resize(1200,820)
+        layout = QVBoxLayout(root)
+        bar = QHBoxLayout(); layout.addLayout(bar)
+        self.mode = QComboBox(); self.mode.addItems(MODES)
+        bar.addWidget(self.mode)
+        self.mode.currentTextChanged.connect(self.refresh)
+        for title, action in [('适应窗口',self.fit),('1:1像素',lambda:self.zoom_to(1)),
+                              ('放大',lambda:self.zoom_to(self.zoom*1.5)),('缩小',lambda:self.zoom_to(self.zoom/1.5))]:
+            button = QPushButton(title); button.clicked.connect(action); bar.addWidget(button)
+        bar.addStretch()
+        legend = QLabel('绿色：真实Depth  |  黄色：修复Depth（0.3）  |  红色：未知（0）  |  深度模式亮度表示毫米值；数字键1–4切换')
+        legend.setWordWrap(True); layout.addWidget(legend)
         report = self.data.report
         check = report.get('depth_error_check',{}).get('after_rejection',{}).get('original_valid_comparison',{})
-        ttk.Label(root,text=f"{report.get('processing_mode','quality')} | invalid {report['original_invalid_rate']:.6%} → {report['filled_invalid_rate']:.6%} | 修复 {report['repaired_pixels']} | 原有效点MAE {check.get('mean_absolute_error_mm','未评估')} mm | 不能据此认定补点几何真值").pack(fill='x')
-        area = ttk.Frame(root); area.pack(fill='both',expand=True)
-        self.canvas = tk.Canvas(area,background='#161c22',highlightthickness=0)
-        sy = ttk.Scrollbar(area,orient='vertical',command=self.canvas.yview)
-        sx = ttk.Scrollbar(area,orient='horizontal',command=self.canvas.xview)
-        self.canvas.configure(yscrollcommand=sy.set,xscrollcommand=sx.set)
-        self.canvas.grid(row=0,column=0,sticky='nsew'); sy.grid(row=0,column=1,sticky='ns'); sx.grid(row=1,column=0,sticky='ew')
-        area.rowconfigure(0,weight=1); area.columnconfigure(0,weight=1)
-        self.status = tk.StringVar(value=str(self.data.directory))
-        ttk.Label(root,textvariable=self.status).pack(fill='x')
+        summary = QLabel(f"{report.get('processing_mode','quality')} | invalid {report['original_invalid_rate']:.6%} → {report['filled_invalid_rate']:.6%} | 修复 {report['repaired_pixels']} | 原有效点MAE {check.get('mean_absolute_error_mm','未评估')} mm | 不能据此认定补点几何真值")
+        summary.setWordWrap(True); layout.addWidget(summary)
+        owner = self
+        class PixelCanvas(QLabel):
+            def mouseMoveEvent(self, event):
+                owner.inspect(event)
+                super().mouseMoveEvent(event)
+
+            def wheelEvent(self, event):
+                if event.angleDelta().y():
+                    owner.zoom_to(owner.zoom*(1.25 if event.angleDelta().y()>0 else .8))
+                    event.accept()
+                else:
+                    super().wheelEvent(event)
+
+        self.canvas = PixelCanvas()
+        self.canvas.setMouseTracking(True)
+        self.canvas.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.area = QScrollArea(); self.area.setWidget(self.canvas)
+        self.area.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.area.setStyleSheet('QScrollArea { background: #161c22; }')
+        layout.addWidget(self.area,1)
+        self.status = QLabel(str(self.data.directory)); layout.addWidget(self.status)
         self.zoom = .5
-        self.canvas.bind('<Motion>',self.inspect)
-        self.canvas.bind('<MouseWheel>',lambda e:self.zoom_to(self.zoom*(1.25 if e.delta>0 else .8)))
+        self.shortcuts = []
         for i, mode in enumerate(MODES,1):
-            root.bind(str(i),lambda e,m=mode:self.set_mode(m))
-        root.after_idle(self.fit)
+            shortcut = QShortcut(QKeySequence(str(i)),root)
+            shortcut.activated.connect(lambda m=mode:self.set_mode(m))
+            self.shortcuts.append(shortcut)
+        self.refresh()
+        QTimer.singleShot(0,root,self.fit)
 
     def set_mode(self, mode):
-        self.mode.set(mode); self.refresh()
+        if mode not in MODES:
+            raise ValueError('Unknown debug mode')
+        self.mode.setCurrentText(mode)
+        self.refresh()
 
     def fit(self):
-        self.root.update_idletasks()
         h,w = self.data.original.shape
-        self.zoom_to(min(self.canvas.winfo_width()/w,self.canvas.winfo_height()/h))
+        self.zoom_to(min(self.area.viewport().width()/w,self.area.viewport().height()/h))
 
     def zoom_to(self, zoom):
         self.zoom = min(8,max(.1,zoom)); self.refresh()
 
     def refresh(self):
-        from PIL import ImageTk
-        source = self.data.render(self.mode.get())
+        from PySide6.QtGui import QImage, QPixmap
+        source = self.data.render(self.mode.currentText())
         width,height = max(1,round(source.width*self.zoom)),max(1,round(source.height*self.zoom))
-        self.photo = ImageTk.PhotoImage(source.resize((width,height),Image.Resampling.NEAREST))
-        self.canvas.delete('all')
-        self.canvas.create_image(0,0,anchor='nw',image=self.photo)
-        self.canvas.configure(scrollregion=(0,0,width,height))
+        pixels = np.ascontiguousarray(source.resize((width,height),Image.Resampling.NEAREST))
+        image = QImage(pixels.data,width,height,pixels.strides[0],QImage.Format.Format_RGB888).copy()
+        self.photo = QPixmap.fromImage(image)
+        self.canvas.setPixmap(self.photo)
+        self.canvas.resize(width,height)
 
     def inspect(self, event):
-        x,y = int(self.canvas.canvasx(event.x)/self.zoom),int(self.canvas.canvasy(event.y)/self.zoom)
+        x,y = int(event.position().x()/self.zoom),int(event.position().y()/self.zoom)
         h,w = self.data.original.shape
         if 0<=x<w and 0<=y<h:
-            self.status.set(self.data.describe_pixel(x,y))
+            self.status.setText(self.data.describe_pixel(x,y))
 
 
 def main():
@@ -141,13 +161,14 @@ def main():
             parser.error('--export requires directory')
         DepthDebugData(args.directory).export_overview(args.export)
         return
-    import tkinter as tk
-    from tkinter import filedialog
-    root = tk.Tk(); root.withdraw()
-    directory = args.directory or filedialog.askdirectory(title='选择包含 depth_quality.json 的派生目录')
+    from PySide6.QtWidgets import QApplication, QFileDialog, QWidget
+    app = QApplication.instance() or QApplication([])
+    root = QWidget()
+    directory = args.directory or QFileDialog.getExistingDirectory(root,'选择包含 depth_quality.json 的派生目录')
     if not directory:
-        root.destroy(); return
-    DepthDebugViewer(root,Path(directory)); root.deiconify(); root.mainloop()
+        root.close(); return
+    viewer = DepthDebugViewer(root,Path(directory))
+    root.show(); app.exec()
 
 
 if __name__ == '__main__':

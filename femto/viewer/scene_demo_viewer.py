@@ -93,9 +93,9 @@ def _open3d_ascii_resources() -> Path:
     source = Path(o3d.__file__).resolve().parent / "resources"
     if not source.is_dir():
         raise FileNotFoundError(f"Open3D resources are missing: {source}")
+    from femto.paths import WORKSPACE_CACHE_ROOT
     cache = (
-        Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
-        / "FemtoSceneDemo"
+        WORKSPACE_CACHE_ROOT
         / f"open3d_resources_{o3d.__version__.replace('.', '_')}"
     )
     if not (cache / "defaultLit.filamat").exists():

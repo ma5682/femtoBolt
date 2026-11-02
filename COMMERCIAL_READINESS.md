@@ -22,6 +22,7 @@
 | Pillow | 可商用 | MIT-CMU；保留版权/许可文本并分发 wheel 内完整三方许可证目录 |
 | `gsplat` | 可作为商用 3DGS 基线 | Apache-2.0；`gsplat==1.5.3` 已安装在独立产品运行时 `.venv-gsplat` 并完成 GPU 验收；发布时保留 LICENSE 与 `patch_gsplat_windows.py` 编译标志修改说明；不安装 Graphdeco/PyMeshLab/Nerfstudio（门禁自动检查） |
 | PyTorch / torchvision / torchmetrics 运行时 | 有条件可商用 | BSD-3 / BSD-3 / Apache-2.0（含 BSD-2 LPIPS 代码）；分发 `licenses/torch/` 的 LICENSE 与 NOTICE，核对 cu128 wheel 捆绑的 NVIDIA 运行库再分发条款；版本由门禁钉死 |
+| PySide6 / Qt for Python 6.11.2 | 有条件可商用 | Wheel 元数据声明 LGPL-3.0-only / GPL-2.0-only / GPL-3.0-only；按选定许可证履行动态链接、替换库和许可证文本义务，或另行取得 Qt 商业许可；记录见 `licenses/pyside6/` |
 | LPIPS AlexNet 评测权重 | 研发侧验收可用；客户侧分发待复核 | torchvision 官方 ImageNet 权重，仅用于训练后 LPIPS 指标，不进入模型产物；离线按 SHA-256 装载。若产品在客户环境执行 LPIPS 验收，发布前需法务确认 ImageNet 衍生权重的商用条件 |
 | Nerfstudio / Splatfacto | 仅限当前内部训练验证 | 主项目 Apache-2.0，但 PyPI 强制传递依赖包含 GPL-3.0 PyMeshLab；当前禁止把完整环境打入闭源客户端/设备，正式产品改为直接 `gsplat` 最小适配并重新审计 |
 | Graphdeco Gaussian Splatting | 不进入商用产品 | 只有取得 INRIA 书面商业授权后才能改变此结论 |

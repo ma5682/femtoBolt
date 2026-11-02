@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from time import monotonic
 from types import SimpleNamespace
+from typing import Any
 import json
 
 import numpy as np
@@ -101,3 +102,18 @@ def process_keyframe_burst(burst, root, events, *, fuse=True):
     except Exception as error:
         import traceback
         events.put(('reconstruction_error',f'{error}\n{source}\n{traceback.format_exc(limit=5)}'))
+
+
+def latest_temporal_result(root: Path | None = None) -> dict[str, Any] | None:
+    """Return the newest valid temporal fusion result, if one exists."""
+    from femto.paths import DATASETS_ROOT
+
+    for source in sorted(Path(root or DATASETS_ROOT).glob("temporal_capture_*"), reverse=True)[:10]:
+        for output in sorted((source / "derived").glob("temporal_fusion_*"), reverse=True):
+            try:
+                report = json.loads((output / "temporal_report.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError, KeyError):
+                continue
+            return {"status": report.get("status"), "source": str(source),
+                    "output": str(output), "report": report}
+    return None

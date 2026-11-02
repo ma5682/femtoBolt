@@ -514,7 +514,8 @@ STRINGS: dict[str, dict[str, str]] = {
 
 
 def preference_path() -> Path:
-    base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "FemtoSceneDemo"
+    from femto.paths import WORKSPACE_CACHE_ROOT
+    base = WORKSPACE_CACHE_ROOT
     return base / "ui_preferences.json"
 
 

@@ -74,21 +74,3 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(metrics['repeated_edge_length_m'],1)
         self.assertEqual([t['deflection_degrees'] for t in turns],[90.,180.])
         self.assertEqual([t['sample_index'] for t in turns],[1,2])
-    def test_turn_list_locates_correct_point_in_demo(self):
-        import tkinter as tk
-        from types import SimpleNamespace
-        from femto.planning.path_presentation import show_presentation
-        with tempfile.TemporaryDirectory() as tmp:
-            m,s,r,p=self.setup_case(Path(tmp));plan=optimized_serpentine_plan(p,m,r,4,20)
-            root=tk.Tk();root.withdraw()
-            try:
-                show_presentation(root,SimpleNamespace(rgb=np.zeros((85,85,3),np.uint8),projection=p),r,plan)
-                demo=root._route_demo_window;turn=plan['route_quality']['sharp_turns'][0]
-                window=show_quality(demo,plan,demo.locate_turn,lambda:True)
-                window.turn_tree.selection_set('0');window.turn_tree.event_generate('<<TreeviewSelect>>');root.update()
-                np.testing.assert_allclose(demo.motion_state['xyz_m'],turn['xyz_m'],atol=1e-12)
-                self.assertEqual(demo.motion_state['chain_index'],turn['chain_index']);self.assertFalse(demo.motion_player.running)
-                demo.close_demo();root.update()
-            finally:root.destroy()
-
-if __name__=='__main__':unittest.main()

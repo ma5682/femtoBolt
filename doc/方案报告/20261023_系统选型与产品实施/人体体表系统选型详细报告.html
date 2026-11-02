@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="人体体表三维规划与机械臂系统的Android Linux Windows11选型、ROS2 Lyrical架构、技术壁垒与可实施方案"><title>人体体表三维规划与机械臂系统选型报告</title><style>
+:root{--ink:#132e3e;--muted:#52697a;--teal:#087f8c;--navy:#173f52;--line:#d7e2e8;--paper:#fff;--wash:#f1f5f7;--sidebar:270px}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}body{margin:0;background:#f3f6f8;color:var(--ink);font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;font-size:16px;line-height:1.85}a{color:var(--teal);text-decoration:none}a:hover{text-decoration:underline}button,input,select{font:inherit}button,a,input,select{outline-offset:4px}button{cursor:pointer}.skip{position:absolute;left:290px;top:-70px;background:white;padding:8px 16px;z-index:100}.skip:focus{top:12px}
+.sidebar{position:fixed;inset:0 auto 0 0;width:var(--sidebar);background:#102f40;color:#d6e5ec;display:flex;flex-direction:column;padding:30px 22px 18px;z-index:10}.brand{font-size:12px;letter-spacing:2px;color:#7fc2c8}.side-title{font-size:21px;line-height:1.55;color:white;margin:10px 0 22px;font-weight:700}.search-label{font-size:12px;color:#afc6d3}.sidebar input{width:100%;border:1px solid #365565;border-radius:8px;background:#1c4052;color:white;padding:9px 11px;font-size:13px;margin:6px 0}.search-status{font-size:11px;color:#a8c1cf;min-height:22px}nav{overflow:auto;flex:1;margin-top:14px;padding-right:4px;scrollbar-width:thin}nav a{display:flex;gap:10px;padding:8px 9px;color:#c9dde7;font-size:12px;line-height:1.55;border-radius:6px;margin:2px 0}nav a:hover{background:#234a5e;text-decoration:none}nav a.active{color:white;background:#225467}nav .idx{color:#78bbc4;font-variant-numeric:tabular-nums;min-width:20px}.side-note{border-top:1px solid #345364;margin-top:16px;padding-top:13px;font-size:11px;color:#a8c1cf}.side-note strong{color:white;font-weight:500}
+main{margin-left:var(--sidebar);max-width:1510px;padding:44px 50px 70px}.hero{background:white;border:1px solid var(--line);padding:38px 44px 32px;border-radius:16px;margin-bottom:28px;position:relative;overflow:hidden}.eyebrow{font-size:12px;letter-spacing:2px;color:var(--teal);font-weight:700;margin:0 0 15px}h1{font-size:36px;line-height:1.38;letter-spacing:-.5px;margin:0 0 15px;font-weight:750;max-width:1000px}.subtitle{font-size:17px;color:var(--muted);margin:0 0 24px}.lead{font-size:17px;line-height:1.95;margin:0;max-width:1080px}.lead strong{color:#075c65}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:28px;padding-top:24px;border-top:1px solid var(--line)}.metric b{font-size:22px;line-height:1.4;display:block;font-weight:650}.metric span{font-size:12px;color:var(--muted)}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:27px}.button{padding:9px 18px;border:1px solid var(--teal);background:var(--teal);color:white;border-radius:7px;display:inline-block;font-size:14px;line-height:1.6}.button:hover{text-decoration:none;background:#086973}.button.secondary{color:var(--ink);background:white;border-color:#c9d7df}.scope-line{font-size:12px;color:var(--muted);margin:20px 0 0}
+.report-section{background:var(--paper);border:1px solid var(--line);border-radius:12px;margin:26px 0;padding:32px 38px}.section-top{display:flex;align-items:flex-start;gap:15px;margin-bottom:21px;border-bottom:1px solid var(--line);padding-bottom:18px}.section-number{font-size:13px;font-weight:700;line-height:2.2;background:#e6f1f3;color:#0d7280;padding:0 9px;border-radius:4px;white-space:nowrap}h2{font-size:25px;line-height:1.45;margin:0;color:#102f40}h3{font-size:19px;line-height:1.6;margin:30px 0 12px;font-weight:700;color:#173f52}p{margin:13px 0}strong{font-weight:650}ul,ol{padding-left:24px;margin:15px 0}li{padding:3px 0 6px 3px}code{font-family:Consolas,"Microsoft YaHei",monospace;font-size:.9em;background:#f0f4f6;padding:2px 4px;border-radius:3px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#142f40;color:#e7f3f8;padding:20px 23px;border-radius:8px;line-height:1.65;font-size:13px}pre code{background:none;padding:0;font-size:1em;color:inherit}.table-wrap{overflow-x:auto;margin:21px 0 24px;border:1px solid var(--line);border-radius:7px}table{border-collapse:collapse;width:100%;font-size:13.5px;line-height:1.8}th{background:#173f52;color:#fff;font-size:13px;text-align:left;font-weight:600;padding:13px 15px;vertical-align:middle}td{padding:13px 15px;border-top:1px solid #d9e1e6;vertical-align:middle;min-width:92px}tr:nth-child(even) td{background:#f3f7f9}td:first-child{font-weight:550;min-width:120px;width:21%}th:not(:last-child),td:not(:last-child){border-right:1px solid #d9e1e6}.cite{font-size:.77em;vertical-align:super;margin-left:2px;white-space:nowrap;line-height:0}.equation{font-family:"Cambria Math",Cambria,serif;text-align:center;font-size:26px;padding:14px 12px;margin:20px 0;background:#f7fafb;border-radius:6px;line-height:1.8}.equation sub,.equation sup{font-size:.63em}figure{margin:24px 0}figure svg{display:block;width:100%;height:auto;border:1px solid #e3eaee;border-radius:7px}.section-footer{text-align:right;margin-top:22px;font-size:12px}.source-list{list-style:none;padding:0;margin:22px 0}.source-list li{padding:15px 0;border-bottom:1px solid #e2e9ee;display:flex;gap:16px;align-items:baseline}.source-id{color:var(--teal);font-weight:700;font-family:Consolas,monospace;font-size:14px;flex-shrink:0}.source-description{color:var(--muted);font-size:12px}.fine{font-size:13px;color:var(--muted)}.report-footer{text-align:center;color:var(--muted);font-size:12px;margin:35px 0}.filtered-out{display:none!important}
+.interactive{background:#fff;border:1px solid #b8d6dc}.interactive-header{display:flex;gap:15px;align-items:center;margin-bottom:20px}.badge{font-size:11px;background:#e5f4f2;color:#066777;padding:3px 9px;border-radius:4px;white-space:nowrap}.choice-grid{display:grid;grid-template-columns:1fr 1.65fr;gap:26px}.choice-controls label{display:block;font-size:14px;font-weight:600;margin-bottom:8px}.choice-controls select{width:100%;padding:10px 12px;border:1px solid #b8cad5;border-radius:6px;background:white;font-size:14px;line-height:1.6}.choice-detail{border-left:3px solid #75b8c2;padding-left:22px}.choice-detail h3{margin:0 0 8px;font-size:20px}.choice-detail p{margin:8px 0;font-size:14px}.facts{margin-top:15px;font-size:13px;color:var(--muted)}.calc-inputs{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:22px 0}.calc-inputs label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:7px}.calc-inputs input{padding:9px;border:1px solid #c1d1da;border-radius:6px;background:white;width:100%;color:var(--ink)}.calc-results{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;border-top:1px solid var(--line);padding-top:20px}.calc-results b{font-size:26px;font-weight:650;display:block;line-height:1.5}.calc-results span{color:var(--muted);font-size:12px}.calc-message{font-size:14px;color:#7b5528;margin-top:18px;min-height:25px}
+@media(min-width:1700px){main{margin-right:auto}h1{font-size:40px}.lead{font-size:18px}}
+@media(max-width:1180px){:root{--sidebar:230px}main{padding:28px 24px}.sidebar{padding:22px 16px}.hero{padding:28px}h1{font-size:31px}.report-section{padding:27px}.choice-grid{grid-template-columns:1fr}.choice-detail{border-left:0;border-top:1px solid var(--line);padding:18px 0 0}}
+@media(max-width:820px){.sidebar{position:relative;width:auto;max-height:none;padding:22px}.sidebar nav{display:none}.side-title{margin-bottom:10px}.side-note{display:none}.search-status{margin-bottom:0}.sidebar input{max-width:520px}.sidebar .brand{display:none}main{margin:0;padding:20px 14px}.hero{padding:25px 22px}h1{font-size:28px}.metrics{grid-template-columns:repeat(2,1fr)}.report-section{padding:25px 19px}h2{font-size:22px}h3{font-size:18px}body{font-size:15px}.table-wrap table{min-width:670px}.calc-inputs{grid-template-columns:repeat(2,1fr)}.calc-results{grid-template-columns:1fr 1fr}.source-list li{gap:9px}.skip{left:20px}.interactive-header{align-items:flex-start}.choice-grid{gap:15px}}
+@media print{html{scroll-behavior:auto}body{background:white;color:#000;font-size:10pt;line-height:1.55}.sidebar,.actions,.section-footer,.interactive,.report-footer,.skip{display:none!important}main{margin:0;max-width:none;padding:0}.hero,.report-section{border:0;border-radius:0;margin:0;padding:0;box-shadow:none}.hero{break-after:page}.report-section{break-before:page}.report-section.filtered-out{display:block!important}h1{font-size:24pt}h2{font-size:18pt}h3{font-size:12pt;break-after:avoid}p,li{orphans:3;widows:3}.section-top{border:0;padding:0;margin-bottom:15px}table{font-size:9pt}th,td{padding:8px}thead{display:table-header-group}tr{break-inside:avoid}figure{break-inside:avoid}a{color:#000}.table-wrap{overflow:visible;border:1px solid #ccc;border-radius:0}.metrics{margin-top:30px}pre{background:#f4f4f4;color:#000;border:1px solid #ccc}.source-list li{break-inside:avoid}.equation{background:white}.cite{font-size:8pt}@page{size:A4;margin:18mm}}
+</style></head><body>
+<a class="skip" href="#main-content">跳到报告正文</a><aside class="sidebar" aria-label="报告导航"><div class="brand">PRODUCT ARCHITECTURE</div><div class="side-title">人体体表系统<br>选型与实施报告</div><label class="search-label" for="report-search">搜索报告章节</label><input id="report-search" type="search" placeholder="例如 Android、力控、许可证"><div id="search-status" class="search-status" role="status"></div><nav><a href="#decision" data-target="decision"><span class="idx">01</span><span>选型结论与实施边界</span></a><a href="#product" data-target="product"><span class="idx">02</span><span>产品需求与使用流程</span></a><a href="#layers" data-target="layers"><span class="idx">03</span><span>系统分层与设备职责</span></a><a href="#os" data-target="os"><span class="idx">04</span><span>Android Linux与Windows 11比较</span></a><a href="#lyrical" data-target="lyrical"><span class="idx">05</span><span>ROS 2 Lyrical与依赖版本基线</span></a><a href="#deployments" data-target="deployments"><span class="idx">06</span><span>六种部署组合与选择条件</span></a><a href="#gui" data-target="gui"><span class="idx">07</span><span>GUI与三维渲染技术选择</span></a><a href="#reconstruction" data-target="reconstruction"><span class="idx">08</span><span>RGB D采集与三维重建方案</span></a><a href="#coordinates" data-target="coordinates"><span class="idx">09</span><span>坐标标定与时间同步契约</span></a><a href="#surface" data-target="surface"><span class="idx">10</span><span>区域编辑与体表覆盖路线</span></a><a href="#robot" data-target="robot"><span class="idx">11</span><span>机械臂运动规划与接触控制</span></a><a href="#interfaces" data-target="interfaces"><span class="idx">12</span><span>模块接口与运行状态</span></a><a href="#data" data-target="data"><span class="idx">13</span><span>通信可靠性与数据生命周期</span></a><a href="#hardware" data-target="hardware"><span class="idx">14</span><span>硬件配置与性能预算</span></a><a href="#deployment" data-target="deployment"><span class="idx">15</span><span>软件部署与首台样机落地步骤</span></a><a href="#validation" data-target="validation"><span class="idx">16</span><span>测试体系与验收标准</span></a><a href="#schedule" data-target="schedule"><span class="idx">17</span><span>研发分工里程碑与费用估算</span></a><a href="#barriers" data-target="barriers"><span class="idx">18</span><span>技术壁垒与商业化风险</span></a><a href="#handover" data-target="handover"><span class="idx">19</span><span>实施启动与交付检查清单</span></a><a href="#sources" data-target="sources"><span class="idx">20</span><span>官方资料与事实依据</span></a></nav><div class="side-note"><strong>2026.10.23 · V1.0</strong><br>Linux  Android  Windows 11<br>ROS 2 Lyrical · 工程方案</div></aside>
+<main id="main-content"><header class="hero" id="top"><p class="eyebrow">系统选型 · 产品架构 · 实施路线</p><h1>人体体表三维规划与机械臂系统选型报告</h1><p class="subtitle">操作系统、GUI、三维建模、渲染、路线规划与机器人集成的完整决策依据</p><p class="lead"><strong>首版建议采用Ubuntu 26.04工业计算机，配合Qt 6、几何服务和ROS 2 Lyrical，机械臂保留厂家控制器。</strong> Windows 11和Android按设备兼容与屏幕形态接入。技术选择以产品需求为起点，不受现有代码组织限制。</p><div class="metrics"><div class="metric"><b>6种</b><span>部署组合逐项比较</span></div><div class="metric"><b>19章</b><span>产品与工程实施内容</span></div><div class="metric"><b>26项</b><span>关键验收场景</span></div><div class="metric"><b>2031年5月</b><span>Lyrical官方支持截止</span></div></div><div class="actions"><a class="button" href="人体体表系统可实施技术方案.docx" download>下载Word实施方案</a><a class="button secondary" href="#selector">比较部署组合</a><button class="button secondary" type="button" id="print-report">打印报告</button></div><p class="scope-line">本报告中的平台与许可事实附有官方来源编号；方案选择、硬件预算和研发工期为工程建议。阅读顺序可从选型结论进入部署组合，再查看对应技术壁垒与实施章节。交互比较器只帮助选择部署形态，不能替代设备兼容性验证。</p></header>
+<section class="report-section interactive" id="selector"><div class="interactive-header"><h2>先选择产品部署组合</h2><span class="badge">交互比较</span></div><div class="choice-grid"><div class="choice-controls"><label for="deployment-choice">部署形态</label><select id="deployment-choice"><option value="A">A Linux单机 推荐</option><option value="B">B Windows加Linux</option><option value="C">C Android加Linux</option><option value="D">D 全Windows</option><option value="E">E 全Android</option><option value="F">F Windows加WSL2</option></select><p class="facts">全部组合都保留机械臂厂家控制器。建议从设备SDK、屏幕形态和维护成本决定组合。</p></div><div class="choice-detail" aria-live="polite"><h3 id="choice-title"></h3><p id="choice-placement"></p><p><strong>主要壁垒 </strong><span id="choice-barrier"></span></p><p><strong>适用条件 </strong><span id="choice-condition"></span></p></div></div></section><section class="report-section interactive" id="bandwidth"><div class="interactive-header"><h2>估算RGB D原始数据量</h2><span class="badge">工程估算</span></div><p class="fine">按未压缩RGB8每像素3字节、深度16位每像素2字节计算。未计红外、元数据、索引、协议和冗余；不是相机USB实际编码速率。</p><div class="calc-inputs"><label for="color-w">彩色宽度 px<input id="color-w" type="number" value="1920" min="64" max="8192" step="1"></label><label for="color-h">彩色高度 px<input id="color-h" type="number" value="1080" min="64" max="8192" step="1"></label><label for="depth-w">深度宽度 px<input id="depth-w" type="number" value="640" min="16" max="4096" step="1"></label><label for="depth-h">深度高度 px<input id="depth-h" type="number" value="576" min="16" max="4096" step="1"></label><label for="frame-rate">采集帧率 fps<input id="frame-rate" type="number" value="30" min="1" max="120" step="1"></label><label for="duration">采集时长 秒<input id="duration" type="number" value="60" min="1" max="86400" step="1"></label><label for="camera-count">相机数量<input id="camera-count" type="number" value="1" min="1" max="16" step="1"></label><label for="retain-ratio">原始帧保存比例 %<input id="retain-ratio" type="number" value="100" min="1" max="100" step="1"></label></div><div class="calc-results" aria-live="polite"><div><b id="calc-throughput"></b><span>未压缩输入吞吐</span></div><div><b id="calc-network"></b><span>等效原始链路数据率</span></div><div><b id="calc-storage"></b><span>按保存比例估算的原始存储</span></div></div><p id="calc-message" class="calc-message"></p></section>
+<section class="report-section" id="decision" data-search><div class="section-top"><span class="section-number">01</span><h2>选型结论与实施边界</h2></div><p>建议首版采用一台 Ubuntu 26.04 LTS x86_64 工业计算机，运行 Qt 6 桌面界面、RGB-D 采集、几何重建、表面覆盖规划和 ROS 2 Lyrical。机械臂保留厂家控制器，底层伺服、受控停止和安全输入由控制器及相应硬件承担。先形成可回放、可校验、可停止的单机产品，再按屏幕形态增加 Windows 或 Android 操作端。</p>
+<p>这是一套新产品的目标架构。现有项目已完成的可行性验证可以作为研发输入，但不决定新方案的语言、GUI、操作系统或进程结构。产品范围以人体体表观测、区域编辑、几何路线和机器人协同为中心；首版工程样机的交付与后续医疗用途验证分别立项。</p>
+<h3>三项直接决策</h3>
+<ol start="1">
+<li><strong>计算和机器人集成优先 Linux。</strong> 选定 Ubuntu 26.04，而不是笼统写“支持 Linux”。Lyrical 在该平台有 Tier 1 支持，MoveIt、ros2_control、Gazebo Jetty 及 Orbbec ROS 2 驱动有可核查的发行或支持依据。<a class="cite" href="#source-S02" aria-label="来源S02">[S02]</a><a class="cite" href="#source-S07" aria-label="来源S07">[S07]</a><a class="cite" href="#source-S08" aria-label="来源S08">[S08]</a><a class="cite" href="#source-S15" aria-label="来源S15">[S15]</a></li>
+<li><strong>桌面主操作界面优先 Qt 6 Widgets 加 VTK。</strong> 首版用 C++20 实现高负载与设备服务；Python 用于算法试验和离线工具。这样可减少 Python 3.14 与现成视觉轮子的耦合，界面仍可独立换成 Windows 客户端。</li>
+<li><strong>Android 优先承担触屏终端。</strong> Android 显示预览、编辑工作区、查看计划并提交受控请求；相机、重建和 ROS 放在 Linux 主机。Femto Bolt 未列入本次核查的 Android Wrapper 设备清单，不能据“SDK 支持 Android”就认定这款相机可直接接入。<a class="cite" href="#source-S05" aria-label="来源S05">[S05]</a><a class="cite" href="#source-S06" aria-label="来源S06">[S06]</a></li>
+</ol>
+<h3>何时改选其他组合</h3>
+<p>如果治疗头或其他关键设备只有 Windows 驱动，采用 Windows 11 设备服务或 GUI 加 Linux 计算及 ROS 主机。若一体机内部可以安装 Linux，而医师希望拿着平板操作，则采用 Android 加 Linux。只有在所有关键供应商均提供经过目标版本验证的 Windows 接口，且能接受独立适配成本时，才考虑全 Windows 主机。</p>
+<p>要求完全脱离 Linux、由 Android 同时承担 Femto Bolt 采集、三维重建、ROS 和机械臂集成，会增加相机 ABI、NDK、GPU 算法移植、后台运行、散热和机器人生态等多项工作，不建议作为第一版交付基线。双系统启动只能切换工作环境，不能同时提供一个连续运行的产品。</p>
+<h3>交付物与有效性层级</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">层级</th><th scope="col">能证明的内容</th><th scope="col">不能替代的内容</th></tr></thead><tbody>
+<tr><td>界面与渲染原型</td><td>流程、布局、交互和显示性能</td><td>真实空间精度与机械臂执行</td></tr>
+<tr><td>几何规划样机</td><td>真实 RGB-D 血缘、区域映射、曲面路线</td><td>机器人可达性、接触稳定性</td></tr>
+<tr><td>机器人台架样机</td><td>标定、运动约束、停止与恢复的工程验证</td><td>人体适用性与治疗效果</td></tr>
+<tr><td>医疗用途产品</td><td>按产品预期用途完成的设计和验证证据</td><td>不能由前三层的软件测试自动推定</td></tr>
+</tbody></table></div>
+<p>项目中的关键点、候选部位和关键区域坐标保持研发定位属性。进入未来执行链的应是经过标定、几何质量、工具模型、机器人约束和当前空间状态共同验证的独立计划对象。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="product" data-search><div class="section-top"><span class="section-number">02</span><h2>产品需求与使用流程</h2></div><p>产品组成按底座、机械臂、工具头、安装在工具头附近的 RGB-D 相机和医师操作屏设计。首版以底座锁定、单台机械臂、单台相机、一次处理一个局部体表范围为默认配置。仰卧与俯卧分别管理采集会话；不假设翻身后旧坐标和路线仍然有效。</p>
+<h3>需要冻结的产品输入</h3>
+<p>机械臂品牌型号、工具是否接触人体、有效作用范围、目标空间误差、允许的力与温度等工具限制、机器人控制接口、机身散热空间、预算和交期，进入立项输入表。接触和非接触两类实现都在本方案中给出，具体参数必须来自工具规格、测试和产品风险分析；缺少输入时，相应执行功能保持不可用。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">需求</th><th scope="col">首版实施定义</th><th scope="col">验收依据</th></tr></thead><tbody>
+<tr><td>支持部位</td><td>肩、胸腹、腰背、上肢、腕手整体、髋臀、大腿、膝和小腿</td><td>真数据按部位建立测试集</td></tr>
+<tr><td>暂缓范围</td><td>头面颅颈精细区、足趾、单根手指复杂精细路径</td><td>页面标明当前阶段不新建</td></tr>
+<tr><td>数据观测</td><td>完整场景 RGB-D 为主数据，语义为派生层</td><td>原始文件可独立回放与重算</td></tr>
+<tr><td>区域操作</td><td>涂抹、擦除、撤销、重做及多个分离区域</td><td>留空、缺失和未选范围可区分</td></tr>
+<tr><td>路线要求</td><td>工作段与同一可靠表面上的换行段均可要求连续贴面</td><td>每段具有明确角色和验证结果</td></tr>
+<tr><td>历史管理</td><td>原始数据、模型、区域、计划、执行记录分别版本化</td><td>能恢复保存时的完整上下文</td></tr>
+<tr><td>运行条件</td><td>本机离线完成核心流程，断网不丢记录</td><td>断网、断电和恢复测试</td></tr>
+</tbody></table></div>
+<h3>医师的一条完整操作路径</h3>
+<ol start="1">
+<li>建立会话并核对身份关联、体位、患者左右和设备状态。人体示意图只负责导航。</li>
+<li>采集当前可见体表的概览，建立有效空间参考，选择右肩等目标部位。系统基于真实观测提出局部扫描范围，由操作者调整。</li>
+<li>采集局部及必要周边；页面显示缺深度、未观察和需要补扫的位置。完成概览不自动赋予局部规划资格。</li>
+<li>检查真实模型，确认可用范围，在绑定本次采集的参考图上涂抹工作区并擦除留空。</li>
+<li>设置经过确认的有效作用宽度、重叠率或行距。查看工作段、贴面换行、分离区域和未完成范围。</li>
+<li>保存版本化计划。接入机器人后，另外进入执行准备，完成当前空间复核、机器人可达性、工具及控制器状态检查。</li>
+<li>台架执行时持续展示运行状态、暂停和停止入口；完成后保存实际轨迹、事件和中断原因。历史回放独立于当前设备画面。</li>
+</ol>
+<h3>页面设计</h3>
+<p>建议六个主页面：会话与部位、采集、模型检查、区域标记、路线检查、执行与结果。设备管理、标定、版本和详细诊断放在工程入口。界面显示“需要补扫”“计划已过期”“等待设备”等可行动状态，坐标矩阵和 DDS 参数不进入医师主流程。</p>
+<p>返回前一步保留工作上下文。只查看历史不使结果失效；真正改变体位、源模型、标定、区域或工具参数时，系统使相应下游结果过期。补采失败保留上一份完整结果，迟到的后台任务不能覆盖用户新选中的记录。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="layers" data-search><div class="section-top"><span class="section-number">03</span><h2>系统分层与设备职责</h2></div><p>上位机与下位机描述的是职责，不是固定的操作系统。Linux 工业计算机相对于触屏终端是后端，相对于机械臂控制器仍是上位机。不能因为 Linux 被称为“下位机”，就把它等同于实时伺服控制器。</p>
+<figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 800" role="img" aria-label="操作终端 Linux计算主机与机器人控制器的职责关系"><title>操作终端 Linux计算主机与机器人控制器的职责关系</title><rect width="1680" height="800" fill="white"/><rect x="60" y="35" width="480" height="130" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="300.0" y="93.7" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="34" font-weight="700" fill="#152C3D">Linux Qt 主屏</text><text x="300.0" y="140.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">方案A 推荐</text><line x1="300" y1="165" x2="300" y2="220" stroke="#087F8C" stroke-width="5"/><polygon points="300.00,220.00 293.48,206.49 306.52,206.49" fill="#087F8C"/><rect x="600" y="35" width="480" height="130" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="840.0" y="93.7" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="34" font-weight="700" fill="#152C3D">Windows 操作端</text><text x="840.0" y="140.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">方案B 可选</text><line x1="840" y1="165" x2="840" y2="220" stroke="#087F8C" stroke-width="5"/><polygon points="840.00,220.00 833.48,206.49 846.52,206.49" fill="#087F8C"/><rect x="1140" y="35" width="480" height="130" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="1380.0" y="93.7" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="34" font-weight="700" fill="#152C3D">Android 触屏</text><text x="1380.0" y="140.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">方案C 可选</text><line x1="1380" y1="165" x2="1380" y2="220" stroke="#087F8C" stroke-width="5"/><polygon points="1380.00,220.00 1373.48,206.49 1386.52,206.49" fill="#087F8C"/><rect x="60" y="220" width="1560" height="120" rx="16" fill="#173F52" stroke="#173F52" stroke-width="2"/><text x="840.0" y="278.7" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="34" font-weight="700" fill="white">版本化任务网关与资产索引</text><text x="840.0" y="325.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#DAE8EF">用户意图 任务状态 当前空间版本 计划哈希</text><line x1="840" y1="340" x2="840" y2="390" stroke="#087F8C" stroke-width="5"/><polygon points="840.00,390.00 833.48,376.49 846.52,376.49" fill="#087F8C"/><rect x="60" y="390" width="1560" height="135" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="840.0" y="448.7" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="34" font-weight="700" fill="#152C3D">Ubuntu 26.04 工业计算机</text><text x="840.0" y="495.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">RGB-D采集与记录 → 几何重建 → 表面规划 → ROS 2 Lyrical与运动规划</text><line x1="300" y1="525" x2="300" y2="600" stroke="#087F8C" stroke-width="5"/><polygon points="300.00,600.00 293.48,586.49 306.52,586.49" fill="#087F8C"/><line x1="840" y1="525" x2="840" y2="600" stroke="#087F8C" stroke-width="5"/><polygon points="840.00,600.00 833.48,586.49 846.52,586.49" fill="#087F8C"/><line x1="1380" y1="600" x2="1380" y2="525" stroke="#AA6230" stroke-width="5"/><polygon points="1380.00,525.00 1386.52,538.51 1373.48,538.51" fill="#AA6230"/><text x="1400" y="570.9" text-anchor="start" font-family="Microsoft YaHei, sans-serif" font-size="24" font-weight="400" fill="#536576">状态回读</text><rect x="60" y="600" width="480" height="145" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="300.0" y="656.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="32" font-weight="700" fill="#152C3D">原始与派生资产</text><text x="300.0" y="705.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">独立保存 可回放 可追溯</text><rect x="600" y="600" width="480" height="145" rx="16" fill="#173F52" stroke="#173F52" stroke-width="2"/><text x="840.0" y="656.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="32" font-weight="700" fill="white">厂家机器人控制器</text><text x="840.0" y="705.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#DAE8EF">运动执行 伺服 状态与停止</text><rect x="1140" y="600" width="480" height="145" rx="16" fill="#FFF4E6" stroke="#DFC7A6" stroke-width="2"/><text x="1380.0" y="656.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="32" font-weight="700" fill="#152C3D">独立保护与工具联锁</text><text x="1380.0" y="705.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">通过设备设计接入控制器</text><line x1="1140" y1="680" x2="1090" y2="680" stroke="#AA6230" stroke-width="5"/><polygon points="1090.00,680.00 1103.51,673.48 1103.51,686.52" fill="#AA6230"/></svg></figure>
+<div class="table-wrap"><table><thead><tr><th scope="col">层</th><th scope="col">主要职责</th><th scope="col">推荐载体</th><th scope="col">典型输出</th></tr></thead><tbody>
+<tr><td>医师操作层</td><td>会话、区域、预览、计划确认、运行状态</td><td>Linux Qt 主屏，可选 Windows 或 Android 屏</td><td>带版本的用户意图</td></tr>
+<tr><td>应用与计算层</td><td>采集、存储、重建、质量、覆盖与任务状态</td><td>Ubuntu 26.04 工业计算机</td><td>模型、报告、审核过的计划</td></tr>
+<tr><td>机器人集成层</td><td>TF、机器人模型、运动规划、状态及厂家适配</td><td>同一 Linux 主机的独立服务</td><td>可执行关节轨迹与受控请求</td></tr>
+<tr><td>实时设备层</td><td>插补、伺服、位置或力控制、设备故障处理</td><td>厂家机器人控制器；必要时独立实时机</td><td>实际关节状态及设备反馈</td></tr>
+<tr><td>独立保护层</td><td>急停、安全输入、工具输出联锁</td><td>控制器安全接口及按设计选用的安全硬件</td><td>硬件许可或停止状态</td></tr>
+</tbody></table></div>
+<p>普通 PLC 或 MCU 可管理灯、按钮、温度、继电器和工具辅助 I/O，但不因使用工业器件就自动具有安全等级。普通 micro-ROS 节点和通用 ROS 通信也不替代独立急停或经过验证的安全功能。<a class="cite" href="#source-S21" aria-label="来源S21">[S21]</a></p>
+<h3>数据平面与命令平面</h3>
+<p>原始图像、深度和稠密模型属于大数据通道，尽量留在相机相连的计算主机。设备状态和操作指令属于小消息通道。终端通过应用网关获得缩略预览、显示用模型和任务事件，不直接接收整条高带宽 RGB-D 总线。</p>
+<p>机器人控制网、相机 USB 链路和普通用户网络分别设计。需要跨机器共享原始数据时，先计算吞吐并明确拥塞策略，再选择千兆或 2.5GbE 等链路。不能把医院 Wi-Fi 当作有确定时限的伺服通道。</p>
+<h3>首版进程划分</h3>
+<p>建议保留五个进程边界：GUI、任务网关及资产索引、采集记录、几何计算、机器人集成。采集服务独占相机，其他模块不能重新抢占设备。重建进程崩溃可独立重启；机器人服务依据自身状态处理停止，不能依赖 GUI 进程是否还活着。</p>
+<p>同机使用共享内存或只读资产引用传递大块数据；跨机使用受控文件服务。ROS 消息只携带必要的图像流或描述信息，不把每个点编码进 JSON。进程间接口先定版本，后续替换 GUI 或算法不需要重写控制器接口。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="os" data-search><div class="section-top"><span class="section-number">04</span><h2>Android Linux与Windows 11比较</h2></div><p>三个系统都能显示三维内容。真正决定产品实施难度的，是目标相机和机械臂的二进制支持、持续计算能力、维护方式、实时边界和发行版本组合。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">维度</th><th scope="col">Ubuntu 26.04 x86_64</th><th scope="col">Windows 11 x64</th><th scope="col">Android ARM64</th></tr></thead><tbody>
+<tr><td>Lyrical 核心</td><td>Tier 1，发行包及预编译归档</td><td>Tier 1，VS2022，预编译归档</td><td>不在官方支持矩阵</td></tr>
+<tr><td>三维重建</td><td>C++ 与 GPU 生态完整，需锁驱动</td><td>可实现，依赖打包和 DLL 管理</td><td>多数桌面库需移植或换实现</td></tr>
+<tr><td>三维显示</td><td>Qt VTK 或 Web</td><td>Qt VTK、WPF 加专用视图或 Web</td><td>原生 GPU 视图或 WebView</td></tr>
+<tr><td>相机接入</td><td>ROS 驱动与原生 SDK 均有依据</td><td>原生 SDK 便利，ROS 外围需逐项核查</td><td>看具体相机，不可泛化</td></tr>
+<tr><td>机器人集成</td><td>常见工业 ROS 工具链集中</td><td>厂家 SDK 可行，生态支持不完全等价</td><td>更适合作为远程操作端</td></tr>
+<tr><td>长时稳定性</td><td>服务管理与资源限制清楚</td><td>需控制更新、重启、驱动和权限</td><td>需管理电池、后台限制和热降频</td></tr>
+<tr><td>确定性控制</td><td>可配实时内核，仍需测最坏延迟</td><td>通用桌面调度不提供硬实时保证</td><td>不适合作为确定性伺服主机</td></tr>
+<tr><td>维护成本</td><td>运维需 Linux 能力</td><td>桌面支持熟悉，系统授权需预算</td><td>设备型号、BSP 和应用分发碎片化</td></tr>
+</tbody></table></div>
+<p>平台支持层级以官方 Lyrical 文档为准。Windows 11 的 Tier 1 主要覆盖 ROS 发行定义的核心范围，不能推导为全部 ROS 包、Gazebo 集成、厂家驱动和算法均有相同支持。Android 的 Linux 内核也不意味着可直接安装 Ubuntu 的 ROS 软件包。<a class="cite" href="#source-S02" aria-label="来源S02">[S02]</a></p>
+<h3>Linux的具体壁垒</h3>
+<p>首先是目标发行版。Ubuntu 26.04 的系统 Python 为 3.14 系列，Lyrical 的最低语言要求包含 C++20、C17 和 Python 3.12 至 3.14；Open3D 发布安装页列出的 Python 轮子版本范围未覆盖 3.14，直接把整套算法安装进系统 Python 可能失败。<a class="cite" href="#source-S02" aria-label="来源S02">[S02]</a><a class="cite" href="#source-S18" aria-label="来源S18">[S18]</a></p>
+<p>解决路径是保持 ROS 运行环境独立，核心几何优先 C++ 构建；需要 Python 算法时，采用单独的已验证 Python 环境或容器，通过数据契约交互。不要替换 Ubuntu 的系统 Python，也不要让不同解释器环境直接共享 rclpy 的二进制扩展。还应验证 GPU 驱动、CUDA、USB 权限、显示服务器和相机固件的具体组合。</p>
+<h3>Windows的具体壁垒</h3>
+<p>Windows 原生 GUI、商业设备 SDK 和维护人员经验是优势。壁垒主要在于 Linux 优先发布的 ROS 外围组件、Visual Studio 与 CMake 编译链、DLL 搜索路径、多份 Qt 或 OpenCV 运行库共存、USB 电源管理和自动更新后的再验证。</p>
+<p>全 Windows 并非不能实施，但需要为 MoveIt、控制器插件、相机桥接和仿真列出单独的构建与运行清单。若设备只支持 Windows，保留一个 Windows 设备服务，通过版本化协议接入 Linux，比同时迁移整条机器人生态更容易控制范围。普通 Windows 11 与 Windows IoT Enterprise LTSC 的授权和维护周期不同，应按实际 SKU 与采购合同评估。<a class="cite" href="#source-S27" aria-label="来源S27">[S27]</a></p>
+<h3>Android的具体壁垒</h3>
+<p>Qt、Flutter、原生 Kotlin 或 WebView 能解决操作界面，却不能自动解决深度相机 SDK、x86 库到 ARM64 的 ABI、USB Host 供电和权限、长时间后台任务以及 GPU 内核移植。Android USB Host 能力需要硬件支持和应用授权，设备掉线后还要恢复权限和连接。<a class="cite" href="#source-S22" aria-label="来源S22">[S22]</a></p>
+<p>若相机厂商没有目标型号的 Android 二进制或可编译源代码，这是一项供应商依赖，单靠应用团队无法保证解决。即使能够读到深度流，也还要验证时间戳、内外参、同步、持续吞吐和长时间热稳定性。作为终端时，Android 只承担适量模型显示与输入，风险和研发量显著下降。</p>
+<h3>WSL 虚拟机与容器</h3>
+<p>WSL2 适合开发、学习和部分回放。Windows 下把 USB 相机接入 WSL 需要额外的 USB 转发工具和绑定流程，不是默认直通；重连、独占、延迟和图形链路要独立验证。<a class="cite" href="#source-S20" aria-label="来源S20">[S20]</a></p>
+<p>容器可以固定用户态依赖，但不能替代主机内核、USB 驱动、GPU 驱动和硬件时钟。Linux 上运行 ROS 容器不等于获得确定性调度；Windows Docker Linux 容器通常仍有虚拟化边界。首版实机控制采用原生 Linux 服务，算法容器仅作为可选隔离手段。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="lyrical" data-search><div class="section-top"><span class="section-number">05</span><h2>ROS 2 Lyrical与依赖版本基线</h2></div><p>ROS 2 Lyrical Luth 是 2026 年发布的长期支持版本，官方发布时间线给出 2026 年 5 月 22 日正式可用，支持至 2031 年 5 月。当前方案以 Lyrical 为目标，不把 Jazzy 的安装方式、依赖版本或驱动支持自动套用过来。<a class="cite" href="#source-S01" aria-label="来源S01">[S01]</a><a class="cite" href="#source-S03" aria-label="来源S03">[S03]</a></p>
+<h3>核查结果</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">组件</th><th scope="col">本次可核查事实</th><th scope="col">对实施的含义</th></tr></thead><tbody>
+<tr><td>Ubuntu 26.04</td><td>amd64 与 arm64 均为 Tier 1</td><td>首选 x86_64；ARM 仍要核设备 BSP</td></tr>
+<tr><td>Windows 11</td><td>amd64 为 Tier 1，VS2022</td><td>核心支持成立，外围逐包验收</td></tr>
+<tr><td>Ubuntu 24.04</td><td>Lyrical 为 Tier 3，需源码构建</td><td>不等同于 26.04 的二进制基线</td></tr>
+<tr><td>Python与Qt</td><td>Ubuntu 基线 Python 3.14.3、Qt 6.10.2</td><td>这些是发行文档的初始版本，不是永久锁定版本</td></tr>
+<tr><td>MoveIt</td><td>rosdistro 有 Lyrical release，版本 2.15.2-1</td><td>索引存在不证明目标机器已经安装成功</td></tr>
+<tr><td>ros2_control</td><td>Lyrical release 6.12.0-1</td><td>冻结该版本或实测通过的替代版本</td></tr>
+<tr><td>ros2_controllers</td><td>Lyrical release 6.10.0-1</td><td>核对所需控制器和厂家接口</td></tr>
+<tr><td>Gazebo</td><td>Lyrical 对应 Jetty</td><td>仿真固定这一配对，不混用任意版本</td></tr>
+<tr><td>Orbbec ROS 2</td><td>v2-main 明确列出 Lyrical 和 Ubuntu 26.04</td><td>进一步核查 Femto Bolt 固件与真实采集</td></tr>
+<tr><td>UR驱动示例</td><td>官方仓库及发行索引存在 Lyrical 分支或发布</td><td>仅作为采购示例，不代表其他品牌支持</td></tr>
+</tbody></table></div>
+<p>表中发行版本来自核查时的 rosdistro 索引快照，供建立锁定清单使用，不是本报告执行过的安装结果。<a class="cite" href="#source-S02" aria-label="来源S02">[S02]</a><a class="cite" href="#source-S07" aria-label="来源S07">[S07]</a><a class="cite" href="#source-S08" aria-label="来源S08">[S08]</a><a class="cite" href="#source-S15" aria-label="来源S15">[S15]</a><a class="cite" href="#source-S25" aria-label="来源S25">[S25]</a></p>
+<p>Orbbec 原生 SDK README 的 Linux x64 测试列表为 Ubuntu 20.04、22.04 和 24.04，而 ROS 2 Wrapper 已列出 26.04。两份资料层级不同，不能只看其中一份就宣称整机组合已验证。应固定 Wrapper 提交、其依赖 SDK、固件、USB 控制器和内核，一起进行实机验收。<a class="cite" href="#source-S05" aria-label="来源S05">[S05]</a><a class="cite" href="#source-S07" aria-label="来源S07">[S07]</a><a class="cite" href="#source-S37" aria-label="来源S37">[S37]</a></p>
+<h3>建议锁定的实施栈</h3>
+<p><strong>GUI与显示：</strong> Qt 6 Widgets，VTK 9 系列中与选定 Qt 构建匹配的具体版本，C++20。首版 2D 参考图负责编辑，3D 负责几何检查和路线预览。自由三维标记作为明确的后续需求。</p>
+<p><strong>采集与重建：</strong> 厂家维护的 Orbbec ROS 2 Wrapper 或原生 SDK 适配器，统一到内部采集契约；OpenCV、Eigen 与 Open3D C++，根据目标算法选择 TSDF 及网格处理。不能让两个进程同时控制相机。</p>
+<p><strong>机器人：</strong> rclcpp、tf2、URDF/SRDF、MoveIt 2、ros2_control 或厂家提供的等价轨迹接口。优先使用厂家的维护驱动和受控轨迹入口，避免首版自行接管整机伺服。</p>
+<p><strong>数据与运维：</strong> 完整 RGB-D 与同步信息保存在 MCAP 或明确定义的原始帧容器；SQLite 管理本机索引；模型及报告为外部不可变资产；systemd 管理进程；发行包和容器摘要、配置、固件及标定分别编号。</p>
+<h3>未通过兼容性门槛时的处理</h3>
+<p>先判断问题是源代码适配、二进制缺失、驱动限制还是供应商不提供支持。源码问题可在隔离构建环境解决；只有 Windows SDK 的设备可放在 Windows 适配进程；只有 Ubuntu 24.04 或 Jetson BSP 支持的设备可作为独立采集节点。不同 ROS 发行版之间不依赖未经验证的直接通信，必要时通过中立数据契约桥接。</p>
+<p>如机械臂厂商只支持 Jazzy，应先要求 Lyrical 支持计划或采用厂家协议适配层。将整个产品改成 Jazzy 加 Ubuntu 24.04 属于显式架构变更，需比较交期与维护成本后再决定，不静默替换用户选定的 Lyrical。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="deployments" data-search><div class="section-top"><span class="section-number">06</span><h2>六种部署组合与选择条件</h2></div><p>部署组合同时决定设备采购、团队技能、网络边界和售后复杂度。首版应只维护一条主交付路径；其他组合保留接口能力，不同时开发全部客户端。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">方案</th><th scope="col">GUI与计算位置</th><th scope="col">主要收益</th><th scope="col">主要新增成本</th></tr></thead><tbody>
+<tr><td>A Linux单机</td><td>Linux 上原生 GUI、算法、ROS</td><td>一套环境，延迟与数据链短</td><td>Linux 桌面和设备整机验证</td></tr>
+<tr><td>B Windows加Linux</td><td>Windows GUI或设备服务，Linux 算法与ROS</td><td>兼容 Windows 设备生态</td><td>双机部署、时钟、协议与升级</td></tr>
+<tr><td>C Android加Linux</td><td>Android 触屏，Linux 计算与ROS</td><td>便携屏、触控和机身分离</td><td>终端断连与轻量模型适配</td></tr>
+<tr><td>D 全Windows</td><td>Windows GUI、算法与ROS</td><td>单机且保留 Windows 生态</td><td>ROS外围和驱动的逐包构建</td></tr>
+<tr><td>E 全Android</td><td>Android 直接相机、算法与控制集成</td><td>理论上设备小且屏一体</td><td>硬件支持和移植成本最高</td></tr>
+<tr><td>F Windows加WSL2</td><td>Windows GUI，WSL里ROS与算法</td><td>适合研发与离线验证</td><td>USB转发、虚拟网络和运行边界</td></tr>
+</tbody></table></div>
+<h3>A Linux单机</h3>
+<p>使用触控显示器或工业屏直接连接工业计算机，USB 相机与机器人有线网均接此机。GUI 和计算依然分进程。适合没有强制 Windows 设备依赖的第一版，也是本实施方案的默认交付。其短板是单机故障影响多项服务，需要独立控制器停止能力、UPS 和可恢复数据设计。</p>
+<h3>B Windows加Linux</h3>
+<p>若 Windows 只负责 GUI，RGB-D、模型和 ROS 保持在 Linux，跨机只传预览和计划元数据。若关键相机或工具只能接 Windows，则增加设备服务，保留原始时钟与校准数据，并为跨机传输选择足够带宽。双机同时纳入版本清单和升级事务，客户端协议不匹配时应拒绝执行。</p>
+<h3>C Android加Linux</h3>
+<p>平板可运行本地安装的原生应用或受控 Web 应用；显示用网格提供降面版本，精确计算留在主机。工作区可在参考图上编辑，上传图像 ID 和区域笔画，再由主机映射三维，减少终端几何库依赖。无线连接中断时锁定新增执行请求，恢复后先同步状态，不能自动重放上次按键。</p>
+<p>如果希望终端具有本地三维拾取，需要服务器维护显示网格到权威几何的映射，并重新校验选区。纯视频串流也可用，但必须绑定画面序号、视角和模型版本；过期视频上的点击不能落到当前模型。</p>
+<h3>D 全Windows</h3>
+<p>可采用 Qt C++ 或 .NET 界面，重建用 C++ 或独立 Python 环境，机器人采用 Windows ROS 或厂家 SDK。启动前必须有一张实际构建矩阵：核心 ROS、MoveIt、运动学插件、控制器接口、相机、显卡、GUI 打包均通过，才能把它称为可交付基线。没有 Linux 并不消除机器人控制器这个独立设备层。</p>
+<h3>E 全Android</h3>
+<p>只有在相机、机器人、工具接口及 GPU 算法都得到目标 Android 型号支持，且性能与持续运行指标实测满足时才进入立项。若允许更换为厂家正式支持的相机，还须重新验证深度质量、标定和整个数据链，不能只替换设备名。该路径更接近嵌入式整机开发，通常需要 BSP 和原生图形经验。</p>
+<h3>F Windows加WSL2</h3>
+<p>适合工程师桌面、回放、算法开发和非实时联调。不作为首版临近人体运动的默认运行边界。选择此方案前，需要验证 USB 断连恢复、WSL 生命周期、图形上下文、网络地址变化和整机重启后服务恢复。<a class="cite" href="#source-S20" aria-label="来源S20">[S20]</a></p>
+<p>选择规则是先检查不可替代的设备 SDK，再决定计算主机，最后决定屏幕形态。不要先选平板或界面框架，再要求底层所有硬件迁就该选择。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="gui" data-search><div class="section-top"><span class="section-number">07</span><h2>GUI与三维渲染技术选择</h2></div><p>GUI 框架负责交互和状态；三维渲染器负责显示；几何服务负责可追溯的计算。三者通过明确的数据对象协作。即使采用同一个开源库，也应在产品架构上保留这些职责边界。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">技术</th><th scope="col">适用价值</th><th scope="col">主要壁垒</th><th scope="col">本方案用法</th></tr></thead><tbody>
+<tr><td>Qt 6 Widgets 加 VTK</td><td>桌面控件、点云、网格、拾取和工程工具成熟</td><td>C++、VTK管线及OpenGL上下文管理</td><td>首版主GUI</td></tr>
+<tr><td>Qt Quick QML 加 VTK</td><td>触屏动效与界面编排灵活</td><td>渲染线程、RHI与VTK集成约束</td><td>有专门QML经验时采用</td></tr>
+<tr><td>PySide6 加 VTK</td><td>业务迭代快、Python团队上手方便</td><td>解释器、轮子、内存及打包依赖</td><td>可选GUI实现，重计算独立</td></tr>
+<tr><td>WPF 或 WinUI</td><td>Windows设备与桌面生态结合好</td><td>Linux和Android需另一套客户端</td><td>Windows强依赖场景</td></tr>
+<tr><td>Web 加 Three.js</td><td>多终端共享界面、发布便利</td><td>浏览器内存、拾取映射和大量点云传输</td><td>第二终端或管理端</td></tr>
+<tr><td>Flutter</td><td>触屏业务组件与移动端一致性</td><td>高性能3D与相机需原生插件</td><td>Android终端的备选</td></tr>
+<tr><td>Unity 或 Unreal</td><td>场景表现、动画、复杂可视化强</td><td>引擎体积、坐标、许可证及工程集成</td><td>展示或培训的独立视图</td></tr>
+</tbody></table></div>
+<p>Qt 6 支持多平台，但支持范围仍取决于 Qt 的具体版本和工具链。不能把跨平台 GUI 的承诺扩展到相机驱动或机器人插件。<a class="cite" href="#source-S16" aria-label="来源S16">[S16]</a></p>
+<h3>首版推荐的Qt VTK组合</h3>
+<p>Qt 主线程只处理交互、轻量状态和视图调度；耗时重建、文件写入、模型加载和覆盖计算放在工作线程或独立进程。VTK 的 Qt 原生窗口有明确的 OpenGL 窗口类型与上下文要求，不能把任意 vtkRenderWindow 直接替换进 Qt 控件。<a class="cite" href="#source-S38" aria-label="来源S38">[S38]</a></p>
+<p>采用 QML 时，QQuickVTKItem 要处理 Qt Quick 图形后端与 VTK 的线程约束，并按文档在创建窗口前配置所需图形 API。Qt Quick 的平台默认渲染后端不一定与 VTK 的使用方式一致。第一版没有强烈动效需求时，Widgets 可减少这一集成面。<a class="cite" href="#source-S39" aria-label="来源S39">[S39]</a></p>
+<p>实时点云、累计点云、最终网格和机器人模型作为独立图层。采集中只更新显示缓冲，不在每帧重新构建整个窗口。点数、面数和纹理尺寸有显示预算；预算调整不能改变用于规划的权威几何。</p>
+<h3>拾取与区域编辑</h3>
+<p>第一版优先在绑定真实 RGB 的二维视图涂抹，再利用深度、标定和帧位姿映射到三维。三维视图用于核对边界、缺失、法向和路线；如需自由三维涂抹，必须另外处理背面遮挡、可见性、拾取误差和笔刷面积语义。</p>
+<p>降采样点或降面网格要保存回到源几何的索引或重投影依据。鼠标拾取到一个显示三角面，不自动代表它对应的精确源面有效。服务器对最终区域重新验证，历史记录保存模型版本与显示映射版本。</p>
+<h3>Web和移动端显示</h3>
+<p>Web 端可以用 Three.js 加 glTF/GLB 预览网格，也可用分块点云。GLB 适合传输渲染资产，但不是自动携带采集血缘、物理单位和质量证明的工程数据包。独立 manifest 记录坐标、缩放、源模型哈希和显示误差。</p>
+<p>移动端优先分级加载、降面、纹理压缩和可取消请求。多个终端同时编辑时使用区域版本或乐观锁，后提交的旧版本不得覆盖新版本。显示卡顿可以降低细节，不能降低执行验证条件。</p>
+<h3>3DGS和SPZ的定位</h3>
+<p>3D Gaussian Splatting 适合外观呈现和视角回放。它的高斯分布、透明度与渲染质量不自动给出适用于距离、法向、碰撞或接触的真实表面。SPZ 是高斯数据的压缩和交换格式，不是机器人网格或精度证书。<a class="cite" href="#source-S23" aria-label="来源S23">[S23]</a><a class="cite" href="#source-S42" aria-label="来源S42">[S42]</a></p>
+<p>如需要这类展示，保留一条独立的外观资产分支：记录训练图像、位姿、内参、遮罩、训练配置、模型哈希与轴转换。规划仍依赖经验证的几何表面；外观分支失败不阻断基础几何工作流。采用 gsplat 也不自动覆盖原始 3DGS 代码、模型、训练数据的商业使用许可。<a class="cite" href="#source-S24" aria-label="来源S24">[S24]</a><a class="cite" href="#source-S35" aria-label="来源S35">[S35]</a></p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="reconstruction" data-search><div class="section-top"><span class="section-number">08</span><h2>RGB D采集与三维重建方案</h2></div><p>重建目标是得到可追溯、带缺失和质量信息的当前体表。模型应覆盖工作区域及估计法向、边界和避碰所需的周边，而不要求每次都建立完整高精度人体模型。</p>
+<h3>采集和保存顺序</h3>
+<ol start="1">
+<li>读取设备序列号、固件、采集模式、彩色和深度内参、两相机外参及时间戳定义。</li>
+<li>建立或验证参考坐标。移动相机时，为每个被接纳的帧绑定同一时基下的有效位姿。</li>
+<li>将未经过人体或语义 Mask 裁剪的完整场景 RGB-D 写入原始证据层，记录掉帧和拒帧原因。</li>
+<li>生成对齐图像、语义层、选中帧清单、派生点云及质量指标。这些资产可以删除后重算。</li>
+<li>在可靠位姿与质量约束下融合并重建模型。发布模型时同时发布哈希、参数、参考坐标和有效范围。</li>
+</ol>
+<p>原始保存可以选择完整连续流，或按清楚的规则保存被选中的原始完整帧；两者应在采集清单中明确。只保存选中帧不能被描述为完整视频证据。Mask 影响派生计算范围，不覆盖原始 RGB-D。</p>
+<h3>重建技术比较</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">方法</th><th scope="col">优点</th><th scope="col">主要问题</th><th scope="col">推荐位置</th></tr></thead><tbody>
+<tr><td>单帧有组织深度网格</td><td>像素到表面关系清晰，处理快</td><td>视角局限、遮挡、噪声</td><td>概览和参考区域映射</td></tr>
+<tr><td>多帧点云配准</td><td>数据直观，可逐帧诊断</td><td>漂移、重影，人体不刚性</td><td>受质量约束的配准辅助</td></tr>
+<tr><td>TSDF融合与Mesh</td><td>表面较稳定，适合局部融合</td><td>体素、截断、位姿误差及内存</td><td>首版局部几何重建主线</td></tr>
+<tr><td>Surfel融合</td><td>增量预览灵活，保存局部法向</td><td>拓扑和闭合表面需要额外处理</td><td>实时预览的候选</td></tr>
+<tr><td>Poisson或自动补洞</td><td>视觉连续、容易形成封闭模型</td><td>会跨未观察区域补面</td><td>仅可标识为推断显示层</td></tr>
+<tr><td>神经隐式重建</td><td>对外观与连续表示有研究价值</td><td>训练成本、几何偏差及可解释性</td><td>后续独立研究</td></tr>
+<tr><td>NeRF或3DGS</td><td>新视角外观表现好</td><td>缺少直接可信的碰撞与接触表面</td><td>可选外观分支</td></tr>
+</tbody></table></div>
+<p>TSDF 体素边长控制离散分辨率，不等于测量精度。2 mm 体素不代表机器人能实现 2 mm 定位；深度误差、姿态、标定、时延和组织变形仍需分别估计。平滑和补面会改变几何，必须记录版本与效果，不能把推断区域标成已测表面。</p>
+<h3>相机安装的三条路线</h3>
+<p><strong>固定相机：</strong> 安装后标定相机与基座或固定参考坐标的变换。机构松动、重新安装、底座变化后重新验证。仅在明确定义两个坐标完全重合且验证成立的特殊场景，才可使用单位变换。</p>
+<p><strong>机械臂末端相机：</strong> 优先获取厂家控制器的关节或法兰位姿及原始时间信息，通过手眼标定建立法兰到相机关系。相机曝光与机器人状态插值需要同一时间轴。机械臂运动时禁止沿用静态单位外参。</p>
+<p><strong>手持相机：</strong> 使用可信的外部跟踪或视觉惯性/几何跟踪，配合回环及质量判断。缺少绝对定位时，只能在自己的参考坐标内重建；要交给机器人执行，还需额外建立与机器人基座的可靠关系。人体运动会使静态场景假设失效。</p>
+<h3>质量输出</h3>
+<p>每个模型发布观察覆盖、未观察、无效深度、配准残差、法向可信度、边界和冲突区域。质量应能定位到区域或表面单元，而不仅给出“整体良好”的单一分数。跟踪丢失时停止可信融合并保存原因，不能在错误位姿上持续积累看似完整的模型。</p>
+<p>对深度精度的验收使用已知几何量具或标定物、多个距离与角度、不同表面反射条件和重复采集。人体或仿体上的最终定位链另行测量。仅比较两次模型相似，不能证明它们都接近真实几何。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="coordinates" data-search><div class="section-top"><span class="section-number">09</span><h2>坐标标定与时间同步契约</h2></div><p>本方案约定 T_AB 把 B 坐标中的点变换到 A 坐标。长度内部统一为米，角度统一为弧度；界面显示毫米和角度时只在边界转换。所有变换包含参考标识、时间、有效状态和标定版本。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">符号</th><th scope="col">含义</th><th scope="col">有效性来源</th></tr></thead><tbody>
+<tr><td>B</td><td>机器人基座坐标</td><td>机器人模型和固定安装关系</td></tr>
+<tr><td>F</td><td>机械臂法兰坐标</td><td>厂家状态与机器人标定</td></tr>
+<tr><td>TCP</td><td>工具工作参考点坐标</td><td>独立工具标定</td></tr>
+<tr><td>C</td><td>选定深度相机光学坐标</td><td>相机标定与帧定义</td></tr>
+<tr><td>W0</td><td>本次任务的固定空间参考</td><td>会话建立并验证</td></tr>
+<tr><td>P</td><td>可选患者参考坐标</td><td>另行定义和注册，首版不默认存在</td></tr>
+</tbody></table></div>
+<h3>手眼关系</h3>
+<div class="equation" aria-label="公式"><i>T</i><sub>BC</sub>(t) = <i>T</i><sub>BF</sub>(t) · <i>T</i><sub>FC</sub></div>
+<p>T_FC 是相机相对法兰的手眼标定结果。T_BF(t) 使用与图像采集时刻对应的法兰状态，而不是 GUI 接收到图像时的最新状态。</p>
+<div class="equation" aria-label="公式"><i>T</i><sub>W0C</sub>(t) = <i>T</i><sub>BW0</sub><sup>−1</sup> · <i>T</i><sub>BF</sub>(t) · <i>T</i><sub>FC</sub></div>
+<p>图像像素先按深度单位、内参和畸变模型反投影到 C，再通过 T_W0C(t) 进入固定参考。彩色和深度通常有不同的光学坐标；RGB 上的选区需要使用明确的彩深对齐关系，不能假设同一像素位置代表同一条物理射线。</p>
+<p>当已经求得期望工具位姿时，法兰目标由工具标定反算：</p>
+<div class="equation" aria-label="公式"><i>T</i><sub>BF</sub><sup>*</sup> = <i>T</i><sub>BTCP</sub><sup>*</sup> · <i>T</i><sub>FTCP</sub><sup>−1</sup></div>
+<p>法向只给出一个方向，不能独立确定完整 TCP 姿态。工具轴定义、绕轴自由度、机器人可达性和碰撞约束将在运动规划中处理。</p>
+<h3>轴方向与渲染转换</h3>
+<p>ROS 常用机体坐标为 x 向前、y 向左、z 向上；光学坐标为 x 向右、y 向下、z 向前。具体消息使用的 frame_id 必须与上述定义一致。<a class="cite" href="#source-S14" aria-label="来源S14">[S14]</a></p>
+<p>若渲染器明确采用 x 向右、y 向上、视线朝向负 z 的同原点相机坐标，光学坐标到该渲染坐标可使用三轴比例 1、-1、-1。该例仅适用于这一成对定义，不能直接套到机器人基座、Unity 或任意 glTF 场景。左手与右手系转换还要处理三角面绕序、法向和姿态表示。</p>
+<p>接口验收使用带颜色的三轴、已知尺寸立方体和若干非对称点，测试正反变换及重投影。几何服务、Open3D、ROS、VTK 和外观渲染之间分别写适配器，明确 API 需要的是 world-to-camera 还是 camera-to-world，避免多次取逆或遗漏取逆。</p>
+<h3>时间同步</h3>
+<p>每帧保留设备时间戳、主机接收时间、映射后的单调时间、时间戳含义和同步质量。主机收包时刻不是曝光时刻。机器人状态需保留控制器时间及序号，必要时在可信区间内插值；超出区间或同步误差超限则拒绝用于融合或执行。</p>
+<p>多机可评估 PTP、硬件触发或厂家同步方案；NTP 主要适合日志和一般系统时间，不能默认满足相机与末端运动的精度需求。硬件支持、时间戳位置、网络负载和最坏偏差必须一起测量。</p>
+<div class="equation" aria-label="公式"><i>e</i><sub>translation</sub> ≈ v · Δt</div>
+<p>例如平移速度 20 mm/s、时间误差 10 ms，对应约 0.2 mm 的平移位置误差；这是误差预算示例，未计转动、标定、深度和人体运动。末端相机存在安装臂长时，角速度也会引入随时间误差增长的位置偏差。</p>
+<h3>标定与误差预算</h3>
+<p>至少管理相机内参、彩深外参、手眼、TCP、基座与床体关系。标定过程应覆盖实际工作空间和姿态，用不参与拟合的数据独立验证。只报告拟合残差不足以证明全工作空间误差。</p>
+<p>误差预算分别包括深度、手眼、TCP、机器人绝对定位、时延、安装形变和患者运动。可以先用保守误差和检查最坏工况；只有独立性等统计假设成立时，才用平方和等统计合成方式。机器人重复定位精度不能替代整条链的绝对定位误差。</p>
+<p>患者移动不一定意味着 W0 必须重建，但意味着依赖旧表面的计划需要重新注册、复核或重扫。参考机制本身失效时才重建 W0，并使所有依赖版本失效。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="surface" data-search><div class="section-top"><span class="section-number">10</span><h2>区域编辑与体表覆盖路线</h2></div><p>表面规划输入包括源模型、有效几何域、区域意图、工具覆盖模型、行距要求和质量配置。输出应是分段的几何路线与覆盖证据，不能直接转换为机器人关节指令。</p>
+<h3>区域从二维到三维</h3>
+<p>在当前参考图上保存笔画、像素区域和擦除结果，再借助有效深度、标定及该帧位姿映射到模型。缺深度的像素可以保留为待补扫的区域意图，却不能产生被称为可靠的三维点。</p>
+<p>区域允许多个分离部分和内部留空。未选择、人工擦除、质量不合格和未观察分别保存；它们的产品意义不同。人体 Pose 或 Mask 只能建议部位和计算范围，不作为最终工作区边界。</p>
+<h3>行距与覆盖模型</h3>
+<div class="equation" aria-label="公式">s = w (1 − ρ)</div>
+<p>其中有效宽度 w 必须大于零，重叠率 rho 在 0 至 1 之间且不含 1。工具外壳直径用于碰撞，不等于有效作用宽度。有效宽度可能随角度、距离或接触状态变化，需要工具试验提供依据。</p>
+<p>上述公式只给出名义行距。曲率、倾角、边界、局部不连续和轨迹执行误差会改变实际覆盖，因此还要在实际曲面上验证覆盖域。平面欧氏圆盘或渲染出的彩色宽带，不能自动作为所有曲面的真实覆盖证明。</p>
+<h3>路线算法的选择</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">算法</th><th scope="col">适合情况</th><th scope="col">壁垒与检查</th></tr></thead><tbody>
+<tr><td>网格切片加蛇形连接</td><td>有主方向的肩背等局部曲面</td><td>切片碎裂、法向突变、连接段质量</td></tr>
+<tr><td>局部参数化后等距扫描</td><td>曲面能稳定展开的局部区域</td><td>展开畸变，需回到三维重算间距</td></tr>
+<tr><td>测地线或曲面偏置</td><td>弯曲区域的内在距离约束</td><td>拓扑、边界、奇点与运算成本</td></tr>
+<tr><td>轮廓向内偏置</td><td>边界规则的孤立区域</td><td>狭窄通道、轮廓分裂和曲率</td></tr>
+<tr><td>离散图搜索连接</td><td>在允许的相邻面中寻找可行换行</td><td>邻接必须真实，搜索成本需有界</td></tr>
+</tbody></table></div>
+<p>首版建议网格切片生成候选工作线，再在有效表面图上构造换行，并通过三维间距、曲率和连续性检查。不同部位可以采用不同参数或算法版本，但不能绕过共同的质量契约。</p>
+<h3>工作段 换行段与转场段</h3>
+<p><strong>工作段 work：</strong> 沿可靠目标表面执行覆盖，工具作用状态由独立工具策略决定。</p>
+<p><strong>贴面换行 surface_connector：</strong> 在同一允许工作表面内连接相邻扫描线。按照产品需求保持贴面，但仍需验证曲率、姿态、速度和接触条件。贴面不自动意味着治疗输出持续开启。</p>
+<p><strong>转场段 transfer：</strong> 分离工作块之间或需要离开表面的移动，由机器人空间规划单独处理。若产品不允许抬起，应在可行性不足时报告无法形成连续贴面计划，不能擅自跨越留空或缺失。</p>
+<p>几何连通性要沿真实邻接表面检查。空间距离很近的两片皮肤、手指或折叠表面不一定连通；不能用最近点短线跨过去。最终插值曲线和工具扫掠体也需检查，不能只检查离散节点。</p>
+<h3>覆盖结果的表达</h3>
+<p>分别统计已验证覆盖、明确未覆盖和因数据或计算预算不足而无法判断的范围。目标三维面积无法完整建立时，整体覆盖率标为未知；可报告有依据的已知部分和未解决清单，但不换一个更小的分母宣布完成。</p>
+<p>区域、模型、有效宽度、重叠率或工具版本变化后，旧覆盖证据和旧路线失效。规划预算到达上限时保存可诊断的部分结果，状态为未完成；不能把算法正常返回等同于任务完成。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="robot" data-search><div class="section-top"><span class="section-number">11</span><h2>机械臂运动规划与接触控制</h2></div><p>机器人链需要把体表几何转化为满足运动学、动力学近似、控制接口和工具约束的实际运动。ROS 2 提供通信与组织方式，MoveIt 提供运动规划工具，ros2_control 提供硬件和控制器接口；三者都不会自动生成针对人体的有效接触策略。</p>
+<figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 415" role="img" aria-label="从真实体表到机器人控制的五级验证链"><title>从真实体表到机器人控制的五级验证链</title><rect width="1680" height="415" fill="white"/><rect x="35" y="55" width="285" height="180" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="177.5" y="114.8" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="35" font-weight="700" fill="#152C3D">真实表面</text><text x="177.5" y="160.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">深度 位姿 质量</text><line x1="320" y1="145" x2="363" y2="145" stroke="#087F8C" stroke-width="5"/><polygon points="363.00,145.00 349.49,151.52 349.49,138.48" fill="#087F8C"/><rect x="368" y="55" width="285" height="180" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="510.5" y="114.8" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="35" font-weight="700" fill="#152C3D">几何路线</text><text x="510.5" y="160.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">区域 间距 连通</text><line x1="653" y1="145" x2="696" y2="145" stroke="#087F8C" stroke-width="5"/><polygon points="696.00,145.00 682.49,151.52 682.49,138.48" fill="#087F8C"/><rect x="701" y="55" width="285" height="180" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="843.5" y="114.8" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="35" font-weight="700" fill="#152C3D">TCP姿态</text><text x="843.5" y="160.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">工具 法向 连续</text><line x1="986" y1="145" x2="1029" y2="145" stroke="#087F8C" stroke-width="5"/><polygon points="1029.00,145.00 1015.49,151.52 1015.49,138.48" fill="#087F8C"/><rect x="1034" y="55" width="285" height="180" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="1176.5" y="114.8" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="35" font-weight="700" fill="#152C3D">关节轨迹</text><text x="1176.5" y="160.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">可达 碰撞 时序</text><line x1="1319" y1="145" x2="1362" y2="145" stroke="#087F8C" stroke-width="5"/><polygon points="1362.00,145.00 1348.49,151.52 1348.49,138.48" fill="#087F8C"/><rect x="1367" y="55" width="285" height="180" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="1509.5" y="114.8" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="35" font-weight="700" fill="#152C3D">控制器执行</text><text x="1509.5" y="160.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">当前状态 反馈</text><text x="840" y="313.5" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="31" font-weight="700" fill="#152C3D">每一层都要独立校验  保存路线不自动授予当前执行许可</text><text x="840" y="368.3" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="29" font-weight="400" fill="#536576">覆盖规划  运动规划  实时控制分别承担不同职责</text></svg></figure>
+<h3>机器人采购和接口门槛</h3>
+<p>采购前必须取得控制器型号、固件、URDF或CAD、标定参数、负载及惯量范围、TCP配置、关节限位、轨迹接口、状态频率、看门狗、急停及安全输入说明。需要力控制时还要核对六维力传感器、控制模式、可用带宽、数据延迟和故障行为。</p>
+<p>供应商声称“支持 ROS 2”仍不够，须写清发行版、CPU架构、Ubuntu版本、驱动版本、支持的控制模式和维护责任。UR 官方 Lyrical 驱动可作为有明确证据的参考；其他品牌需要各自确认，不能类推。<a class="cite" href="#source-S25" aria-label="来源S25">[S25]</a></p>
+<h3>从表面点到工具位姿</h3>
+<p>基于表面点、法向、目标间距或接触模型生成 TCP 候选姿态，结合工具轴向定义设置方向。围绕法向的自由度可用于避免关节极限、腕部翻转、线缆缠绕和碰撞。相邻姿态要连续，不能让局部法向噪声造成工具突然转向。</p>
+<p>建立全链机器人和环境模型：所有连杆、工具外壳、相机支架、线缆影响、床体及患者空间。目标区允许的工具接触应是局部、明确的例外，不能为方便规划而关闭整个机器人对患者的碰撞检查。</p>
+<h3>运动规划与时间参数化</h3>
+<p>用 MoveIt 处理逆运动学、碰撞和自由空间连接；体表工作轨迹仍由产品几何规划提供。连续求解整段路径，检查逆解分支、关节速度、加速度、奇异区和工具姿态约束。笛卡尔插值返回比例不足时，应报告未完成，不执行前一部分后暗示整个任务完成。</p>
+<p>为通过检查的关节路径配置速度与加速度边界，并按需求进行 jerk 限制。MoveIt 的时间参数化或平滑可能改变采样和轨迹几何；采用允许几何偏差的方法后，重新检查碰撞和贴面误差。Ruckig 用于 jerk 平滑也不能代替接触控制和安全功能。<a class="cite" href="#source-S30" aria-label="来源S30">[S30]</a></p>
+<p>最终输出 trajectory_msgs/JointTrajectory 或厂商等价对象，包含正确关节顺序、位置及时间信息。控制器接口是否还要求速度、加速度、流式更新和时间对齐，以具体厂家协议为准。<a class="cite" href="#source-S11" aria-label="来源S11">[S11]</a></p>
+<h3>非接触式工具</h3>
+<p>主要控制工具间距、入射角、空间碰撞和当前人体位置。几何路线生成后仍需检查沿途距离和姿态，人体移动使该约束失效时应中断或重新定位。仅依靠扫描前的静态表面不能保证运行过程中保持间距。</p>
+<h3>接触式工具</h3>
+<p>接触涉及组织柔软、压陷、呼吸、滑移、摩擦和工具接触面积变化。按静态 Mesh 匀速走点，不能稳定保证接触力。建议使用厂家支持的力控或专门验证的阻抗/导纳控制模块，结合力传感器、工具结构和设备级限幅。</p>
+<p>执行过程至少分为接近、建立接触、稳定贴面、退出接触和转场。每段的接触状态、工具输出状态和失败处理都独立定义。需要外部实时控制时，新增实时计算边界并测量最坏调度延迟；不要让 Python循环、GUI刷新、WebSocket 或普通 ROS 定时器直接闭合确定性力控回路。<a class="cite" href="#source-S10" aria-label="来源S10">[S10]</a><a class="cite" href="#source-S13" aria-label="来源S13">[S13]</a></p>
+<p>MoveIt Servo 提供在线命令处理及碰撞、奇异性等相关能力，但不是针对具体工具和组织自动调好参数的接触控制器，也不作为独立的安全认证依据。<a class="cite" href="#source-S31" aria-label="来源S31">[S31]</a></p>
+<h3>停止与恢复</h3>
+<p>界面“暂停”“停止”、ROS action 取消、厂家受控停止和物理急停具有不同语义。文档、GUI和事件记录分别命名。实际停止行为由控制器和工具设计确认，并测量停止距离、输出关闭延迟及接触状态，不能只看软件返回成功。</p>
+<p>暂停恢复要重新核对当前空间、控制器会话、工具、标定和计划哈希。断电、急停或通信中断后不自动续跑；先完成状态核对并重新准备。若暂停期间人体移动，必须使依赖旧表面的计划失效。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="interfaces" data-search><div class="section-top"><span class="section-number">12</span><h2>模块接口与运行状态</h2></div><p>本章定义拟实施的接口契约，不表示现有软件已经提供这些接口。建议先冻结数据语义和状态，再选择具体序列化框架。首版应用端使用版本化 HTTPS/JSON 和 WebSocket 事件，ROS 内部使用消息和 action；同机仍经过相同网关，方便未来增加终端。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">模块</th><th scope="col">主要输入</th><th scope="col">主要输出</th><th scope="col">失败时的责任</th></tr></thead><tbody>
+<tr><td>采集服务</td><td>ScanRequest与设备配置</td><td>CaptureManifest与原始资产</td><td>停止接纳，保留已提交证据</td></tr>
+<tr><td>重建服务</td><td>原始帧、位姿、质量配置</td><td>ModelManifest与QualityReport</td><td>不替换上一完整模型</td></tr>
+<tr><td>区域服务</td><td>参考图、笔画、模型版本</td><td>RegionRevision与映射状态</td><td>保留草稿，阻断无效几何</td></tr>
+<tr><td>覆盖服务</td><td>区域、工具宽度、模型</td><td>SurfacePlan与CoverageReport</td><td>返回未完成及明确原因</td></tr>
+<tr><td>运动规划服务</td><td>表面计划、机器人和环境</td><td>RobotPlan与验证清单</td><td>不生成可执行许可</td></tr>
+<tr><td>执行适配器</td><td>已复核的RobotPlan</td><td>执行状态、反馈与事件</td><td>按控制器策略停止并记录</td></tr>
+<tr><td>资产与历史</td><td>清单、文件和版本</td><td>可回放的记录与完整性状态</td><td>拒绝混用缺失或损坏资产</td></tr>
+</tbody></table></div>
+<h3>数据对象的必需字段</h3>
+<p>ScanRequest 包含会话标识、部位与左右、体位、采集模式、Scan ROI、参考坐标版本和质量配置。CaptureManifest 包含设备序列号、固件、帧清单、时间基准、内外参、帧位姿来源、掉帧信息和文件哈希。</p>
+<p>ModelManifest 包含原始清单哈希、算法及版本、参数、源坐标、网格和质量资产。RegionRevision 绑定参考图、源模型、笔画或像素域、三维映射及缺失。SurfacePlan 绑定区域、工具覆盖模型、路线角色与覆盖证据。RobotPlan 还绑定机器人描述、TCP、标定、环境、关节轨迹和执行前验证结果。</p>
+<p>每个异步任务使用 task_id 和 generation_id。页面切换或重新计算后，只有仍匹配当前 generation_id 的结果能安装到界面。取消请求只表示正在取消，必须等服务确认终态后才能重用相同资源。</p>
+<h3>应用端拟定接口</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">方法与资源</th><th scope="col">用途</th><th scope="col">关键约束</th></tr></thead><tbody>
+<tr><td>GET /v1/capabilities</td><td>获取功能、版本和设备能力</td><td>客户端不自行猜测支持项</td></tr>
+<tr><td>POST /v1/scans</td><td>创建采集任务</td><td>含幂等键及会话版本</td></tr>
+<tr><td>GET /v1/tasks/{id}</td><td>查询进度与最终结果</td><td>状态与错误码明确</td></tr>
+<tr><td>POST /v1/plans</td><td>生成表面或机器人计划</td><td>固定输入哈希与参数版本</td></tr>
+<tr><td>POST /v1/executions</td><td>提交复核后的执行请求</td><td>校验当前空间、许可和控制器会话</td></tr>
+<tr><td>POST /v1/executions/{id}/stop</td><td>请求业务停止</td><td>不是硬件急停替代品</td></tr>
+<tr><td>GET /v1/assets/{id}</td><td>读取受权资产</td><td>只接受资产ID，避免任意文件路径</td></tr>
+<tr><td>WS /v1/events</td><td>接收任务和设备事件</td><td>带序号，可补拉遗漏事件</td></tr>
+</tbody></table></div>
+<p>约定输入冲突返回 409，前置条件过期返回 412，参数或几何不满足返回 422，关键服务不可用返回 503。它们是本方案拟定语义，应在 API 文档和测试中固定。执行请求重试使用同一个幂等键，不生成第二次动作。</p>
+<h3>ROS内部组织</h3>
+<p>在适配层统一图像、深度、CameraInfo、TF、JointState、诊断和自定义任务消息。内部 topic 名称由项目命名空间定义，不假设等同于厂家的默认名称。较长的重建、规划与执行使用 action 或可取消任务；短查询使用 service；流式状态使用 topic。</p>
+<p>几何消息可以使用标准 Pose 或 Point 表达数值，但每个集合必须有清楚的 frame_id、源模型和版本。nav_msgs/Path 只表达几何路径，不包含足以保证执行的控制语义；最终关节轨迹使用相应控制消息并由适配器验证。</p>
+<h3>运行状态与门槛</h3>
+<figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 650" role="img" aria-label="任务状态和失效条件"><title>任务状态和失效条件</title><rect width="1680" height="650" fill="white"/><rect x="35" y="35" width="365" height="155" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="217.5" y="89.4" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#152C3D">采集与建模</text><text x="217.5" y="140.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">证据与几何有效</text><line x1="400" y1="112" x2="445" y2="112" stroke="#087F8C" stroke-width="5"/><polygon points="445.00,112.00 431.49,118.52 431.49,105.48" fill="#087F8C"/><rect x="450" y="35" width="365" height="155" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="632.5" y="89.4" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#152C3D">区域确认</text><text x="632.5" y="140.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">意图与模型绑定</text><line x1="815" y1="112" x2="860" y2="112" stroke="#087F8C" stroke-width="5"/><polygon points="860.00,112.00 846.49,118.52 846.49,105.48" fill="#087F8C"/><rect x="865" y="35" width="365" height="155" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="1047.5" y="89.4" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#152C3D">表面计划有效</text><text x="1047.5" y="140.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">覆盖检查完成</text><line x1="1230" y1="112" x2="1275" y2="112" stroke="#087F8C" stroke-width="5"/><polygon points="1275.00,112.00 1261.49,118.52 1261.49,105.48" fill="#087F8C"/><rect x="1280" y="35" width="365" height="155" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="1462.5" y="89.4" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="700" fill="#152C3D">机器人计划有效</text><text x="1462.5" y="140.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">运动验证完成</text><line x1="1462" y1="190" x2="1462" y2="260" stroke="#087F8C" stroke-width="5"/><polygon points="1462.00,260.00 1455.48,246.49 1468.52,246.49" fill="#087F8C"/><line x1="1462" y1="260" x2="252" y2="260" stroke="#087F8C" stroke-width="5"/><polygon points="252.00,260.00 265.51,253.48 265.51,266.52" fill="#087F8C"/><line x1="252" y1="260" x2="252" y2="320" stroke="#087F8C" stroke-width="5"/><polygon points="252.00,320.00 245.48,306.49 258.52,306.49" fill="#087F8C"/><rect x="65" y="320" width="485" height="145" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="307.5" y="376.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="32" font-weight="700" fill="#152C3D">执行准备</text><text x="307.5" y="425.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">空间 工具 控制器复核</text><line x1="550" y1="393" x2="600" y2="393" stroke="#087F8C" stroke-width="5"/><polygon points="600.00,393.00 586.49,399.52 586.49,386.48" fill="#087F8C"/><rect x="610" y="320" width="485" height="145" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="852.5" y="376.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="32" font-weight="700" fill="#152C3D">运行中</text><text x="852.5" y="425.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">状态反馈和约定保护</text><line x1="1095" y1="393" x2="1145" y2="393" stroke="#087F8C" stroke-width="5"/><polygon points="1145.00,393.00 1131.49,399.52 1131.49,386.48" fill="#087F8C"/><rect x="1155" y="320" width="485" height="145" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="1397.5" y="376.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="32" font-weight="700" fill="#152C3D">完成或中断</text><text x="1397.5" y="425.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">记录实际结果与原因</text><text x="840" y="548.5" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="31" font-weight="700" fill="#152C3D">模型 标定 体位 区域 工具或机器人配置变化 → 依赖结果过期</text><text x="840" y="602.4" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="30" font-weight="400" fill="#536576">质量不足 断连 故障或超时 → 阻断继续并记录原因</text></svg></figure>
+<p>正常流程为未开始、采集中、模型待核验、区域已确认、几何计划有效、机器人计划有效、执行准备、运行中和完成。旁路终态包括质量不足、已过期、取消、故障和需要重扫。执行准备是一组前置条件，不是一个可随意点过的页面。</p>
+<p>执行许可绑定计划哈希、当前空间版本、标定、工具、机器人配置和控制器启动会话，并有时效。服务端重新检查这些条件；GUI上勾选确认不会覆盖几何失败。版本变化立即使许可失效，迟到的“成功”消息不能重新激活旧许可。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="data" data-search><div class="section-top"><span class="section-number">13</span><h2>通信可靠性与数据生命周期</h2></div><p>通信设计要回答三件事：数据是否新鲜、是否完整、是否来自正确的会话。可靠传输只能解决其中一部分；软件收到确认，也不自动代表硬件动作已经完成。</p>
+<h3>ROS QoS与网络</h3>
+<p>预览图像可采用 best effort 和有限队列，以保持新鲜度。用于采集证据的记录链必须检测缺帧、乱序和缓冲区溢出；采用 reliable 也不能消除带宽不足。动态状态设定 deadline、liveliness 或应用层看门狗，静态配置和TF按需要使用可靠且可供晚加入节点读取的配置。<a class="cite" href="#source-S12" aria-label="来源S12">[S12]</a></p>
+<p>发布和订阅的 QoS 不匹配会导致看似连上网络却没有数据。使用相同 ROS_DOMAIN_ID 只是通信分组，不是访问控制。首版固定一种 RMW，Lyrical 默认是 rmw_fastrtps_cpp；Fast DDS、Cyclone DDS或Zenoh的切换需要重新验证发现、QoS、大消息与断连恢复，不能当作无成本替换。<a class="cite" href="#source-S02" aria-label="来源S02">[S02]</a></p>
+<p>多机部署优先使用固定地址或受控名称解析、明确的网络接口和防火墙规则。需要跨子网时评估发现服务器、路由或网关，不依赖广播恰好能穿过交换机。执行接口限于授权设备与角色；ROS网络不直接暴露到公共网络。</p>
+<h3>指令的确认与去重</h3>
+<p>每条请求携带请求ID、幂等键、控制器启动会话、计划哈希、过期时间和预期状态版本。分别记录已接收、已接受、执行中与终态。断线后的重试先查询相同请求的结果，不重新生成一条可能重复执行的动作。</p>
+<p>控制器重启后启动会话改变，旧请求失效。事件采用单调序号，客户端掉线后补拉事件并获取当前完整状态。超时不能按“成功”处理；机械动作是否结束以实际状态和厂家反馈为准。</p>
+<h3>原始与派生资产</h3>
+<figure><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 555" role="img" aria-label="原始数据到规划和执行资产的版本血缘"><title>原始数据到规划和执行资产的版本血缘</title><rect width="1680" height="555" fill="white"/><rect x="35" y="50" width="365" height="170" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="217.5" y="107.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="33" font-weight="700" fill="#152C3D">原始RGB-D</text><text x="217.5" y="155.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">时间 标定 位姿</text><line x1="400" y1="135" x2="445" y2="135" stroke="#087F8C" stroke-width="5"/><polygon points="445.00,135.00 431.49,141.52 431.49,128.48" fill="#087F8C"/><rect x="450" y="50" width="365" height="170" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="632.5" y="107.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="33" font-weight="700" fill="#152C3D">模型与质量</text><text x="632.5" y="155.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">参数和源哈希</text><line x1="815" y1="135" x2="860" y2="135" stroke="#087F8C" stroke-width="5"/><polygon points="860.00,135.00 846.49,141.52 846.49,128.48" fill="#087F8C"/><rect x="865" y="50" width="365" height="170" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="1047.5" y="107.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="33" font-weight="700" fill="#152C3D">区域与意图</text><text x="1047.5" y="155.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">参考图与模型版本</text><line x1="1230" y1="135" x2="1275" y2="135" stroke="#087F8C" stroke-width="5"/><polygon points="1275.00,135.00 1261.49,141.52 1261.49,128.48" fill="#087F8C"/><rect x="1280" y="50" width="365" height="170" rx="16" fill="#EEF4F7" stroke="#C6D6DF" stroke-width="2"/><text x="1462.5" y="107.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="33" font-weight="700" fill="#152C3D">路线与计划</text><text x="1462.5" y="155.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#536576">工具 机器人版本</text><line x1="840" y1="220" x2="840" y2="290" stroke="#087F8C" stroke-width="5"/><polygon points="840.00,290.00 833.48,276.49 846.52,276.49" fill="#087F8C"/><rect x="255" y="290" width="1170" height="130" rx="16" fill="#173F52" stroke="#173F52" stroke-width="2"/><text x="840.0" y="347.6" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="33" font-weight="700" fill="white">历史回放 报告与执行记录</text><text x="840.0" y="395.2" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="27" font-weight="400" fill="#DAE8EF">原始证据保留  派生结果可重算  每次重算生成新版本</text><text x="840" y="491.3" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="29" font-weight="400" fill="#536576">3DGS与显示模型使用独立分支  记录训练输入和渲染轴转换</text></svg></figure>
+<p>建议目录采用 session_id 下的 raw、calibration、derived、models、regions、plans、execution 和 reports。大文件保存在资产仓库，SQLite 保存引用、状态与索引，禁止把数据库文件放在多机器同时写入的网络共享目录。多终端由唯一服务端访问索引；多主机并发业务再评估 PostgreSQL。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">资产类别</th><th scope="col">是否可重新计算</th><th scope="col">必须保留的来源</th></tr></thead><tbody>
+<tr><td>原始RGB-D与同步状态</td><td>不能凭派生模型恢复</td><td>帧内容、时钟、设备与模式</td></tr>
+<tr><td>标定与位姿</td><td>标定可重做但旧版本不可替换</td><td>原始标定证据和有效期</td></tr>
+<tr><td>对齐图像与语义层</td><td>可重算</td><td>原始帧与算法版本</td></tr>
+<tr><td>点云 TSDF Mesh</td><td>可重算</td><td>原始清单、位姿、融合参数</td></tr>
+<tr><td>工作区与路线</td><td>需保留用户意图和版本</td><td>参考图、模型、工具和参数</td></tr>
+<tr><td>执行日志</td><td>不能由计划重构实际行为</td><td>实际状态、事件和控制器会话</td></tr>
+<tr><td>3DGS与显示资产</td><td>可重算或重新导出</td><td>训练输入、坐标变换和模型血缘</td></tr>
+</tbody></table></div>
+<p>MCAP 可作为 ROS 2 记录容器，保存标准消息、TF和自定义信息；必须额外明确已记录哪些 topic、QoS、时间戳定义及是否存在缺帧。录制文件存在不等于里面包含了全部证据。<a class="cite" href="#source-S28" aria-label="来源S28">[S28]</a></p>
+<h3>保存和恢复事务</h3>
+<p>新资产先写临时文件，完成后校验大小与哈希，刷新到持久存储，再通过同文件系统内的原子替换发布清单；最后事务更新数据库。跨磁盘操作不依赖原子重命名。数据库索引更新与文件发布之间存在的失败窗口，要通过待提交状态和启动时修复任务处理。</p>
+<p>旧模型与旧计划保留，后续重算发布新版本。删除派生层前检查引用；原始证据执行单独保留策略。备份至少包括原始数据、标定、清单、数据库和执行记录，定期在另一目录或机器上验证完整恢复。仅复制数据库不构成完整备份。</p>
+<h3>隐私与设备维护</h3>
+<p>使用最小必要的病例关联标识；图像及导出包按角色授权并记录访问。设备本地加密、备份加密、日志脱敏和删除策略进入部署清单。远程维护采用临时授权与审计，不开放未经控制的机器人命令端口。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="hardware" data-search><div class="section-top"><span class="section-number">14</span><h2>硬件配置与性能预算</h2></div><p>硬件建议用于单相机、单机械臂、局部体表任务的工程样机，具体采购规格仍须以样本数据和设备接口压力测试为依据。重建精度、控制确定性与显卡等级不能互相替代。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">部件</th><th scope="col">首版建议</th><th scope="col">选择原因</th></tr></thead><tbody>
+<tr><td>CPU</td><td>x86_64，8至16个现代物理核心</td><td>并行重建、记录与GUI，留独立控制资源</td></tr>
+<tr><td>内存</td><td>建议64GB，32GB仅作受限研发起点</td><td>点云、网格、TSDF与多版本缓冲</td></tr>
+<tr><td>GPU</td><td>12至16GB显存级别的受支持独显作为候选</td><td>渲染、可选GPU融合和AI；先核驱动组合</td></tr>
+<tr><td>存储</td><td>2TB NVMe起点，加独立备份介质</td><td>原始数据吞吐和资产版本量</td></tr>
+<tr><td>相机接口</td><td>独立USB 3控制器，锁紧线缆和可靠供电</td><td>避免共享总线、掉线和运动拉扯</td></tr>
+<tr><td>网络</td><td>至少双有线接口，按数据量选1或2.5GbE</td><td>分开机器人控制和数据管理</td></tr>
+<tr><td>显示</td><td>1080p或更高分辨率的工业触控屏</td><td>常用控件尺寸与医师工作距离</td></tr>
+<tr><td>电源散热</td><td>按整机实测选择电源、UPS和散热</td><td>避免长时满载降频及保存中断</td></tr>
+<tr><td>控制器</td><td>厂家控制柜与匹配固件</td><td>运动接口、伺服、停止与安全输入</td></tr>
+<tr><td>工具传感</td><td>接触场景评估六维力、位置或温度等传感</td><td>工具闭环和状态验证</td></tr>
+</tbody></table></div>
+<p>如果只做 CPU TSDF 与常规渲染，可评估较低GPU配置；如果加入3DGS训练或大模型推理，再按显存需求升级。不要为了未经确定的AI功能，提前把首版硬件锁定在高热耗配置。</p>
+<h3>原始数据带宽示例</h3>
+<p>假设彩色为 1920×1080 RGB8、深度为 640×576 深度16位，30帧每秒。每帧未压缩数据约 6.96 MB，每秒约 208.74 MB，即 199.07 MiB/s；链路数据率约 1.67 Gbit/s。60秒约 11.66 GiB，尚未计入红外、消息封装、磁盘索引和冗余。</p>
+<p>这一例子说明单路未压缩原始流已经可能超过千兆以太网的有效容量。它不代表相机USB线上必然使用此编码或带宽；应按实际输出模式、压缩和对齐行为实测。优先把相机与原始记录放在同一台主机，向终端只传压缩预览和必要资产。</p>
+<h3>TSDF内存示例</h3>
+<p>1 m立方区域在2 mm体素下有1.25亿个稠密体素。若仅按每体素16字节估算，约需1.86 GiB；缩小到1 mm时，约需14.90 GiB。真实实现还包括哈希、颜色、索引、临时缓冲和网格内存，不能只按这一最小估算配置设备。</p>
+<p>局部重建、稀疏体素、分块与资源上限能降低内存压力。预算不足时返回明确的未完成状态，不静默降低源模型精度后仍沿用原质量结论。</p>
+<h3>建议的工程性能目标</h3>
+<p>以下数值是首轮样机设计目标，不是实测结果或医疗性能承诺。测试时固定数据集、驱动、显示分辨率、线程数和温度条件，并记录P50、P95、最大值与超限次数。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">项目</th><th scope="col">初始目标</th><th scope="col">测试条件</th></tr></thead><tbody>
+<tr><td>常用界面反馈</td><td>P95不超过100 ms</td><td>不含重建完成时间，重操作先反馈状态</td></tr>
+<tr><td>三维交互</td><td>500k级显示点或500k三角面，目标30 fps</td><td>1080p，按目标GPU实测，点/面分开测</td></tr>
+<tr><td>采集预览</td><td>目标15至30 fps</td><td>不以预览帧率代替原始记录完整性</td></tr>
+<tr><td>日常操作稳定性</td><td>连续8小时无不可恢复错误</td><td>采集、规划、保存和回放混合负载</td></tr>
+<tr><td>长时运行</td><td>72小时压力与异常恢复</td><td>记录内存、磁盘、温度、掉帧和延迟</td></tr>
+<tr><td>几何与机器人误差</td><td>用E_req等产品指标冻结</td><td>从工具要求反推，未定义不准入执行</td></tr>
+<tr><td>停止与控制周期</td><td>以厂家接口和整机试验冻结</td><td>测最大延迟及最坏工况，不只看平均值</td></tr>
+</tbody></table></div>
+<h3>Jetson和ARM的取舍</h3>
+<p>Jetson 的优势是功耗与边缘AI集成，但BSP、CUDA和JetPack绑定较强。本次核查的JetPack 7资料基于Ubuntu 24.04；Lyrical在24.04是Tier 3，因此不能把它当作26.04 x86主机的直接替换。<a class="cite" href="#source-S02" aria-label="来源S02">[S02]</a><a class="cite" href="#source-S26" aria-label="来源S26">[S26]</a></p>
+<p>若空间或功耗强制选择ARM，建议先把Jetson定义为独立视觉节点，明确与Lyrical主机的数据边界；或者为该BSP建立专门的源码构建和长期维护方案。Android ARM64与Jetson Linux ARM64仍是不同的软件平台。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="deployment" data-search><div class="section-top"><span class="section-number">15</span><h2>软件部署与首台样机落地步骤</h2></div><p>部署分为通用环境验证与项目应用部署。下列ROS命令用于目标Ubuntu机器，未在本报告生成环境执行；具体设备命令需采用已选厂家的官方说明。应用模块和配置名属于拟实施接口，不把设计名称伪装成现成可运行程序。</p>
+<h3>建立干净的系统基线</h3>
+<ol start="1">
+<li>安装Ubuntu 26.04 LTS，启用受控的软件源和维护账户，确认CPU架构为x86_64。记录安装镜像哈希、内核和GPU驱动。</li>
+<li>按官方Lyrical Ubuntu安装页配置locale、Universe和ROS软件源。使用官方签名与来源，避免从随机脚本安装整套环境。<a class="cite" href="#source-S04" aria-label="来源S04">[S04]</a></li>
+<li>在安装项目功能前检查候选包，再安装ROS核心与所需开发组件。把实际解析到的版本保存为构建清单。</li>
+</ol>
+<pre><code>. /etc/os-release
+printf &#x27;%s %s\n&#x27; &quot;$ID&quot; &quot;$VERSION_ID&quot;
+uname -m
+sudo apt update
+apt-cache policy ros-lyrical-ros-base ros-lyrical-moveit
+apt-cache policy ros-lyrical-ros2-control ros-lyrical-ros2-controllers
+sudo apt install ros-lyrical-ros-base ros-lyrical-moveit \
+  ros-lyrical-ros2-control ros-lyrical-ros2-controllers
+source /opt/ros/lyrical/setup.bash
+printenv ROS_DISTRO
+ros2 doctor --report</code></pre>
+<p>如果apt-cache没有候选版本，先核对架构、系统版本、仓库与包发布状态，不继续拼接不明来源的安装命令。ros2 doctor检查的是ROS环境，不能替代相机或机械臂实机验收。研发机另按需要安装RViz和Gazebo Jetty相关包；产品GUI不依赖将RViz嵌入医师页面。</p>
+<h3>建立设备验证台</h3>
+<ol start="4">
+<li>先只连接相机，使用厂家工具验证序列号、固件、RGB-D模式、彩深对齐、时间戳和连续录制。记录USB控制器和线缆配置。</li>
+<li>接入选定的Orbbec Wrapper或原生适配器，用同一目标模式进行录制和独立回放；对比帧数、元数据与源文件哈希。验证热插拔、设备占用和异常退出恢复。</li>
+<li>单独接入机器人，先读取型号、控制器状态和关节数据，再完成厂家规定的通信与工具配置。开始使用仿真或厂家允许的台架模式，不从未验证坐标直接触发运动。</li>
+</ol>
+<h3>实现模块和数据契约</h3>
+<ol start="7">
+<li>建立统一messages或schema包，定义版本、单位、frame_id、质量与错误码；为采集、模型、区域和计划生成固定测试样例。</li>
+<li>完成原始资产写入、清单发布和历史回放，再接入重建。重建结果必须能从保存的输入独立重算。</li>
+<li>接入GUI与区域映射，完成质量显示、取消和过期处理。区域审核通过后接入表面路线与覆盖报告。</li>
+<li>完成URDF/SRDF、手眼和TCP标定、环境模型、MoveIt规划和执行适配器，随后才将两条链连接。</li>
+</ol>
+<h3>应用构建与服务管理</h3>
+<p>建议C++库用CMake构建，ROS包用ament及colcon组织；GUI和几何库可以独立构建，只通过稳定接口接入ROS。不要把每个纯几何函数都改造成topic，也不要把全部程序塞进一个长驻Python进程。</p>
+<p>systemd服务按设备准备、存储可写和依赖就绪顺序启动。采集与计算服务可有限重启，执行服务重启后进入未准备状态，绝不能根据上次日志自动继续动作。日志配置保留上限，磁盘预留不足时提前阻止新采集。</p>
+<h3>参数配置原则</h3>
+<p>以下是拟定配置结构示例。null表示参数尚未通过设备验证，相关执行功能必须拒绝准入。性能预算与几何/控制阈值分开，不用修改性能参数来绕过质量检查。</p>
+<pre><code>schema_version: 1
+deployment: linux_x86_64
+ros_distribution: lyrical
+units: {length: m, angle: rad}
+execution:
+  enabled: false
+  robot_model: null
+  controller_firmware: null
+  tool_profile_id: null
+  max_surface_error_m: null
+  max_sync_error_s: null
+  contact_limits_profile: null
+  stop_policy_id: null
+storage:
+  root: /var/lib/surface-system
+  preserve_full_scene_rgbd: true</code></pre>
+<h3>固定版本与更新</h3>
+<p>冻结操作系统、内核、GPU驱动、ROS包、RMW、Qt、VTK、Open3D、相机SDK、机械臂固件、应用、配置和数据schema。容器使用不可变摘要，源码使用提交哈希，保存SBOM和许可证文本。</p>
+<p>更新只在任务停止、数据已提交时进行。先备份并验证恢复路径，再切换应用版本。数据schema迁移保留回退策略；新应用不兼容旧控制器或旧客户端时明确拒绝进入执行准备。禁止运行过程中自动升级驱动或机器人固件。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="validation" data-search><div class="section-top"><span class="section-number">16</span><h2>测试体系与验收标准</h2></div><p>验收按软件、图形、实机采集、几何计量、机器人台架和具体工具接触分层进行。每份报告记录样本、硬件、版本、参数、测试范围和失败项；不同层的证据不能互相替代。</p>
+<h3>必须先定义的量化指标</h3>
+<p>在第一个兼容性阶段冻结空间误差E_req、同步误差D_req、工具姿态或间距要求、允许停止距离、控制器看门狗和接触限制。定义测量方法、参考量具、统计量、最坏工况和通过条件。没有冻结指标时可以完成软件功能开发，但不能把相关执行能力标记为验收通过。</p>
+<p>界面性能、存储吞吐和计算资源可以采用前章的初始工程目标。几何精度、接触力和停止阈值须来自产品需求与设备验证，不照抄通用示例。</p>
+<h3>验收用例矩阵</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">编号</th><th scope="col">场景</th><th scope="col">必须观察的结果</th></tr></thead><tbody>
+<tr><td>V01</td><td>干净目标系统安装</td><td>包版本、驱动与能力清单一致，可离线复现</td></tr>
+<tr><td>V02</td><td>相机断开与被占用</td><td>明确错误，不启动伪采集，不破坏旧记录</td></tr>
+<tr><td>V03</td><td>RGB与深度不同步或元数据缺失</td><td>拒绝相关帧并保存原因，不能继续可信融合</td></tr>
+<tr><td>V04</td><td>移动相机并重放位姿</td><td>正确使用时序外参；故意单位外参时检测失败</td></tr>
+<tr><td>V05</td><td>镜像 轴向与单位注入错误</td><td>非对称量具与重投影测试能检出</td></tr>
+<tr><td>V06</td><td>标定拟合外的姿态和位置</td><td>以独立测量验证整条链误差满足E_req</td></tr>
+<tr><td>V07</td><td>无效深度 遮挡与反光</td><td>缺失可定位，不用自动补面充当已测表面</td></tr>
+<tr><td>V08</td><td>翻身 呼吸或局部运动</td><td>按验证策略阻断、重新定位或重扫，旧计划过期</td></tr>
+<tr><td>V09</td><td>多个分离区域和内部留空</td><td>无工作线跨越，转场独立标识</td></tr>
+<tr><td>V10</td><td>小区域 急曲率和狭窄通道</td><td>不能生成满足约束的路线时明确报告</td></tr>
+<tr><td>V11</td><td>覆盖计算预算耗尽</td><td>返回未完成和未知范围，不报告完整覆盖</td></tr>
+<tr><td>V12</td><td>模型 区域或工具参数变更</td><td>下游路线、机器人计划和执行许可失效</td></tr>
+<tr><td>V13</td><td>取消后迟到结果与切换记录</td><td>旧generation结果不覆盖当前页面或资产</td></tr>
+<tr><td>V14</td><td>降面显示上的拾取</td><td>映射回源几何并重新验证，不能引用错面</td></tr>
+<tr><td>V15</td><td>机器人关节限位与奇异姿态</td><td>规划拒绝或提供经验证的可行替代</td></tr>
+<tr><td>V16</td><td>轨迹平滑与最终插值</td><td>重查连续路径、贴面误差及完整扫掠体</td></tr>
+<tr><td>V17</td><td>机器人网络断连与重复请求</td><td>进入约定停止状态，重试不重复动作</td></tr>
+<tr><td>V18</td><td>控制器重启与旧指令重放</td><td>新启动会话拒绝旧计划许可和旧请求</td></tr>
+<tr><td>V19</td><td>GUI崩溃与移动端休眠</td><td>不改变控制器保护逻辑，恢复先同步状态</td></tr>
+<tr><td>V20</td><td>接触力异常或工具传感器失联</td><td>执行经验证的控制器和工具停止策略</td></tr>
+<tr><td>V21</td><td>物理急停</td><td>测得的输出关闭及停止行为符合冻结要求</td></tr>
+<tr><td>V22</td><td>保存中掉电 磁盘满或文件损坏</td><td>无半成品被标为完成，旧版本可用且可诊断</td></tr>
+<tr><td>V23</td><td>完整备份恢复与历史回放</td><td>在独立目录恢复，源哈希和版本关系一致</td></tr>
+<tr><td>V24</td><td>升级 迁移与回滚</td><td>版本不匹配时拒绝执行，可回到已验基线</td></tr>
+<tr><td>V25</td><td>8小时业务混合与72小时压力</td><td>无失控资源增长，异常和超限有记录</td></tr>
+<tr><td>V26</td><td>Windows Android替代终端</td><td>协议、断连、缩放、触控和渲染分别验收</td></tr>
+</tbody></table></div>
+<h3>仿真与真实验证的分工</h3>
+<p>Gazebo Jetty可验证机器人模型、接口、部分碰撞和任务状态；数字仿真不能证明真实深度相机误差、组织变形或真实接触力。RViz适合工程可视化和调试，也不能因为轨迹动画顺畅就判定实机可执行。<a class="cite" href="#source-S15" aria-label="来源S15">[S15]</a><a class="cite" href="#source-S29" aria-label="来源S29">[S29]</a></p>
+<p>台架按顺序使用已知几何量具、刚性仿体和可控软材料仿体，先验证空载路径、机器人坐标和停止，再评估工具接触。进入人体相关验证需要单独的产品与验证计划，不由一份软件测试报告直接放行。</p>
+<h3>需求追踪和完成定义</h3>
+<p>每个产品需求关联模块、接口、测试编号、报告和版本。一次测试通过只对该组合有效。最终交付必须能从一份执行或规划记录追溯到原始帧、标定、模型、区域、工具参数、机器人配置及应用版本。</p>
+<p>异常处理既要验证“成功被阻止”，也要验证用户能理解原因并恢复。例如补扫失败后仍能查看旧模型，控制器断连后可以查看历史，不要求用户删除记录重新开始。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="schedule" data-search><div class="section-top"><span class="section-number">17</span><h2>研发分工里程碑与费用估算</h2></div><p>按重新设计的新产品计算，建议5至6人核心团队，以24至28周形成具备明确验证边界的工程样机。这个估算假设相机与机械臂及时到位、厂家接口可用、工具基本规格已确定，并以单相机、单机械臂和局部任务为范围。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">阶段</th><th scope="col">建议周次</th><th scope="col">主要产物</th><th scope="col">退出条件</th></tr></thead><tbody>
+<tr><td>G0 选型验证</td><td>第1至2周</td><td>设备接口、兼容矩阵、精度与停止指标</td><td>关键闭源依赖和采购阻塞被识别</td></tr>
+<tr><td>G1 数据基础</td><td>第3至6周</td><td>原始记录、时序、清单、回放与标定工具</td><td>原始证据可独立恢复，坐标链成立</td></tr>
+<tr><td>G2 几何与GUI</td><td>第7至10周</td><td>真实重建、质量图层、区域编辑</td><td>量具数据和典型部位样本通过</td></tr>
+<tr><td>G3 表面规划</td><td>第11至14周</td><td>工作段、贴面换行及覆盖报告</td><td>留空、分离域和未知覆盖处理正确</td></tr>
+<tr><td>G4 机器人集成</td><td>第15至20周</td><td>机器人模型、规划、干运行与故障处理</td><td>台架运动与停止验收完成</td></tr>
+<tr><td>G5 工具与稳定性</td><td>第21至24周</td><td>接触或间距验证、长时运行、恢复</td><td>冻结工具指标通过或明确阻塞</td></tr>
+<tr><td>G6 交付完善</td><td>第25至28周</td><td>安装包、版本清单、操作与维护材料</td><td>独立安装、备份恢复及交接通过</td></tr>
+</tbody></table></div>
+<p>若只需三维显示和表面路线的演示，可以提前形成中间版本，但它不等同于包含机器人、工具和完整恢复能力的最终样机。若厂家不提供所需控制模式，接触模块可能需要重新选型；增加软件人手不一定能消除这一阻塞。</p>
+<h3>团队职责</h3>
+<p>系统负责人负责需求、接口、版本与风险闭环；视觉工程师负责采集、同步和重建；几何工程师负责区域、曲面路线和覆盖；机器人工程师负责标定、MoveIt、控制器及工具闭环；GUI工程师负责桌面和可选终端；测试与部署人员负责数据集、异常注入、安装和恢复。机械、工具与产品验证负责人在相应阶段共同参与。</p>
+<h3>硬件费用预留</h3>
+<p>下表为人民币万元的立项估算区间，未取代供应商报价。按新购一套台架估算，已有相机可以复用；工具本体及治疗输出模块未计价。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">项目</th><th scope="col">估算区间</th><th scope="col">说明</th></tr></thead><tbody>
+<tr><td>工业计算机 含GPU内存与NVMe</td><td>1.8至4.5</td><td>随工业等级与显卡变化</td></tr>
+<tr><td>操作屏</td><td>0.2至0.8</td><td>普通触屏与工业屏差异</td></tr>
+<tr><td>RGB-D相机预留</td><td>0.5至1.5</td><td>型号及采购渠道另行询价</td></tr>
+<tr><td>机械臂与厂家控制器</td><td>8至30</td><td>工作空间 负载与接口授权影响显著</td></tr>
+<tr><td>力传感与工具连接结构</td><td>1.5至6</td><td>接触任务按需要配置</td></tr>
+<tr><td>底座 床体 支架与线缆</td><td>2至8</td><td>刚度和安装精度需纳入</td></tr>
+<tr><td>电源 网络 UPS及备份</td><td>0.5至2</td><td>按整机功耗和数据量确定</td></tr>
+</tbody></table></div>
+<p>上述项目合计约14.5至52.8万元，可按15至55万元预留台架硬件预算。未计工具本体、临床或注册相关工作、模具、小批量制造、特殊场地和税费差异，不能用这个合计推断整机量产成本。</p>
+<h3>研发和方案切换成本</h3>
+<p>人力是主要成本。以30人月、每人月综合成本2.5至4.5万元为核算样例，约75至135万元；综合成本应包含企业实际薪酬、社保、管理与设备摊销。实际排期应根据团队复用能力和工具集成难度重新估算。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">相对Linux单机的变化</th><th scope="col">建议追加研发预留</th><th scope="col">主要新增工作</th></tr></thead><tbody>
+<tr><td>Windows GUI加Linux</td><td>2至4人月</td><td>双机协议 版本兼容 安装和故障联调</td></tr>
+<tr><td>Android终端加Linux</td><td>2至5人月</td><td>移动GUI 模型预算 断连和设备管理</td></tr>
+<tr><td>全Windows主机</td><td>4至8人月</td><td>ROS外围构建 厂家接口和发布适配</td></tr>
+<tr><td>全Android主机</td><td>8至16人月或更多</td><td>相机 NDK GPU ROS与BSP；可能先遇硬阻塞</td></tr>
+</tbody></table></div>
+<p>这些是风险预留，不是完成时间保证。优先用G0的两周取得真实构建和供应商证据，再缩小估算区间。Qt商业授权、操作系统授权、厂家SDK接口许可、维护支持和安全更新成本应另列年度预算。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="barriers" data-search><div class="section-top"><span class="section-number">18</span><h2>技术壁垒与商业化风险</h2></div><p>壁垒应分成可由团队实现的工程工作、需要供应商承诺的依赖，以及必须通过实验验证的问题。三类问题的处理方式不同，不能都写成“后续优化”。</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">壁垒</th><th scope="col">会出现的问题</th><th scope="col">化解方式</th><th scope="col">建议负责人</th></tr></thead><tbody>
+<tr><td>相机平台ABI</td><td>Android或ARM无法加载指定SDK</td><td>取得厂家支持或改为Linux采集节点</td><td>设备与视觉</td></tr>
+<tr><td>新发行版依赖</td><td>Python轮子缺失 Qt与VTK冲突</td><td>C++主线 独立环境 固定构建矩阵</td><td>架构与构建</td></tr>
+<tr><td>机器人接口</td><td>名义支持ROS却缺所需控制模式</td><td>采购前演示目标轨迹和控制模式</td><td>机器人与采购</td></tr>
+<tr><td>时钟与位姿</td><td>运动时重影或目标偏移</td><td>设备时间保留 同步 插值与误差试验</td><td>视觉与机器人</td></tr>
+<tr><td>人体运动与变形</td><td>模型有效但执行时已变化</td><td>监测 重新注册 重扫和失效策略</td><td>算法与产品</td></tr>
+<tr><td>曲面覆盖</td><td>有路线却漏扫 或越过缺失</td><td>权威几何与独立覆盖验证</td><td>几何与测试</td></tr>
+<tr><td>贴面接触</td><td>力波动 拖拽 压陷或姿态跳变</td><td>经过验证的工具控制与传感</td><td>控制与机械</td></tr>
+<tr><td>多终端部署</td><td>旧客户端发出过期请求</td><td>版本契约 幂等 状态同步</td><td>后端与GUI</td></tr>
+<tr><td>图形和资源</td><td>GPU上下文崩溃 内存溢出</td><td>进程隔离 显示预算 压力测试</td><td>GUI与运维</td></tr>
+<tr><td>数据完整性</td><td>保存中断后误认为成功</td><td>原子发布 清单哈希 恢复事务</td><td>数据与测试</td></tr>
+<tr><td>长期维护</td><td>依赖升级后失效或供应商停更</td><td>固定支持周期 SBOM 升级与回滚</td><td>架构与维护</td></tr>
+</tbody></table></div>
+<h3>无法单靠应用代码解决的情况</h3>
+<p>相机只有x86闭源库而目标设备为Android ARM64；机器人不开放所需控制模式或相关许可；工具没有有效作用宽度、力或距离规格；机身刚度和相机支架受力形变超出预算。这些问题需要更换架构、采购选型或机械设计，不应承诺用一个适配脚本解决。</p>
+<h3>许可证与发布义务</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">组件或选择</th><th scope="col">许可与义务要点</th><th scope="col">项目措施</th></tr></thead><tbody>
+<tr><td>Qt及PySide6</td><td>按模块采用商业或LGPL/GPL等不同许可</td><td>列清模块 静态/动态链接及交付义务</td></tr>
+<tr><td>VTK Open3D Three.js</td><td>分别有BSD类或MIT等许可，仍有第三方依赖</td><td>保存许可证和第三方告知</td></tr>
+<tr><td>MoveIt ros2_control</td><td>常见BSD或Apache许可证，插件需另核</td><td>按实际包生成SBOM</td></tr>
+<tr><td>CGAL</td><td>部分包GPL 部分LGPL或商业许可</td><td>先核实际包，不能笼统称全库可闭源</td></tr>
+<tr><td>原始3DGS实现</td><td>官方许可证含研究与非商业等限制</td><td>商业用途取得许可或选择可用实现</td></tr>
+<tr><td>gsplat</td><td>Apache 2.0实现</td><td>独立核查模型 数据及其他代码权利</td></tr>
+<tr><td>CUDA 深度引擎与厂家SDK</td><td>二进制分发和使用条件各异</td><td>核查再分发与驱动打包条款</td></tr>
+<tr><td>Windows IoT与游戏引擎</td><td>产品版本 授权方式和商业条款各异</td><td>纳入采购及年度维护成本</td></tr>
+</tbody></table></div>
+<p>Qt开源许可不等于产品必须全部开源，也不等于可以忽略许可义务；需要结合实际模块、链接方式和分发形式判断。许可证审查应在架构冻结时完成，避免交付前才发现需要更换组件。<a class="cite" href="#source-S17" aria-label="来源S17">[S17]</a><a class="cite" href="#source-S19" aria-label="来源S19">[S19]</a><a class="cite" href="#source-S24" aria-label="来源S24">[S24]</a><a class="cite" href="#source-S32" aria-label="来源S32">[S32]</a><a class="cite" href="#source-S33" aria-label="来源S33">[S33]</a><a class="cite" href="#source-S34" aria-label="来源S34">[S34]</a><a class="cite" href="#source-S35" aria-label="来源S35">[S35]</a><a class="cite" href="#source-S40" aria-label="来源S40">[S40]</a><a class="cite" href="#source-S41" aria-label="来源S41">[S41]</a></p>
+<h3>医疗用途与产品化</h3>
+<p>若预期用途涉及治疗，产品负责人应依据目标市场和具体功能建立相应的质量、风险、可用性、电气及软件验证计划，并确认ISO 14971、IEC 62304、IEC 60601系列等要求的适用范围。ROS、开源几何库、协作机器人或漂亮的三维显示都不自动提供这部分产品证据。</p>
+<p>本方案首先解决可实施的工程架构。治疗输出参数、组织作用效果和临床使用条件，需要工具与产品验证工作包给出输入，不从表面行距公式或Pose关键点推断。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="handover" data-search><div class="section-top"><span class="section-number">19</span><h2>实施启动与交付检查清单</h2></div><p>建议从Linux单机方案A启动G0，同时保持GUI网关与机器人适配器的独立边界。这样未来增加Android屏或Windows设备服务时，可以保留原始数据、模型、表面规划和机器人任务契约。</p>
+<h3>立项时冻结的十项输入</h3>
+<ol start="1">
+<li>机械臂品牌、型号、控制器、固件及Lyrical支持责任。</li>
+<li>工具的接触或非接触属性、工作点定义、外壳CAD与有效作用模型。</li>
+<li>相机型号、固件、采集模式、安装位置与USB链路。</li>
+<li>支持部位、体位、可见面以及一次任务的空间范围。</li>
+<li>几何误差、姿态、间距或接触指标的定义与测量方法。</li>
+<li>同步误差、最大运动条件和标定更新条件。</li>
+<li>急停、受控停止、工具输出联锁和通信中断后的策略。</li>
+<li>计算机尺寸、功耗、散热、屏幕形态与网络限制。</li>
+<li>数据保留、导出、权限、备份和远程维护要求。</li>
+<li>工程样机交期、可用团队、硬件与年度维护预算。</li>
+</ol>
+<h3>前两周的具体交付</h3>
+<p>完成一张“设备型号 × 操作系统 × CPU架构 × SDK/驱动版本”的真实验证矩阵。每格写可运行、已声明支持但未实测、缺少二进制、源码可编译或供应商未提供支持，避免只填“支持”。</p>
+<p>在Ubuntu 26.04上取得一段带完整时间与标定元数据的相机记录；安装Lyrical、MoveIt与所需控制包；读取机器人状态并核对厂家驱动模式；验证Qt和VTK的真实窗口与模型交互；测量一组已知几何的重投影与坐标闭环。</p>
+<p>G0结束时输出固定版本清单、阻塞项、采购建议、精度与停止指标、下一阶段排期。如果相机或机器人出现硬阻塞，立即选择对应替代架构，不等GUI完成后再发现底层无法接入。</p>
+<h3>最终交接包</h3>
+<p>交付安装包或设备镜像、软件与固件版本清单、许可证和SBOM、配置与schema说明、接口文档、标定流程、示例原始数据、模型及计划、需求到测试的追踪表、实际验收报告、备份恢复与升级回滚说明。每个部署组合只交付经过验证的范围。</p>
+<p>验收人员应能在一台干净目标机器上完成安装，使用提供的测试会话回放、重建和规划，并在相应台架验证许可下复现机器人演示。研发人员口头解释和演示录像不能代替这个可重复交接过程。</p>
+<h3>路线取舍</h3>
+<p>第一版集中完成可靠的局部体表数据、明确的区域与路线、可验证的机器人接口和故障恢复。全身一次性高精度建模、跨体位自动融合、复杂单指路线、移动底座导航、3DGS外观和多终端并发编辑各自作为后续独立工作包。若底座需自主移动，再引入定位和Nav2；Nav2不能替代表面覆盖或机械臂运动规划。</p><div class="section-footer"><a href="#top">返回报告开头 ↑</a></div></section><section class="report-section" id="sources" data-search><div class="section-top"><span class="section-number">20</span><h2>官方资料与事实依据</h2></div><p>核查日期为2026年10月23日。版本、支持列表和许可证可能更新；发布时固定依赖版本并重新核查。发行索引表明包已登记发布，不能代替实机安装或控制验证。</p><p class="fine">以下均为官方文档或官方仓库。报告使用的来源已保存核查快照与内容哈希；链接打开时显示的是来源站点当前内容。</p><ul class="source-list"><li id="source-S01"><span class="source-id">S01</span><div><a href="https://raw.githubusercontent.com/ros2/ros2_documentation/lyrical/source/Releases/Release-Lyrical-Luth.rst" target="_blank" rel="noopener noreferrer">ROS 2 Lyrical 发布说明</a><div class="source-description">ROS 2 Lyrical release · 核查 2026-10-23</div></div></li><li id="source-S02"><span class="source-id">S02</span><div><a href="https://raw.githubusercontent.com/ros2/ros2_documentation/lyrical/source/Releases/lyrical/supported-platforms.rst" target="_blank" rel="noopener noreferrer">Lyrical 平台及依赖支持矩阵</a><div class="source-description">Lyrical supported platforms · 核查 2026-10-23</div></div></li><li id="source-S03"><span class="source-id">S03</span><div><a href="https://raw.githubusercontent.com/ros2/ros2_documentation/lyrical/source/Releases/lyrical/release-timeline.rst" target="_blank" rel="noopener noreferrer">Lyrical 官方发布时间线</a><div class="source-description">Lyrical release timeline · 核查 2026-10-23</div></div></li><li id="source-S04"><span class="source-id">S04</span><div><a href="https://github.com/ros2/ros2_documentation/blob/lyrical/source/Get-Started/Installation/Ubuntu-Install-Debs.rst" target="_blank" rel="noopener noreferrer">Ubuntu 安装 ROS 2 官方步骤</a><div class="source-description">Lyrical Ubuntu installation · 核查 2026-10-23</div></div></li><li id="source-S05"><span class="source-id">S05</span><div><a href="https://raw.githubusercontent.com/orbbec/OrbbecSDK_v2/main/README.md" target="_blank" rel="noopener noreferrer">Orbbec SDK v2 平台与设备列表</a><div class="source-description">Orbbec SDK v2 · 核查 2026-10-23</div></div></li><li id="source-S06"><span class="source-id">S06</span><div><a href="https://raw.githubusercontent.com/orbbec/OrbbecSDK-Android-Wrapper/v2-main/README.md" target="_blank" rel="noopener noreferrer">Orbbec Android Wrapper 设备支持列表</a><div class="source-description">Orbbec Android wrapper · 核查 2026-10-23</div></div></li><li id="source-S07"><span class="source-id">S07</span><div><a href="https://raw.githubusercontent.com/orbbec/OrbbecSDK_ROS2/v2-main/README.MD" target="_blank" rel="noopener noreferrer">Orbbec ROS 2 Wrapper 官方说明</a><div class="source-description">Orbbec ROS 2 wrapper · 核查 2026-10-23</div></div></li><li id="source-S08"><span class="source-id">S08</span><div><a href="https://raw.githubusercontent.com/ros/rosdistro/master/lyrical/distribution.yaml" target="_blank" rel="noopener noreferrer">Lyrical rosdistro 发行索引</a><div class="source-description">Lyrical release repository index · 核查 2026-10-23</div></div></li><li id="source-S10"><span class="source-id">S10</span><div><a href="https://raw.githubusercontent.com/ros-controls/ros2_control/master/controller_manager/doc/userdoc.rst" target="_blank" rel="noopener noreferrer">ros2_control 控制器管理器</a><div class="source-description">ros2_control controller manager · 核查 2026-10-23</div></div></li><li id="source-S11"><span class="source-id">S11</span><div><a href="https://raw.githubusercontent.com/ros-controls/ros2_controllers/master/joint_trajectory_controller/doc/userdoc.rst" target="_blank" rel="noopener noreferrer">关节轨迹控制器说明</a><div class="source-description">Joint trajectory controller · 核查 2026-10-23</div></div></li><li id="source-S12"><span class="source-id">S12</span><div><a href="https://github.com/ros2/ros2_documentation/blob/lyrical/source/ROS-Framework/interfaces/topics/About-Quality-of-Service-Settings.rst" target="_blank" rel="noopener noreferrer">ROS 2 QoS 官方说明</a><div class="source-description">ROS 2 QoS · 核查 2026-10-23</div></div></li><li id="source-S13"><span class="source-id">S13</span><div><a href="https://github.com/ros2/ros2_documentation/blob/lyrical/source/Capabilities/Motion-planning/Real-Time-Programming.rst" target="_blank" rel="noopener noreferrer">ROS 2 实时编程指南</a><div class="source-description">ROS real time · 核查 2026-10-23</div></div></li><li id="source-S14"><span class="source-id">S14</span><div><a href="https://raw.githubusercontent.com/ros-infrastructure/rep/master/rep-0103.rst" target="_blank" rel="noopener noreferrer">REP 103 坐标与单位约定</a><div class="source-description">ROS coordinate conventions REP 103 · 核查 2026-10-23</div></div></li><li id="source-S15"><span class="source-id">S15</span><div><a href="https://gazebosim.org/docs/latest/ros_installation/" target="_blank" rel="noopener noreferrer">Gazebo 与 ROS 版本配对</a><div class="source-description">Gazebo ROS installation · 核查 2026-10-23</div></div></li><li id="source-S16"><span class="source-id">S16</span><div><a href="https://doc.qt.io/qt-6/supported-platforms.html" target="_blank" rel="noopener noreferrer">Qt 6 平台支持</a><div class="source-description">Qt 6 supported platforms · 核查 2026-10-23</div></div></li><li id="source-S17"><span class="source-id">S17</span><div><a href="https://doc.qt.io/qt-6/licensing.html" target="_blank" rel="noopener noreferrer">Qt 许可说明</a><div class="source-description">Qt licensing · 核查 2026-10-23</div></div></li><li id="source-S18"><span class="source-id">S18</span><div><a href="https://www.open3d.org/docs/release/getting_started.html" target="_blank" rel="noopener noreferrer">Open3D 发布版安装与 Python 支持</a><div class="source-description">Open3D installation · 核查 2026-10-23</div></div></li><li id="source-S19"><span class="source-id">S19</span><div><a href="https://gitlab.kitware.com/vtk/vtk/-/raw/master/Copyright.txt" target="_blank" rel="noopener noreferrer">VTK 版权与许可</a><div class="source-description">VTK licensing · 核查 2026-10-23</div></div></li><li id="source-S20"><span class="source-id">S20</span><div><a href="https://learn.microsoft.com/en-us/windows/wsl/connect-usb" target="_blank" rel="noopener noreferrer">Microsoft WSL USB 接入说明</a><div class="source-description">Microsoft WSL USB · 核查 2026-10-23</div></div></li><li id="source-S21"><span class="source-id">S21</span><div><a href="https://raw.githubusercontent.com/micro-ROS/micro_ros_setup/rolling/README.md" target="_blank" rel="noopener noreferrer">micro ROS 构建及支持说明</a><div class="source-description">micro ROS setup · 核查 2026-10-23</div></div></li><li id="source-S22"><span class="source-id">S22</span><div><a href="https://developer.android.com/develop/connectivity/usb/host" target="_blank" rel="noopener noreferrer">Android USB Host 文档</a><div class="source-description">Android USB host · 核查 2026-10-23</div></div></li><li id="source-S23"><span class="source-id">S23</span><div><a href="https://raw.githubusercontent.com/nerfstudio-project/gsplat/main/README.md" target="_blank" rel="noopener noreferrer">gsplat 项目说明</a><div class="source-description">gsplat repository · 核查 2026-10-23</div></div></li><li id="source-S24"><span class="source-id">S24</span><div><a href="https://raw.githubusercontent.com/graphdeco-inria/gaussian-splatting/main/LICENSE.md" target="_blank" rel="noopener noreferrer">原始 3DGS 项目许可证</a><div class="source-description">3D Gaussian Splatting license · 核查 2026-10-23</div></div></li><li id="source-S25"><span class="source-id">S25</span><div><a href="https://raw.githubusercontent.com/UniversalRobots/Universal_Robots_ROS2_Driver/main/README.md" target="_blank" rel="noopener noreferrer">Universal Robots 官方 ROS 2 驱动</a><div class="source-description">Universal Robots ROS 2 driver · 核查 2026-10-23</div></div></li><li id="source-S26"><span class="source-id">S26</span><div><a href="https://developer.nvidia.com/embedded/jetpack" target="_blank" rel="noopener noreferrer">NVIDIA JetPack 官方说明</a><div class="source-description">NVIDIA JetPack · 核查 2026-10-23</div></div></li><li id="source-S27"><span class="source-id">S27</span><div><a href="https://learn.microsoft.com/en-us/windows/iot/iot-enterprise/overview" target="_blank" rel="noopener noreferrer">Windows IoT Enterprise 概览</a><div class="source-description">Windows IoT Enterprise LTSC overview · 核查 2026-10-23</div></div></li><li id="source-S28"><span class="source-id">S28</span><div><a href="https://mcap.dev/guides/getting-started/ros-2" target="_blank" rel="noopener noreferrer">MCAP 与 ROS 2 记录指南</a><div class="source-description">MCAP ROS 2 · 核查 2026-10-23</div></div></li><li id="source-S29"><span class="source-id">S29</span><div><a href="https://gazebosim.org/docs/jetty/getstarted/" target="_blank" rel="noopener noreferrer">Gazebo Jetty 说明</a><div class="source-description">Gazebo Jetty · 核查 2026-10-23</div></div></li><li id="source-S30"><span class="source-id">S30</span><div><a href="https://raw.githubusercontent.com/moveit/moveit2_tutorials/main/doc/examples/time_parameterization/time_parameterization_tutorial.rst" target="_blank" rel="noopener noreferrer">MoveIt 时间参数化与 Ruckig</a><div class="source-description">MoveIt time parameterization · 核查 2026-10-23</div></div></li><li id="source-S31"><span class="source-id">S31</span><div><a href="https://raw.githubusercontent.com/moveit/moveit2_tutorials/main/doc/examples/realtime_servo/realtime_servo_tutorial.rst" target="_blank" rel="noopener noreferrer">MoveIt Servo 说明</a><div class="source-description">MoveIt Servo · 核查 2026-10-23</div></div></li><li id="source-S32"><span class="source-id">S32</span><div><a href="https://raw.githubusercontent.com/mrdoob/three.js/dev/LICENSE" target="_blank" rel="noopener noreferrer">Three.js 许可证</a><div class="source-description">Three.js license · 核查 2026-10-23</div></div></li><li id="source-S33"><span class="source-id">S33</span><div><a href="https://raw.githubusercontent.com/isl-org/Open3D/main/LICENSE" target="_blank" rel="noopener noreferrer">Open3D 许可证</a><div class="source-description">Open3D license · 核查 2026-10-23</div></div></li><li id="source-S34"><span class="source-id">S34</span><div><a href="https://raw.githubusercontent.com/ros-controls/ros2_control/master/LICENSE" target="_blank" rel="noopener noreferrer">ros2_control 许可证</a><div class="source-description">ros2_control license · 核查 2026-10-23</div></div></li><li id="source-S35"><span class="source-id">S35</span><div><a href="https://raw.githubusercontent.com/nerfstudio-project/gsplat/main/LICENSE" target="_blank" rel="noopener noreferrer">gsplat 许可证</a><div class="source-description">gsplat license · 核查 2026-10-23</div></div></li><li id="source-S37"><span class="source-id">S37</span><div><a href="https://orbbec.github.io/OrbbecSDK_ROS2/en/source/camera_devices/1_overview/introduction.html" target="_blank" rel="noopener noreferrer">Orbbec ROS 2 支持硬件</a><div class="source-description">Orbbec supported hardware · 核查 2026-10-23</div></div></li><li id="source-S38"><span class="source-id">S38</span><div><a href="https://vtk.org/doc/nightly/html/classQVTKOpenGLNativeWidget.html" target="_blank" rel="noopener noreferrer">VTK Qt 原生窗口接口</a><div class="source-description">Qt VTK native widget · 核查 2026-10-23</div></div></li><li id="source-S39"><span class="source-id">S39</span><div><a href="https://vtk.org/doc/nightly/html/classQQuickVTKItem.html" target="_blank" rel="noopener noreferrer">VTK Qt Quick 接口</a><div class="source-description">Qt VTK Quick item · 核查 2026-10-23</div></div></li><li id="source-S40"><span class="source-id">S40</span><div><a href="https://raw.githubusercontent.com/moveit/moveit2/main/LICENSE.txt" target="_blank" rel="noopener noreferrer">MoveIt 2 许可证</a><div class="source-description">MoveIt 2 license · 核查 2026-10-23</div></div></li><li id="source-S41"><span class="source-id">S41</span><div><a href="https://www.cgal.org/license.html" target="_blank" rel="noopener noreferrer">CGAL 许可说明</a><div class="source-description">CGAL licenses · 核查 2026-10-23</div></div></li><li id="source-S42"><span class="source-id">S42</span><div><a href="https://raw.githubusercontent.com/nianticlabs/spz/main/README.md" target="_blank" rel="noopener noreferrer">SPZ 格式说明与项目条款</a><div class="source-description">SPZ format and license · 核查 2026-10-23</div></div></li></ul></section><footer class="report-footer">人体体表系统技术方案 · 2026年10月23日 · 本文件可离线阅读，引用链接需要联网</footer></main><script>
+const choiceData={
+ A:{title:'A Linux单机  首版推荐',placement:'Qt主屏、相机采集、重建、表面规划和ROS 2 Lyrical均在Ubuntu 26.04工业计算机。机械臂保留厂家控制器。',barrier:'重点验证相机固件与USB链路、Qt与VTK构建、GPU驱动以及机器人接口。',condition:'适用于关键设备没有强制Windows依赖，且机身允许放置工业计算机。'},
+ B:{title:'B Windows上位机加Linux',placement:'Windows承担GUI或专用设备服务；Linux承担主要计算与ROS。原始RGB-D尽量保留在相机连接的主机。',barrier:'新增双机时钟、协议版本、网络吞吐、断连恢复和升级联调。建议追加2至4人月风险预留。',condition:'适用于关键SDK仅支持Windows，或产品明确要求Windows操作屏。'},
+ C:{title:'C Android触屏加Linux',placement:'Android显示轻量模型、编辑参考图区域和查看状态；Linux承担相机、权威几何、重建、规划和ROS。',barrier:'需要终端休眠、无线断连、触屏交互、模型预算和重新同步策略。建议追加2至5人月风险预留。',condition:'适用于移动操作屏或机身与屏幕分离；不要求Android直接连接Femto Bolt。'},
+ D:{title:'D 全Windows主机',placement:'GUI、算法与ROS运行在Windows 11，机械臂保留厂家控制器。ROS核心有Tier 1支持。',barrier:'MoveIt、厂家驱动、图形依赖及控制插件须逐包构建和实机验证。建议追加4至8人月预留。',condition:'适用于全部关键设备具备目标Windows版本支持，团队能承担外围生态适配。'},
+ E:{title:'E 全Android主机',placement:'Android直接承担相机、算法、显示与机器人协议集成，需要完整的原生和嵌入式开发。',barrier:'Femto Bolt未列入本次Android Wrapper支持清单。若厂商没有适配库，可能成为供应商硬阻塞。',condition:'仅在设备、NDK、GPU、BSP、持续性能与控制接口全部得到验证后立项；首版不推荐。'},
+ F:{title:'F Windows加WSL2',placement:'Windows提供桌面，WSL2运行ROS与算法；USB相机需要额外转发和连接管理。',barrier:'验证USB重连、虚拟网络、WSL生命周期、GPU显示和系统重启恢复。',condition:'适合研发、回放和部分联调；不作为首版实机控制的默认部署。'}
+};
+function updateChoice(){const d=choiceData[document.getElementById('deployment-choice').value];document.getElementById('choice-title').textContent=d.title;document.getElementById('choice-placement').textContent=d.placement;document.getElementById('choice-barrier').textContent=d.barrier;document.getElementById('choice-condition').textContent=d.condition;}
+document.getElementById('deployment-choice').addEventListener('change',updateChoice);updateChoice();
+const calcIds=['color-w','color-h','depth-w','depth-h','frame-rate','duration','camera-count','retain-ratio'];
+function updateCalc(){const v={};for(const id of calcIds){v[id]=Number(document.getElementById(id).value);if(!Number.isFinite(v[id])||v[id]<=0){document.getElementById('calc-message').textContent='请输入大于零的有效数值。';return;}}if(v['retain-ratio']>100){document.getElementById('calc-message').textContent='保存比例不能超过100%。';return;}const b=(v['color-w']*v['color-h']*3+v['depth-w']*v['depth-h']*2)*v['frame-rate']*v['camera-count'];const gib=b*v.duration*v['retain-ratio']/100/1073741824;const fmt=n=>n.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});document.getElementById('calc-throughput').textContent=fmt(b/1048576)+' MiB/s';document.getElementById('calc-network').textContent=fmt(b*8/1e9)+' Gbit/s';document.getElementById('calc-storage').textContent=fmt(gib)+' GiB';document.getElementById('calc-message').textContent=(b*8>1e9?'此未压缩流超过1 Gbit/s，不能依赖千兆网络完整转发。':'仍需为协议、磁盘峰值和系统负载保留余量。')+' 保存比例只影响估算存储量，未降低相机采集和计算输入带宽。';}
+for(const id of calcIds)document.getElementById(id).addEventListener('input',updateCalc);updateCalc();
+const query=document.getElementById('report-search');const sections=[...document.querySelectorAll('.report-section[data-search]')];const nav=[...document.querySelectorAll('nav a[data-target]')];
+function runSearch(){const q=query.value.trim().toLocaleLowerCase();let n=0;for(const s of sections){const ok=!q||s.textContent.toLocaleLowerCase().includes(q);s.classList.toggle('filtered-out',!ok);if(ok)n++;const link=nav.find(a=>a.dataset.target===s.id);if(link)link.classList.toggle('filtered-out',!ok);}document.getElementById('search-status').textContent=q?'匹配 '+n+' 个章节；清空可查看全文':'20个章节 · 全文可离线阅读';}
+query.addEventListener('input',runSearch);runSearch();
+const observer=new IntersectionObserver(entries=>{for(const e of entries){if(e.isIntersecting){for(const a of nav)a.classList.toggle('active',a.dataset.target===e.target.id);}}},{rootMargin:'-10% 0px -70% 0px'});for(const s of sections)observer.observe(s);
+document.getElementById('print-report').addEventListener('click',()=>window.print());
+</script></body></html>

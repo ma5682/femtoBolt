@@ -1,1 +1,1 @@
-"""Tk control panel and its panels."""
+"""Femto capture and planning workbench entry points."""

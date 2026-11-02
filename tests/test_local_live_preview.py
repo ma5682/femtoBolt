@@ -3,7 +3,6 @@ from pathlib import Path
 import queue
 import tempfile
 import time
-import tkinter as tk
 import unittest
 from unittest import mock
 
@@ -107,53 +106,3 @@ class WorkerTests(unittest.TestCase):
             worker.close();worker.thread.join(10)
             self.assertTrue(worker.failed)
             self.assertEqual(worker.mailbox.get_nowait()['status'],'error')
-
-
-class PreviewGuiTests(unittest.TestCase):
-    def test_live_snapshot_controls_highlight_and_session_isolation(self):
-        import femto.app.femto_control_app as control
-        with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
-            root=tk.Tk();root.withdraw()
-            try:
-                app=control.FemtoControlApp(root);panel=app.local_panel
-                panel.session_id='current';panel.preview_mailbox=queue.Queue(maxsize=1)
-                p=np.array([[0,0,1],[.02,0,1]])
-                snapshot=dict(status='ready',session_id='wrong',points=p,colors=np.full((2,3),100,np.uint8),
-                    sources=np.array([0,1]),initial_points=p[:1],initial_colors=np.full((1,3),100,np.uint8),
-                    frame_id=1,accepted_preview_frames=2,point_count=2,added_samples=1,budget_limited=False)
-                panel.preview_mailbox.put(snapshot);panel.consume_preview()
-                self.assertNotIn('live',panel.clouds)
-                snapshot['session_id']='current';panel.count=2
-                panel.preview_mailbox.put(snapshot);panel.consume_preview()
-                self.assertIn('live',panel.clouds)
-                self.assertEqual(str(panel.buttons['initial']['state']),'normal')
-                self.assertEqual(str(panel.buttons['view']['state']),'disabled')
-                panel.set_view('live');panel.highlight.set(False);panel.draw_cloud()
-                self.assertEqual(panel.view,'live')
-                self.assertIn('2/2',panel.preview_status.get())
-                center=panel.center.copy();panel.set_view('initial')
-                np.testing.assert_array_equal(center,panel.center)
-                panel.event('local_error',dict(session_id='current',source=None,error='tracking_lost'))
-            finally:
-                for timer in root.tk.call('after','info'):root.after_cancel(timer)
-                root.destroy()
-
-    def test_capture_notification_survives_next_pose_update(self):
-        import femto.app.femto_control_app as control
-        with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
-            root=tk.Tk();root.withdraw()
-            try:
-                app=control.FemtoControlApp(root);panel=app.local_panel
-                panel.active=True;panel.session_id='s'
-                panel.event('local_notice',dict(session_id='s',source=None,key='duplicate'))
-                panel.event('local_pose',dict(session_id='s',source=None,record=dict(state='tracking'),accepted=1))
-                self.assertTrue(panel.hint.get().startswith(panel.text('duplicate')))
-                self.assertIn('状态更新',panel.hint.get())
-                panel.notice=None;panel.state='processing';panel.finishing=True
-                panel.record=dict(state='tracking',received_monotonic=time.monotonic()-10,
-                    xyz_mm=[0,0,0],pitch_yaw_roll_deg=[0,0,0])
-                panel.refresh();panel.tick()
-                self.assertEqual(panel.hint.get(),panel.text('processing'))
-            finally:
-                for timer in root.tk.call('after','info'):root.after_cancel(timer)
-                root.destroy()

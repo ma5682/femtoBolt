@@ -38,8 +38,8 @@ def torch_hub_checkpoint_dir() -> Path:
     if torch_home:
         hub = Path(os.path.expanduser(torch_home)) / "hub"
     else:
-        cache_home = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-        hub = Path(os.path.expanduser(cache_home)) / "torch" / "hub"
+        from femto.paths import WORKSPACE_CACHE_ROOT
+        hub = WORKSPACE_CACHE_ROOT / "torch" / "hub"
     return hub / "checkpoints"
 
 
@@ -52,9 +52,10 @@ def sha256_file(path: Path) -> str:
 
 
 def lpips_backbone_status(
-    expected_sha256: str = LPIPS_BACKBONE_SHA256, *, verify_hash: bool = True
+    expected_sha256: str = LPIPS_BACKBONE_SHA256, *, verify_hash: bool = True,
+    checkpoint_dir: Path | None = None,
 ) -> dict[str, Any]:
-    path = torch_hub_checkpoint_dir() / LPIPS_BACKBONE_FILE
+    path = (Path(checkpoint_dir) if checkpoint_dir is not None else torch_hub_checkpoint_dir()) / LPIPS_BACKBONE_FILE
     status: dict[str, Any] = {
         "file": LPIPS_BACKBONE_FILE,
         "path": str(path),
@@ -242,6 +243,8 @@ class LpipsMetric:
         self.backbone = lpips_backbone_status()
         if not self.backbone["ready"]:
             raise FileNotFoundError(self.backbone["error"])
+        import torch
+        torch.hub.set_dir(str(torch_hub_checkpoint_dir().parent))
         self.metric = LearnedPerceptualImagePatchSimilarity(net_type="alex", normalize=True).to(device)
         self.metric.eval()
 

@@ -106,26 +106,5 @@ class GeometryProbeTests(unittest.TestCase):
             self.assertEqual(r['diagnosis']['texture_alignment']['status'],'not_measured')
             self.assertEqual(r['support_kind'],'source_unknown')
 
-class FeedbackUITests(unittest.TestCase):
-    def test_recovered_banner_clears_old_notice_and_shows_current_quality(self):
-        import tkinter as tk
-        import femto.app.femto_control_app as control
-        root=tk.Tk();root.geometry('1120x720')
-        try:
-            with mock.patch.object(control.FemtoControlApp,'_start_camera'),mock.patch.object(control.FemtoControlApp,'_load_latest_paths'):
-                app=control.FemtoControlApp(root)
-            panel=app.local_panel;panel.active=True;panel.session_id='test';panel.state='uncertain'
-            panel.notice='duplicate';panel.notice_until=time.monotonic()+3
-            r=dict(state='tracking',received_monotonic=time.monotonic(),quality={'valid_depth_fraction':.75,'sharpness':35},
-                status_updated_at='2026-09-18T02:00:00+00:00',selected_for_fusion=True,xyz_mm=[0,0,0],pitch_yaw_roll_deg=[0,0,0])
-            panel.event('local_pose',dict(session_id='test',record=r,accepted=4));root.update()
-            self.assertIsNone(panel.notice);self.assertIn('75.0%',panel.hint.get());self.assertIn('2026-09-18',panel.hint.get())
-            self.assertIn('接纳 4',panel.hint.get());self.assertGreaterEqual(panel.hint_label.winfo_height(),panel.hint_label.winfo_reqheight())
-        finally:
-            for timer in root.tk.call('after','info'):root.after_cancel(timer)
-            root.destroy()
-            app=None;panel=None;root=None
-            import gc
-            gc.collect()
 
 if __name__=='__main__':unittest.main()

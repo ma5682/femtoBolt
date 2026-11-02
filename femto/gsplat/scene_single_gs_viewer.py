@@ -15,7 +15,7 @@ from femto.ui_i18n import pick
 
 
 def enable_native_dpi() -> None:
-    """Opt this viewer process into physical pixels before creating Tk windows."""
+    """Opt this viewer process into physical pixels before creating windows."""
     if os.name != 'nt': return
     import ctypes
     try:
@@ -30,7 +30,7 @@ def enable_native_dpi() -> None:
 
 
 def native_render_size(width: int, height: int) -> tuple[Any, Any]:
-    """Use source detail even in a small window; never derive from virtual Tk size."""
+    """Use source detail even in a small window, independently of UI scaling."""
     if width <= 0 or height <= 0: raise ValueError('Invalid source dimensions')
     scale=min(1.,1920/width,1080/height)
     return max(1,round(width*scale)),max(1,round(height*scale))
@@ -109,103 +109,139 @@ def load_viewport(path: Any, meta: Any) -> Any:
 class SingleViewer:
     def __init__(self, output, language='zh'):
         enable_native_dpi()
-        import tkinter as tk
-        from tkinter import messagebox
-        from PIL import Image, ImageTk
-        self.tk=tk; self.messagebox=messagebox; self.Image=Image; self.ImageTk=ImageTk
+        from PySide6.QtCore import QRect, Qt, QTimer
+        from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMessageBox, QPushButton, QRubberBand, QVBoxLayout, QWidget
+        from PIL import Image
+        self.messagebox=QMessageBox; self.Image=Image
+        self.app=QApplication.instance() or QApplication([])
         self.output=Path(output).resolve(); self.meta=load_model_metadata(self.output)
         self.language=language; self.view=FixedViewport(); self.start=None; self.box=None
         self.pool=ThreadPoolExecutor(max_workers=1); self.future=None; self.dirty=True; self.closed=False
         self.renderer=None; self.image=None; self.photo=None
-        self.root=tk.Tk(); self.root.title(pick(self.language, '单帧 3DGS · 固定视角','Single-frame 3DGS · Fixed view')+' | '+Path(self.meta.get('source_model') or self.meta['source_photo']).name)
-        self.root.geometry('1100x730')
-        toolbar=tk.Frame(self.root); toolbar.pack(fill='x')
+        owner=self
+        class ViewerWindow(QWidget):
+            def closeEvent(self, event):
+                owner._shutdown()
+                super().closeEvent(event)
+
+        class RenderCanvas(QLabel):
+            def resizeEvent(self,event):
+                owner.request()
+                super().resizeEvent(event)
+
+            def mousePressEvent(self,event):
+                if event.button()==Qt.MouseButton.LeftButton: owner.press(event)
+
+            def mouseMoveEvent(self,event):
+                if event.buttons() & Qt.MouseButton.LeftButton: owner.drag(event)
+
+            def mouseReleaseEvent(self,event):
+                if event.button()==Qt.MouseButton.LeftButton: owner.release(event)
+
+            def wheelEvent(self,event):
+                owner.wheel(event); event.accept()
+
+        self.root=ViewerWindow()
+        self.root.setWindowTitle(pick(self.language, '单帧 3DGS · 固定视角','Single-frame 3DGS · Fixed view')+' | '+Path(self.meta.get('source_model') or self.meta['source_photo']).name)
+        self.root.resize(1100,730)
+        layout=QVBoxLayout(self.root)
+        toolbar=QHBoxLayout(); layout.addLayout(toolbar)
         for zh,en,action in [('放大','Zoom in',lambda:self.zoom(1.25)),('缩小','Zoom out',lambda:self.zoom(.8)),
                              ('复位','Reset',self.reset),('保存区域','Save region',self.save),('回读区域','Load region',self.load)]:
-            tk.Button(toolbar,text=pick(self.language, zh,en),command=action).pack(side='left',padx=4,pady=5)
-        tk.Label(self.root,text=pick(self.language, '滚轮缩放；左键框选放大。视角锁定，仅重建可见表面；尺度未经过实物验证。',
-            'Wheel: zoom; left drag: zoom to region. Fixed view; observed surface only; scale unvalidated.')).pack()
-        self.canvas=tk.Canvas(self.root,bg='#101720',highlightthickness=0); self.canvas.pack(fill='both',expand=True)
-        self.status=tk.StringVar(value=str(self.output)); tk.Label(self.root,textvariable=self.status).pack(fill='x')
-        self.canvas.bind('<Configure>',lambda e:self.request())
-        self.canvas.bind('<ButtonPress-1>',self.press); self.canvas.bind('<B1-Motion>',self.drag)
-        self.canvas.bind('<ButtonRelease-1>',self.release); self.canvas.bind('<MouseWheel>',self.wheel)
-        self.root.protocol('WM_DELETE_WINDOW',self.close)
-        self.root.after(100,self.poll)
+            button=QPushButton(pick(self.language,zh,en)); button.clicked.connect(action); toolbar.addWidget(button)
+        toolbar.addStretch()
+        hint=QLabel(pick(self.language, '滚轮缩放；左键框选放大。视角锁定，仅重建可见表面；尺度未经过实物验证。',
+            'Wheel: zoom; left drag: zoom to region. Fixed view; observed surface only; scale unvalidated.'))
+        hint.setWordWrap(True); layout.addWidget(hint)
+        self.canvas=RenderCanvas(); self.canvas.setStyleSheet('background: #101720;')
+        self.canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        from PySide6.QtWidgets import QSizePolicy
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Ignored,QSizePolicy.Policy.Ignored)
+        layout.addWidget(self.canvas,1)
+        self.box=QRubberBand(QRubberBand.Shape.Rectangle,self.canvas)
+        self._rect_type=QRect
+        self.status=QLabel(str(self.output)); layout.addWidget(self.status)
+        self.timer=QTimer(self.root); self.timer.setInterval(100)
+        self.timer.timeout.connect(self.poll); self.timer.start()
 
     def request(self) -> None: self.dirty=True
     def reset(self) -> None: self.view=FixedViewport(); self.request()
     def zoom(self,factor: float,x: float=.5,y: float=.5) -> None: self.view.zoom_at(factor,x,y); self.request()
 
     def display_rect(self) -> tuple[Any, Any, Any, Any]:
-        cw,ch=max(1,self.canvas.winfo_width()),max(1,self.canvas.winfo_height())
+        cw,ch=max(1,self.canvas.width()),max(1,self.canvas.height())
         scale=min(cw/self.meta['width'],ch/self.meta['height'])
         w,h=max(1,round(scale*self.meta['width'])),max(1,round(scale*self.meta['height']))
         return (cw-w)/2,(ch-h)/2,w,h
 
     def normalized(self,event: Any) -> tuple[Any, Any]:
         x,y,w,h=self.display_rect()
-        return (event.x-x)/w,(event.y-y)/h
+        return (event.position().x()-x)/w,(event.position().y()-y)/h
 
     def press(self,event: Any) -> None:
         if self.future is not None or self.dirty: return
         x,y=self.normalized(event)
-        if 0<=x<=1 and 0<=y<=1: self.start=(x,y,event.x,event.y)
+        if 0<=x<=1 and 0<=y<=1:
+            self.start=(x,y,event.position().toPoint())
+            self.box.setGeometry(self._rect_type(self.start[2],self.start[2]))
+            self.box.show()
 
     def drag(self,event: Any) -> None:
         if self.start is None: return
-        if self.box: self.canvas.delete(self.box)
-        self.box=self.canvas.create_rectangle(self.start[2],self.start[3],event.x,event.y,outline='#50ecaa',width=2)
+        self.box.setGeometry(self._rect_type(self.start[2],event.position().toPoint()).normalized())
 
     def release(self,event: Any) -> None:
         if self.start is not None:
             self.view.select(*self.start[:2],*self.normalized(event)); self.request()
         self.start=None
-        if self.box: self.canvas.delete(self.box); self.box=None
+        self.box.hide()
 
     def wheel(self,event: Any) -> None:
         if self.future is not None or self.dirty: return
         x,y=self.normalized(event)
-        if 0<=x<=1 and 0<=y<=1 and event.delta:
-            self.zoom(1.2 if event.delta>0 else 1/1.2,x,y)
+        delta=event.angleDelta().y()
+        if 0<=x<=1 and 0<=y<=1 and delta:
+            self.zoom(1.2 if delta>0 else 1/1.2,x,y)
 
     def save(self) -> None:
         temporary=None
+        parent = getattr(self, 'root', None)
         try:
             payload=dict(model_sha256=self.meta['model_sha256'],source_fingerprint=self.meta['source_fingerprint'],
                          viewport=vars(self.view),source_photo=self.meta['source_photo'])
             write_json_strict(
                 self.output/'viewport.json', payload, durable=True, temporary_prefix='viewport_')
-            self.status.set(pick(self.language, '当前区域已保存，可随时回读','Current region saved and ready to load'))
+            self.status.setText(pick(self.language, '当前区域已保存，可随时回读','Current region saved and ready to load'))
         except (OSError,ValueError) as error:
-            self.messagebox.showerror('3DGS',pick(self.language, '区域保存失败，请检查模型目录是否可写。','Could not save region. Check that the model folder is writable.'))
+            self.messagebox.critical(parent,'3DGS',pick(self.language, '区域保存失败，请检查模型目录是否可写。','Could not save region. Check that the model folder is writable.'))
         finally:
             if temporary is not None:
                 try: temporary.unlink(missing_ok=True)
                 except OSError: pass
 
     def load(self) -> None:
+        parent = getattr(self, 'root', None)
         try:
             loaded=load_viewport(self.output/'viewport.json',self.meta)
         except FileNotFoundError:
-            self.messagebox.showinfo('3DGS',pick(self.language, '当前模型尚未保存区域。请先框选或缩放，再点击“保存区域”；以后可用“回读区域”恢复。新建模型不会自动继承旧模型的区域。',
+            self.messagebox.information(parent,'3DGS',pick(self.language, '当前模型尚未保存区域。请先框选或缩放，再点击“保存区域”；以后可用“回读区域”恢复。新建模型不会自动继承旧模型的区域。',
                 'No region has been saved for this model. Zoom or select a region, then click Save region. Load region restores it later. New models do not inherit old regions.'))
             return
         except ViewportModelMismatch:
-            self.messagebox.showwarning('3DGS',pick(self.language, '保存的区域属于其他模型，无法在当前模型回读。请打开原模型，或在当前模型重新保存区域。',
+            self.messagebox.warning(parent,'3DGS',pick(self.language, '保存的区域属于其他模型，无法在当前模型回读。请打开原模型，或在当前模型重新保存区域。',
                 'This region belongs to another model. Open that model or save a new region in the current model.'))
             return
         except (ValueError,KeyError,TypeError,OverflowError):
-            self.messagebox.showerror('3DGS',pick(self.language, '区域文件内容损坏或格式不正确。当前视图未改变，请重新选择并保存区域。',
+            self.messagebox.critical(parent,'3DGS',pick(self.language, '区域文件内容损坏或格式不正确。当前视图未改变，请重新选择并保存区域。',
                 'The region file is damaged or invalid. The current view is unchanged. Select and save the region again.'))
             return
         except OSError:
-            self.messagebox.showerror('3DGS',pick(self.language, '无法读取区域文件，请检查模型目录的访问权限。',
+            self.messagebox.critical(parent,'3DGS',pick(self.language, '无法读取区域文件，请检查模型目录的访问权限。',
                 'Cannot read the region file. Check access to the model folder.'))
             return
         self.view=loaded
         self.request()
-        self.status.set(pick(self.language, '已恢复保存的区域','Saved region restored'))
+        self.status.setText(pick(self.language, '已恢复保存的区域','Saved region restored'))
 
     def render(self,K: Any,w: int,h: int) -> Any:
         from femto.gsplat.scene_gsplat_guard import guard_cuda
@@ -216,31 +252,39 @@ class SingleViewer:
         return self.renderer.render(np.eye(4,dtype=np.float32),K,w,h)
 
     def poll(self) -> None:
+        parent = getattr(self, 'root', None)
+        from PySide6.QtGui import QImage, QPixmap
         if self.closed: return
         if self.future is not None and self.future.done():
             try:
                 result=self.future.result()
                 x,y,w,h=self.display_rect()
                 self.image=self.Image.fromarray(result)
-                self.photo=self.ImageTk.PhotoImage(self.image.resize((w,h),self.Image.Resampling.LANCZOS))
-                self.canvas.delete('render'); self.canvas.create_image(x,y,anchor='nw',image=self.photo,tags='render')
-                self.canvas.tag_lower('render')
-                self.status.set(f"{self.meta['gaussian_count']:,} Gaussian | {result.shape[1]}×{result.shape[0]} | {self.view.zoom:.2f}× | {self.output.name}")
+                pixels=np.ascontiguousarray(self.image.resize((w,h),self.Image.Resampling.LANCZOS))
+                image=QImage(pixels.data,w,h,pixels.strides[0],QImage.Format.Format_RGB888).copy()
+                self.photo=QPixmap.fromImage(image)
+                self.canvas.setPixmap(self.photo)
+                self.status.setText(f"{self.meta['gaussian_count']:,} Gaussian | {result.shape[1]}×{result.shape[0]} | {self.view.zoom:.2f}× | {self.output.name}")
             except Exception as error:
-                self.status.set(str(error)); self.dirty=False
-                self.messagebox.showerror('3DGS',str(error))
+                self.status.setText(str(error)); self.dirty=False
+                self.messagebox.critical(parent,'3DGS',str(error))
             self.future=None
         if self.dirty and self.future is None:
             self.dirty=False
             w,h=native_render_size(self.meta['width'],self.meta['height'])
             K=self.view.intrinsic(self.meta['K'],self.meta['width'],self.meta['height'],w,h)
             self.future=self.pool.submit(self.render,K,w,h)
-        self.root.after(100,self.poll)
+
+    def _shutdown(self) -> None:
+        if self.closed: return
+        self.closed=True; self.timer.stop()
+        self.pool.shutdown(wait=False,cancel_futures=True)
 
     def close(self) -> None:
-        self.closed=True; self.pool.shutdown(wait=False,cancel_futures=True); self.root.destroy()
+        self._shutdown(); self.root.close()
 
-    def run(self) -> None: self.root.mainloop()
+    def run(self) -> None:
+        self.root.show(); self.app.exec()
 
 
 def open_viewer(output: str | Path,language: str='zh') -> Any:
@@ -254,6 +298,8 @@ def open_viewer(output: str | Path,language: str='zh') -> Any:
 
 
 if __name__=='__main__':
+    from femto.paths import workspace_runtime_environment
+    os.environ.update(workspace_runtime_environment())
     import argparse
     parser=argparse.ArgumentParser(); parser.add_argument('output',nargs='?',type=Path)
     parser.add_argument('--lang',choices=['zh','en'],default='zh'); args=parser.parse_args()

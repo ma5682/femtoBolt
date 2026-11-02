@@ -1,6 +1,6 @@
 # ==== Python 虚拟环境与缓存 ====
-# 三套隔离环境由 setup_environment.cmd / setup_direct_gsplat_environment.cmd /
-# setup_3dgs_environment.cmd 重建，产品 gsplat 运行时另有 C:\FemtoGsplatRuntime 联接。
+# 当前采集/产品环境由 setup_environment.cmd / setup_direct_gsplat_environment.cmd
+# 重建，产品 gsplat 使用工作区专属 ASCII 目录；旧研究环境仍排除于提交。
 .venv/
 .venv-*/
 __pycache__/
@@ -39,3 +39,7 @@ Desktop.ini
 .idea/
 *.swp
 *~
+# Workspace maintenance ownership and retained restore transactions
+/.data_maintenance.lock
+/.data_restores/
+/.*.restore.*.partial/

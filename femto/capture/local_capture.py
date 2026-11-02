@@ -24,12 +24,13 @@ from femto.dataset.local_reference import calibration_identity, reference_proven
 from femto.tracking.local_stability_feedback import CandidateStability
 from femto.tracking.local_frame_selection import ViewSelector, SELECTION_POLICY
 from femto.tracking.local_frame_selection import LOCAL_RADIUS_M, LOCAL_ROTATION_DEG, local_workspace
+from femto.capture.local_capture_policy import MAX_ACCEPTED_VIEWS, capture_limit_policy
 
 TRACKER_OPTIONS = dict(feature_seed=False, keyframe_anchor=False, relocalization=False,
                        relocalization_window_s=15., relocalization_confirmations=2)
 
 class LocalCapture:
-    def __init__(self, camera, datasets, outputs, events, *, session_id=None, shutdown_event=None, cancel_event=None, tracker_options=None):
+    def __init__(self, camera, datasets, outputs, events, *, session_id=None, shutdown_event=None, cancel_event=None, tracker_options=None, initial_frame=None, scan_roi=None):
         self.tracker_options=dict(TRACKER_OPTIONS)
         if tracker_options:
             if set(tracker_options)-set(TRACKER_OPTIONS):raise ValueError('Unknown tracker option')
@@ -42,6 +43,16 @@ class LocalCapture:
         write_calibration(self.session, camera, camera.intrinsics)
         self.calibration = calibration_identity(self.session)
         self.reference_provenance = None
+        if scan_roi is not None:
+            if initial_frame is None:
+                raise ValueError('已选扫描范围缺少对应的首帧 RGB-D')
+            from femto.capture.scan_roi import prepare
+            checked = prepare(scan_roi['rect_norm'], initial_frame,
+                              camera.min_depth_mm, camera.max_depth_mm)
+            if checked != scan_roi:
+                raise ValueError('扫描范围与待采集首帧不一致，请重新确认')
+            write_json(self.session/'derived'/'scan_roi.json', checked)
+        self.scan_roi = copy.deepcopy(scan_roi)
         # Snapshot only; background code never calls the camera SDK.
         self.camera = SimpleNamespace(metadata=copy.deepcopy(camera.metadata), intrinsics=camera.intrinsics,
             min_depth_mm=camera.min_depth_mm, max_depth_mm=camera.max_depth_mm)
@@ -50,6 +61,9 @@ class LocalCapture:
             300, 0, 0, False, 'moving', camera.min_depth_mm, camera.max_depth_mm)
         self.outputs, self.events = Path(outputs), events
         self.queue = queue.Queue(maxsize=1)
+        from femto.capture.scan_session import copy_frame
+        self._initial_frame = ((copy_frame(initial_frame, include_native_depth=False), time.monotonic())
+                               if initial_frame is not None else None)
         self.lock = threading.Lock()
         self.closing = threading.Event()
         self.processing_cancel = cancel_event if cancel_event is not None else threading.Event()
@@ -58,17 +72,21 @@ class LocalCapture:
         self.reconstruct = False
         self.paused = False
         self.requested = None
+        self.request_task_batch = None
         self.stability = CandidateStability(self.session_id)
         self.view_selector = ViewSelector()
         self._last_stability_event = None
         self.dropped = 0
         self.last_submitted_received = None
         self.finished_at = None
+        self.finish_reason = None
         self.abort_reason = None
         self.abort_detail = None
         self.records, self.accepted = [], []
         self.preview_worker = None
         self.processing_job = None
+        from femto.capture.local_checkpoint import CaptureCheckpoints
+        self.checkpoints = CaptureCheckpoints(self)
         self.thread = threading.Thread(target=self._run, name='FemtoLocalCapture', daemon=False)
         self.thread.start()
 
@@ -100,9 +118,20 @@ class LocalCapture:
             self.dropped += 1
 
     def request(self) -> None:
+        if len(self.accepted) >= MAX_ACCEPTED_VIEWS:
+            self.emit('notice', key='accepted_view_limit')
+            return False
+        checkpoints=getattr(self,'checkpoints',None)
+        stop=checkpoints.stop_reason if checkpoints is not None else None
+        if stop:
+            self.emit('notice',key=stop)
+            return False
+        from femto.capture.capture_exchange import current_tasks
+        task=current_tasks(self)
         with self.lock:
             if not self.paused and not self.closing.is_set() and self.requested is None:
                 self.requested = time.monotonic()
+                self.request_task_batch = task
                 if hasattr(self,'stability'):self.stability.request(self.requested)
             self._emit_stability()
 
@@ -123,7 +152,14 @@ class LocalCapture:
             self._emit_stability()
         self.emit('pause', paused=value)
 
-    def finish(self, reconstruct: bool=True) -> None:
+    def check_current(self):
+        """Request a frozen stage model without ending the capture session."""
+        return self.checkpoints.request()
+
+    def cancel_check(self):
+        self.checkpoints.cancel_stage()
+
+    def finish(self, reconstruct: bool=True, *, reason=None) -> None:
         # Accepted prefix only: queued frames and requests are not accepted on stop.
         with self.lock:
             if not reconstruct and not self.successful_model_published:
@@ -131,11 +167,14 @@ class LocalCapture:
             if self.closing.is_set():
                 return
             self.reconstruct = reconstruct
+            self.finish_reason = reason or ('user_finish' if reconstruct else 'cancelled')
             self.requested = None
             if hasattr(self,'stability'):self.stability.reset('ended' if reconstruct else 'cancelled')
             self._emit_stability()
             self.finished_at = time.monotonic()
             self.closing.set()
+            if reconstruct:
+                self.emit('finishing', reason=self.finish_reason)
 
     def abort(self, reason: str, detail: Any=None) -> None:
         """A device failure is an error, not a user cancellation or new origin."""
@@ -151,6 +190,9 @@ class LocalCapture:
             self.closing.set()
 
     def _select(self, record, received, prepared=None):
+        if len(self.accepted) >= MAX_ACCEPTED_VIEWS:
+            record['selection'] = dict(state='quality_insufficient', reason='accepted_view_limit')
+            return False
         record['selection'] = dict(state='quality_insufficient', reason=record.get('rejection_reason', 'untrusted_pose'))
         if record['state'] != 'tracking':
             return False
@@ -244,8 +286,13 @@ class LocalCapture:
                 if self._cancelled():
                     self.finish(False)
                     break
+                self.checkpoints.poll(tracker)
                 try:
-                    frame, received = self.queue.get(timeout=.1)
+                    if self._initial_frame is not None:
+                        frame, received = self._initial_frame
+                        self._initial_frame = None
+                    else:
+                        frame, received = self.queue.get(timeout=.1)
                 except queue.Empty:
                     with self.lock:
                         if self.requested is not None and time.monotonic()-self.requested > 3:
@@ -297,6 +344,7 @@ class LocalCapture:
                 if record['state']=='relocalizing':
                     with self.lock:
                         self.requested=None;self.stability.reset('reset','relocalizing')
+                request_task=copy.deepcopy(self.request_task_batch) if self.requested is not None else None
                 selected = not stopped and not self._cancelled() and self._select(record, received, tracker.previous)
                 record['selected_for_fusion'] = selected
                 with self.lock:
@@ -307,9 +355,20 @@ class LocalCapture:
                     if not self.accepted:
                         self.reference_provenance = reference_provenance(self.session_id, record, self.calibration)
                         write_json(self.session/'derived'/'local_reference.json', self.reference_provenance)
+                        if self.scan_roi is not None:
+                            self.scan_roi.update(status='bound', session_id=self.session_id,
+                                                 reference_frame_id=record['frame_id'],
+                                                 calibration_sha256=self.calibration['sha256'])
+                            write_json(self.session/'derived'/'scan_roi.json', self.scan_roi)
                     self.accepted.append(record)
                     tracker.add_keyframe(tracker.previous,record['T_WC'],index)
                 record['calibration_sha256'] = self.calibration['sha256']
+                if request_task is not None:
+                    from femto.capture.capture_exchange import record_manual_observation
+                    exchange=record_manual_observation(self,request_task,record)
+                    self.emit('supplement_verified',verification=exchange)
+                if self.requested is None:
+                    self.request_task_batch=None
                 record['reference_capture_timestamp_us'] = (
                     self.reference_provenance['capture_timestamp_us'] if self.reference_provenance else None)
                 record['status_updated_at']=datetime.now(timezone.utc).isoformat()
@@ -318,14 +377,22 @@ class LocalCapture:
                 if selected:
                     self.preview_worker.submit(record)
                 self.emit('pose', record=record, accepted=len(self.accepted))
+                if selected and len(self.accepted) >= MAX_ACCEPTED_VIEWS:
+                    # The matching RGB-D write and tracking journal are durable.
+                    # Stop before consuming another queued frame; the normal
+                    # final-pose, reconstruction and publication gates still run.
+                    self.finish(True, reason='accepted_view_limit')
+                if self.scan_roi is not None and not self.accepted:
+                    raise ValueError('scan_roi_reference_rejected')
                 if tracker.reference_id is None and time.monotonic()-self.scan.started > 15:
                     raise ValueError('origin_timeout')
                 if tracker.lost:
                     self.closing.set()
                 if time.monotonic()-self.scan.started >= 300:
                     self.emit('notice', key='session_limit')
-                    self.finish(True)
+                    self.finish(True, reason='session_limit')
             self.finished_at = self.finished_at or time.monotonic()
+            self.checkpoints.close()
             self.preview_worker.close()
             finalize_scan(self.scan, self.camera)
             finalized = True
@@ -352,6 +419,8 @@ class LocalCapture:
                 self.outputs, self.session_id, self._cancelled,
                 progress=lambda quality: self.emit('processing', quality=quality))
             result, summary = self.processing_job.run()
+            from femto.capture.final_assessment import assess_final
+            completion = assess_final(self, result)
             # Short commit is serialized with finish(False). Once committed, a
             # late cancellation cannot turn a completed publication into failure.
             with self.lock:
@@ -360,11 +429,13 @@ class LocalCapture:
                     raise StageStopped('cancelled', 'Cancelled before publication', self.processing_job.stats)
                 publish_result(result, self.outputs, self.session_id, cancelled=self._cancelled)
                 self.successful_model_published = True
-            self.emit('finished', result=str(result), summary=summary, quality=self.processing_job.report)
+            self.emit('finished', result=str(result), summary=summary, quality=self.processing_job.report,
+                      acquisition_completion=completion)
         except Exception as error:
             self._handle_run_failure(error,tracker,raw_writer,finalized,report_written,finalize_scan)
         finally:
             self.closing.set()
+            self.checkpoints.close()
             if raw_writer is not None:
                 raw_writer.close()
             if self.preview_worker is not None:
@@ -431,6 +502,7 @@ class LocalCapture:
             local_workspace_radius_m=LOCAL_RADIUS_M,
             local_workspace_rotation_deg=LOCAL_ROTATION_DEG,
             selection_policy=SELECTION_POLICY,
+            capture_limit=capture_limit_policy(), finish_reason=getattr(self, 'finish_reason', None),
             latency_ms=latencies, reference_provenance=self.reference_provenance,
             calibration=self.calibration, duration_s=elapsed,
             processed_fps=len(self.records)/elapsed if elapsed > 0 else None,
@@ -519,6 +591,7 @@ class LocalCapture:
                 measured_only=True, local_workspace_radius_m=LOCAL_RADIUS_M,
                 local_workspace_rotation_deg=LOCAL_ROTATION_DEG,
                 selection_policy=SELECTION_POLICY,
+                capture_limit=capture_limit_policy(), finish_reason=getattr(self, 'finish_reason', None),
                 tracking_algorithm='local-evidence-tracker-v2',
                 tracking_options=dict(getattr(self, 'tracker_options', TRACKER_OPTIONS)),
                 tracking_report=str(self.session/'derived'/'local_capture_report.json')))

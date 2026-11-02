@@ -83,3 +83,15 @@
 
 - Niantic SPZ 已完成本机引入验证：`setup_spz_environment.cmd` 从固定官方 MIT tag v3.0.0（commit `5bf2945de1a003cee07133b1e495fe9c6ffdc7e7`）的本机校验归档构建，实际 Python distribution 为 `spz==1.1.0`。Windows 安装脚本固定 `/utf-8` 编译选项、zlib 1.3.1、zstd 1.5.6 和 `nanobind==3.0.1`；nanobind/`tsl::robin-map`、Zstandard 旧解码器与其 libdivsufsort-lite 构建组成，以及 `load-spz.cc` 的 Adobe MIT 版权均已单独登记。脚本使用 `--no-deps` 安装最终 wheel，避免改动锁定的 NumPy 2.2.6；不再复制 torchvision 的 zlib 1.2.13，而是只部署并核验固定源码构建的 zlib 1.3.1。2026-09-05 最终构建日志为 `outputs/spz_setup_20260905_0345.log`：wheel SHA-256 `9cd40ecdeceadc8fa68d23c280196bbb5b56fac443b71bbd6bd0bb913f4951e5`，安装扩展 SHA-256 `0b9dfdfbc8d53f882d861b12e7ad014efefd8d932ae62a6c3eab8cad41e7a59e`，运行时 zlib DLL SHA-256 `2f08f389724c8a05c672eeb3dec1ac1ff7f589d133d4011d807e489bee522baa`。随后既有训练 PLY 再次转换，官方 `load_spz` 回读 12,781 个 Gaussian，与 PLY 一致，且 `training_report.json` / `model_manifest.json` 均有非空 `model_spz` 与 `spz_error=null`（证据见 `outputs/direct_gsplat_20260904_140102/model/`、`training_report.json` 和 `outputs/spz_export_verify_20260905_0350.log`）。当前精确安装产物已锁定，但 PEP 517 的 `scikit-build-core>=0.10` / `python_devtools` 构建工具尚未做完整离线 wheel 锁定，脚本也尚未在每次构建前从归档重建干净源码树；因此不能把它称为发布级可复现构建，仍需在正式发布前补齐。后续仍需按发布目标完成法律/再分发复核。
 - Web 3DGS renderer：选型时优先 Apache-2.0、MIT 或 BSD；同时核对训练 PLY、压缩格式和 WASM 依赖的许可证。
+## PySide6 / Qt for Python 6.11.2
+
+The native workstation UI uses `PySide6`, `PySide6_Addons`,
+`PySide6_Essentials` and `shiboken6`, all pinned to 6.11.2. Their wheel
+metadata declares `LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`; the Qt
+commercial-license reference shipped in the wheels is preserved under
+`licenses/pyside6/`. Review the applicable LGPL/GPL or Qt commercial terms
+before distributing the product. This project does not bundle QFluentWidgets.
+
+## VTK 9.5.2
+
+交互式三维视口使用未修改的官方 VTK Windows wheel（Python 3.12 采集环境和 Python 3.10 产品查看运行时），固定 `vtk==9.5.2`；公开 Qt 集成接口为 `QVTKRenderWindowInteractor`，Qt binding 为 PySide6。VTK 为 BSD-3-Clause，源码、wheel 来源及 SHA-256 见 [`licenses/vtk/README.md`](licenses/vtk/README.md)，wheel 许可证原文见 [`licenses/vtk/LICENSE`](licenses/vtk/LICENSE)。分发保留版权、许可证及适用的第三方声明。VTK 的 matplotlib 传递依赖保留在各环境的解析清单中；本项目不修改上游代码，不以此声明发布验收通过。

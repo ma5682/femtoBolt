@@ -78,35 +78,16 @@ class RouteMotionTests(unittest.TestCase):
         player.reset();self.assertEqual(player.position()['progress'],0)
 
 class MotionWindowTests(unittest.TestCase):
-    def test_real_window_scrub_chain_and_controls(self):
-        import tkinter as tk
-        from tkinter import ttk
-        from types import SimpleNamespace
-        from femto.planning.path_presentation import show_presentation
-        root=tk.Tk();root.withdraw()
-        sample=lambda x,y:dict(pixel=[x,y],xyz_m=[x/1000,y/1000,.5])
-        plan=dict(row_step_px=10,segments=[[sample(10,10),sample(30,10)],[sample(60,50),sample(80,50)]])
-        model=SimpleNamespace(rgb=np.zeros((100,100,3),np.uint8),projection=SimpleNamespace(ids=np.zeros((100,100),int)))
-        try:
-            show_presentation(root,model,dict(triangle_indices=[0]),plan)
-            window=root._route_demo_window;root.update()
-            window.seek_progress(75);root.update()
-            self.assertEqual(window.motion_state['chain_index'],1)
-            np.testing.assert_allclose(window.motion_state['xyz_m'],[.07,.05,.5])
-            self.assertFalse(window.motion_player.running)
-            def children(w):
-                for c in w.winfo_children():
-                    yield c
-                    yield from children(c)
-            controls={w.cget('text'):w for w in children(window) if isinstance(w,ttk.Button)}
-            controls['播放'].invoke();self.assertTrue(window.motion_player.running)
-            controls['暂停'].invoke();self.assertFalse(window.motion_player.running)
-            controls['复位'].invoke();self.assertEqual(window.motion_state['progress'],0)
-            combo=next(w for w in children(window) if isinstance(w,ttk.Combobox) and '第 1 段' in w.cget('values'))
-            combo.set('第 2 段');combo.event_generate('<<ComboboxSelected>>');root.update()
-            self.assertEqual(window.motion_state['chain_index'],1)
-            self.assertEqual(window.motion_player.distance,0)
-            window.close_demo()
-        finally:root.destroy()
+    """Placeholder for the retired motion-window tests.
 
-if __name__=='__main__':unittest.main()
+    Motion playback is now covered by the backend ``MotionPlayer`` tests
+    above and the Qt presentation tests.  Keep the class name for historical
+    test selection compatibility while making the module valid Python after
+    removing the obsolete widget fixture.
+    """
+
+    pass
+
+
+if __name__ == '__main__':
+    unittest.main()

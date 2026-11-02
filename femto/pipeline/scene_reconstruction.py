@@ -21,6 +21,8 @@ from femto.geometry.scene_gaussian import export_gaussian_initialization
 from femto.geometry.single_frame_quality import clean_depth, compare_geometry, evidence_manifest
 from femto.geometry.single_frame_mesh import build_pixel_mesh, export_pixel_mesh
 from femto.geometry.multiview_texture import export_multiview_texture
+from femto.geometry.reconstruction_reuse import ReconstructionReuse, depth_jump_mask, texture_view_indices
+from femto.geometry.cloud_layer_consistency import count_second_sheet_points
 from femto.depth.depth_quality import process_depth_quality
 
 
@@ -75,13 +77,10 @@ def _write_line_set_ascii(path: Path, trajectory: o3d.geometry.LineSet) -> None:
 
 def _cloud_mesh_consistency(cloud,mesh):
     """Internal layer-consistency diagnostics; never a physical-accuracy claim."""
-    points=np.asarray(cloud.points);normals=np.asarray(cloud.normals)
+    points=np.asarray(cloud.points)
     scene=o3d.t.geometry.RaycastingScene();scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
     distances=scene.compute_distance(o3d.core.Tensor(points.astype(np.float32))).numpy()
-    tree=o3d.geometry.KDTreeFlann(cloud);second=0
-    for index,point in enumerate(points):
-        count,ids,_=tree.search_radius_vector_3d(point,.01)
-        if count>1 and np.any(np.abs((points[np.asarray(ids)]-point)@normals[index])>.004):second+=1
+    second=count_second_sheet_points(cloud)
     return dict(fused_to_mesh_median_mm=float(np.median(distances)*1000),
         fused_to_mesh_p90_mm=float(np.percentile(distances,90)*1000),
         fused_to_mesh_p95_mm=float(np.percentile(distances,95)*1000),
@@ -127,21 +126,13 @@ def _prepare_single_frame_evidence(dataset,output,frame,T_WC,color,depth,filled_
 
 
 def _frame_metrics(frame,T_WC,depth,filtered_depth,camera_point_count,accumulated,
-                   accumulated_before,voxel_m,single_frame_quality,per_frame_metrics):
+                   accumulated_before,voxel_m,single_frame_quality,per_frame_metrics,depth_jump=None):
     accumulated_before_downsample=None;accumulated_downsampled=False
     # Bound RAM for long 1080p captures while keeping raw RGB-D immutable.
     if not single_frame_quality and len(accumulated.points) > 1_000_000:
         accumulated_before_downsample=int(len(accumulated.points));accumulated_downsampled=True
         accumulated = accumulated.voxel_down_sample(voxel_m)
-    edge=np.zeros(filtered_depth.shape,bool)
-    valid_h=(filtered_depth[:,1:]>0)&(filtered_depth[:,:-1]>0)
-    valid_v=(filtered_depth[1:]>0)&(filtered_depth[:-1]>0)
-    horizontal_jump=valid_h&(np.abs(filtered_depth[:,1:].astype(np.int32)-filtered_depth[:,:-1].astype(np.int32))>30)
-    vertical_jump=valid_v&(np.abs(filtered_depth[1:].astype(np.int32)-filtered_depth[:-1].astype(np.int32))>30)
-    edge[:,1:] |= horizontal_jump
-    edge[:,:-1] |= horizontal_jump
-    edge[1:] |= vertical_jump
-    edge[:-1] |= vertical_jump
+    edge = depth_jump_mask(filtered_depth) if depth_jump is None else depth_jump
     per_frame_metrics.append({
         "frame": int(frame["frame"]),
         "valid_depth_ratio": float(np.count_nonzero(filtered_depth) / filtered_depth.size),
@@ -219,6 +210,7 @@ def reconstruct_scene(
     point_stride: int = 1,
     single_frame_quality: bool = False,
     local_post_component_filter: bool = True,
+    geometry_observer=None,
 ) -> dict[str, Any]:
     dataset = dataset.resolve()
     output = output.resolve()
@@ -254,6 +246,8 @@ def reconstruct_scene(
     per_frame_metrics: list[dict[str, Any]] = []
     depth_quality_frames: list[dict[str, Any]] = []
     local_prepared_depths = [] if local_measured and image_scale == 1.0 else None
+    reconstruction_reuse = ReconstructionReuse(dataset,
+        texture_view_indices(len(frames)) if not single_frame_quality and len(frames) > 1 else ())
     integrations_per_frame = []
     initial_display_subset = None
     remap_x,remap_y=np.meshgrid(np.arange(expected_width),np.arange(expected_height))
@@ -270,8 +264,7 @@ def reconstruct_scene(
         nearest_neighbour_affected_fraction=float((expected_width*expected_height-unique_source)/(expected_width*expected_height)))
     for ordinal, (frame, T_WC) in enumerate(zip(frames, poses)):
         camera_point_count=None;accumulated_before=None;accumulated_before_downsample=None;accumulated_downsampled=False
-        color = imread_unicode(dataset / frame["rgb"], cv2.IMREAD_COLOR)
-        depth = imread_unicode(dataset / frame["depth"], cv2.IMREAD_UNCHANGED)
+        color, depth = reconstruction_reuse.load_rgbd(ordinal, frame, (expected_height, expected_width))
         if color.shape[:2] != (expected_height, expected_width) or depth.shape != (expected_height, expected_width):
             raise ValueError(f"Frame {frame['frame']} dimensions do not match calibration")
         if depth.dtype != np.uint16:
@@ -321,8 +314,11 @@ def reconstruct_scene(
                 filled_depth,depth_confidence,map_x,map_y,K,image_scale,depth_min_m,depth_max_m,
                 local_measured,local_prepared_depths,integrations_per_frame,volume,point_stride,
                 ordinal,accumulated,initial_display_subset)
+        depth_jump = depth_jump_mask(filtered_depth)
+        if local_prepared_depths is not None:
+            reconstruction_reuse.remember_jump(ordinal, filtered_depth, depth_jump)
         accumulated = _frame_metrics(frame,T_WC,depth,filtered_depth,camera_point_count,
-            accumulated,accumulated_before,voxel_m,single_frame_quality,per_frame_metrics)
+            accumulated,accumulated_before,voxel_m,single_frame_quality,per_frame_metrics,depth_jump)
 
     geometry = _finalize_geometry(SimpleNamespace(
         dataset=dataset,output=output,frames=frames,poses=poses,voxel_m=voxel_m,
@@ -334,7 +330,9 @@ def reconstruct_scene(
         map_x=map_x,map_y=map_y,K=K,expected_width=expected_width,
         expected_height=expected_height,depth_min_m=depth_min_m,depth_max_m=depth_max_m,
         local_prepared_depths=local_prepared_depths,
+        reconstruction_reuse=reconstruction_reuse,
         local_post_component_filter=local_post_component_filter,manifest=manifest,
+        geometry_observer=geometry_observer,
         initial_display_subset=initial_display_subset,vertex_uv=vertex_uv if single_frame_quality else None,
         pixel_mesh_report=pixel_mesh_report if single_frame_quality else None,
         raw_cloud=raw_cloud if single_frame_quality else None,
@@ -380,11 +378,13 @@ def _finalize_geometry(s):
     mesh = s.mesh
     if not s.single_frame_quality:
         mesh = s.volume.extract_triangle_mesh()
+        if getattr(s, 'geometry_observer', None):s.geometry_observer('tsdf_extracted', mesh)
         mesh.remove_degenerate_triangles()
         mesh.remove_duplicated_triangles()
         mesh.remove_duplicated_vertices()
         mesh.remove_non_manifold_edges()
         mesh.remove_unreferenced_vertices()
+        if getattr(s, 'geometry_observer', None):s.geometry_observer('topology_cleaned', mesh)
         if len(mesh.triangles):
             labels, counts, _ = mesh.cluster_connected_triangles()
             counts_array = np.asarray(counts)
@@ -394,6 +394,7 @@ def _finalize_geometry(s):
                 mesh.remove_triangles_by_mask(~keep[labels_array])
                 mesh.remove_unreferenced_vertices()
             mesh.compute_vertex_normals()
+        if getattr(s, 'geometry_observer', None):s.geometry_observer('initial_components_filtered', mesh)
     if not len(mesh.triangles):
         shutil.rmtree(s.output)
         raise ValueError("TSDF extraction produced an empty mesh")
@@ -402,7 +403,8 @@ def _finalize_geometry(s):
         from femto.local.local_geometry import retain_observed_triangles
         local_support = retain_observed_triangles(mesh, s.dataset, s.frames, s.poses,
             (s.map_x, s.map_y, s.K, s.expected_width, s.expected_height), s.depth_min_m, s.depth_max_m,
-            prepared_depths=s.local_prepared_depths)
+            prepared_depths=s.local_prepared_depths,reconstruction_reuse=s.reconstruction_reuse)
+        if getattr(s, 'geometry_observer', None):s.geometry_observer('measured_support_filtered', mesh)
         if s.local_post_component_filter:
             from femto.local.local_geometry import filter_small_components
             local_support['post_retain_component_filter']=filter_small_components(mesh)
@@ -410,6 +412,7 @@ def _finalize_geometry(s):
         else:
             local_support['post_retain_component_filter']=dict(applied=False,
                 reason='candidate_requires_same-source_comparison_before_default_adoption')
+        if getattr(s, 'geometry_observer', None):s.geometry_observer('final_components_filtered', mesh)
         if not len(mesh.triangles):
             raise ValueError('No measured-supported annotation surface remains')
         write_json(s.output / 'local_geometry.json', dict(
@@ -431,7 +434,8 @@ def _finalize_geometry(s):
             write_obj_glb=len(s.frames)<=1,
         )
         if len(s.frames) > 1:
-            mesh_exports = export_multiview_texture(mesh, s.dataset, s.frames, s.poses, s.output, mesh_exports)
+            mesh_exports = export_multiview_texture(mesh, s.dataset, s.frames, s.poses, s.output, mesh_exports,
+                reconstruction_reuse=s.reconstruction_reuse)
     quality_path = s.output / "single_frame_quality.json"
     if s.single_frame_quality:
         compare_geometry(s.raw_cloud, cloud, mesh, s.cleaning_report, quality_path)

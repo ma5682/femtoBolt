@@ -13,6 +13,7 @@ from typing import Any
 import zipfile
 
 from femto.gsplat.scene_gsplat_metrics import lpips_backbone_status
+from femto.paths import ASCII_GSPLAT_RUNTIME_ROOT
 
 
 ROOT = Path(__file__).resolve().parent
@@ -23,6 +24,7 @@ EXCLUDED_SCAN_DIRS = frozenset(
     {".venv", ".venv-3dgs", ".venv-gsplat", "outputs", "datasets", "references", "__pycache__"}
 )
 EXPECTED_PACKAGES = {
+    "vtk": "9.5.2",
     "pyorbbecsdk2": "2.1.2",
     "mediapipe": "1.0.1",
     "numpy": "2.2.6",
@@ -32,6 +34,7 @@ EXPECTED_PACKAGES = {
     "trimesh": "5.1.0",
 }
 REQUIRED_LICENSES = (
+    "vtk/LICENSE",
     "orbbec/OrbbecSDK_v2_LICENSE.txt",
     "orbbec/OrbbecSDK_v2_EULA.txt",
     "pyorbbecsdk2/LICENSE",
@@ -70,8 +73,9 @@ BLOCKED_IMPORT_PREFIXES = (
 )
 # Direct product 3DGS runtime (.venv-gsplat). Versions mirror requirements-gsplat-lock.txt
 # plus the separately installed official cu128 wheels.
-GSPLAT_RUNTIME_SITE_PACKAGES = ROOT / ".venv-gsplat" / "Lib" / "site-packages"
+GSPLAT_RUNTIME_SITE_PACKAGES = ASCII_GSPLAT_RUNTIME_ROOT / "Lib" / "site-packages"
 EXPECTED_GSPLAT_PACKAGES = {
+    "vtk": "9.5.2",
     "gsplat": "1.5.3",
     "torch": "2.7.1+cu128",
     "torchvision": "0.22.1+cu128",
@@ -94,15 +98,15 @@ SPZ_STATIC_COMPONENTS = {
         "tag": "v3.0.0",
         "commit": "5bf2945de1a003cee07133b1e495fe9c6ffdc7e7",
         "license": "MIT",
-        "source_archive": "C:/FemtoSpzDeps/spz-v3.0.0.zip",
+        "source_archive": str(ASCII_GSPLAT_RUNTIME_ROOT.parent / "spz-deps" / "spz-v3.0.0.zip"),
         "source_archive_sha256": "7f0f08ab144ecc940475b4edbfbb967d504aa2c78a1fbed17fd857bef8d95665",
     },
     "zlib": {
         "version": "1.3.1",
         "license": "zlib License",
-        "source_archive": "C:/FemtoSpzDeps/zlib-1.3.1.tar.gz",
+        "source_archive": str(ASCII_GSPLAT_RUNTIME_ROOT.parent / "spz-deps" / "zlib-1.3.1.tar.gz"),
         "source_archive_sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
-        "runtime_artifact": "C:/FemtoGsplatRuntime/Lib/site-packages/spz/zlib.dll",
+        "runtime_artifact": str(ASCII_GSPLAT_RUNTIME_ROOT / "Lib/site-packages/spz/zlib.dll"),
         "runtime_artifact_sha256": "2f08f389724c8a05c672eeb3dec1ac1ff7f589d133d4011d807e489bee522baa",
         "linkage": "dynamic runtime DLL built from the pinned source archive",
     },
@@ -110,7 +114,7 @@ SPZ_STATIC_COMPONENTS = {
         "version": "1.5.6",
         "tag": "v1.5.6",
         "license": "BSD-3-Clause",
-        "source_archive": "C:/FemtoSpzDeps/zstd-1.5.6.tar.gz",
+        "source_archive": str(ASCII_GSPLAT_RUNTIME_ROOT.parent / "spz-deps" / "zstd-1.5.6.tar.gz"),
         "source_archive_sha256": "8c29e06cf42aacc1eafc4077ae2ec6c6fcb96a626157e0593d5e82a34fd403c1",
         "linkage": "static library compiled into the SPZ extension",
     },
@@ -118,7 +122,7 @@ SPZ_STATIC_COMPONENTS = {
         "version": "bundled snapshot in zstd 1.5.6",
         "copyright": "Copyright (c) 2003-2008 Yuta Mori",
         "license": "MIT",
-        "source_archive": "C:/FemtoSpzDeps/zstd-1.5.6.tar.gz",
+        "source_archive": str(ASCII_GSPLAT_RUNTIME_ROOT.parent / "spz-deps" / "zstd-1.5.6.tar.gz"),
         "covered_by_component": "zstd",
         "linkage": "compiled as part of the pinned zstd static-library build",
     },
@@ -126,7 +130,7 @@ SPZ_STATIC_COMPONENTS = {
         "version": "bundled in zstd 1.5.6",
         "copyright": "Copyright (c) 2013-2016 Yann Collet",
         "license": "BSD-2-Clause",
-        "source_archive": "C:/FemtoSpzDeps/zstd-1.5.6.tar.gz",
+        "source_archive": str(ASCII_GSPLAT_RUNTIME_ROOT.parent / "spz-deps" / "zstd-1.5.6.tar.gz"),
         "covered_by_component": "zstd",
         "linkage": "legacy decoder sources are compiled into the pinned zstd static-library build",
     },
@@ -135,7 +139,7 @@ SPZ_STATIC_COMPONENTS = {
         "tag": "v3.0.1",
         "commit": "db4827f06f6f1680e5d4004c95fc8d69299dba8b",
         "license": "BSD-3-Clause",
-        "build_artifact": "C:/FemtoSpzDeps/nanobind-3.0.1-py3-none-any.whl",
+        "build_artifact": str(ASCII_GSPLAT_RUNTIME_ROOT.parent / "spz-deps" / "nanobind-3.0.1-py3-none-any.whl"),
         "build_artifact_sha256": "4b49491fe8bf483a5e0342125b8fe56237e490ba642c7e296170b8cd256a7764",
     },
     "robin-map": {

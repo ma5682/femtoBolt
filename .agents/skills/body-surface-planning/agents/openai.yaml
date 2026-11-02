@@ -1,0 +1,4 @@
+interface:
+  display_name: "人体体表扫描与规划"
+  short_description: "设计全身扫描、部位定位和医师区域规划交互，并检查与改造现有项目"
+  default_prompt: "使用 $body-surface-planning 检查当前项目，结合全身扫描到局部区域规划的流程，给出医师交互与实现建议。"

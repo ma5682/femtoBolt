@@ -112,21 +112,3 @@ class DepthErrorDebugTests(TestCase):
             self.assertTrue(error['after_rejection']['passed'])
             data.export_overview(output/'debug.png')
             self.assertTrue((output/'debug.png').is_file())
-
-    def test_tk_viewer_switches_all_modes_and_zoom(self):
-        import tkinter as tk
-        with TemporaryDirectory() as td:
-            output = Path(td)/'derived'
-            process_depth_quality(self.source(),250,2210,output)
-            root = tk.Tk(); root.withdraw()
-            try:
-                viewer = DepthDebugViewer(root,output)
-                root.update()
-                for mode in MODES:
-                    viewer.set_mode(mode)
-                    self.assertEqual(viewer.mode.get(),mode)
-                    self.assertEqual(len(viewer.canvas.find_all()),1)
-                viewer.zoom_to(1)
-                self.assertEqual(viewer.photo.width(),80)
-            finally:
-                root.destroy()
