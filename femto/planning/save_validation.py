@@ -2,9 +2,12 @@
 
 Native export must complete its independent target replay and publication before
 portable export can consume this receipt. Coverage proofs keep their own existing
-verification path. This session retains digests only, never models or arrays.
+verification path. This session retains digests and scoped identity metadata,
+never models or arrays.
 """
 from __future__ import annotations
+from femto.performance_detail import observed
+from femto.operation_diagnostics import diagnosed
 
 from contextlib import contextmanager
 from threading import get_ident
@@ -18,6 +21,7 @@ class SaveValidationSession:
         self._state = 'new'
         self._binding = None
         self._thread = None
+        self._portable_target_id = None
 
     def __enter__(self):
         if self._state != 'new':
@@ -32,6 +36,7 @@ class SaveValidationSession:
     def close(self):
         self._binding = None
         self._thread = None
+        self._portable_target_id = None
         self._state = 'closed'
 
     def _require(self, state):
@@ -40,6 +45,8 @@ class SaveValidationSession:
             raise ValueError('保存验证会话已失效或不属于当前保存任务')
 
     @staticmethod
+    @diagnosed('save.bind_and_rehash_inputs')
+    @observed('save.bind_and_rehash_inputs')
     def _capture(model, region, plan, ledger, check):
         check()
         context = plan['planning_context']
@@ -107,6 +114,9 @@ class SaveValidationSession:
         self._require('published')
         try:
             self._state = 'consuming'
+            # The portable writer may reuse only this exact validated target.
+            # Retain its identity, not its arrays, within this one-use scope.
+            self._portable_target_id = id(ledger)
             self.recheck(model, region, plan, ledger, check)
             yield self
         finally:
@@ -115,6 +125,8 @@ class SaveValidationSession:
     def recheck(self, model, region, plan, ledger, check):
         self._require('consuming')
         try:
+            if id(ledger) != self._portable_target_id:
+                raise ValueError('保存目标不属于当前验证会话')
             if self._binding != self._capture(model, region, plan, ledger, check):
                 raise ValueError('保存期间输入已变化，本次验证会话失效')
         except BaseException:

@@ -413,18 +413,22 @@ class FemtoSceneViewer(AnnotationUI):
         self.cloud = read_geometry_safe(self.reconstruction / "scene_fused_points_m.ply", mesh=False)
         raw_path = self.reconstruction / "scene_raw_points_m.ply"
         self.raw_cloud = read_geometry_safe(raw_path, mesh=False) if raw_path.is_file() else None
-        self.gaussian = read_geometry_safe(
+        from femto.reconstruction_profile import LOCAL_ROUTE_PROFILE
+        local_route = self.report.get('artifact_profile') == LOCAL_ROUTE_PROFILE
+        self.gaussian = (o3d.geometry.PointCloud() if local_route else read_geometry_safe(
             self.reconstruction / "gaussian" / "gaussian_init_preview.ply", mesh=False
-        )
+        ))
         if len(self.mesh.vertices) == 0 or len(self.mesh.triangles) == 0:
             raise ValueError("Reconstruction Mesh is empty")
-        if len(self.cloud.points) == 0 or len(self.gaussian.points) == 0:
+        if len(self.cloud.points) == 0 or (not local_route and len(self.gaussian.points) == 0):
             raise ValueError("Reconstruction point cloud or Gaussian preview is empty")
         # The normal shader needs per-point normals; estimating them here only
         # affects the in-memory display copy, never the exported PLY.
         for cloud in (self.cloud, self.gaussian):
-            if not cloud.has_normals():
+            if not local_route and not cloud.has_normals():
                 cloud.estimate_normals()
+        self.cloud_shading_keys = tuple(key for key in CLOUD_SHADING_KEYS
+                                       if key != 'normals' or self.cloud.has_normals())
 
         self.camera_path = camera_path_from_report(self.report)
         self.capture_poses, self.capture_intrinsic = load_capture_poses(self.report)
@@ -517,12 +521,11 @@ class FemtoSceneViewer(AnnotationUI):
             raw_material.point_size = 2.0
             self.materials["raw_cloud"] = raw_material
             self.objects.add_geometry("raw_cloud", self.raw_cloud, raw_material, visible=False)
-        self.objects.add_geometry(
-            "gaussian",
-            self.gaussian,
-            self.materials["gaussian"],
-            visible=self.scene_visible["gaussian"],
-        )
+        if len(self.gaussian.points):
+            self.objects.add_geometry(
+                "gaussian", self.gaussian, self.materials["gaussian"],
+                visible=self.scene_visible["gaussian"],
+            )
         if self.camera_path is not None:
             self.objects.add_geometry(
                 "camera_path",
@@ -720,9 +723,9 @@ class FemtoSceneViewer(AnnotationUI):
             self.mesh_combo.selected_index = MESH_SHADING_KEYS.index(self.mesh_shading)
             self.cloud_shading_label.text = self._t("viewer.cloud_shading")
             self.cloud_combo.clear_items()
-            for key in CLOUD_SHADING_KEYS:
+            for key in self.cloud_shading_keys:
                 self.cloud_combo.add_item(self._t(f"viewer.cloud_mode.{key}"))
-            self.cloud_combo.selected_index = CLOUD_SHADING_KEYS.index(self.cloud_shading)
+            self.cloud_combo.selected_index = self.cloud_shading_keys.index(self.cloud_shading)
             self.axes_label.text = self._t("viewer.show_axes")
             self.ground_label.text = self._t("viewer.show_ground")
             self.grid_label.text = self._t("viewer.show_grid")
@@ -950,9 +953,9 @@ class FemtoSceneViewer(AnnotationUI):
         )
 
     def _on_cloud_shading_changed(self, _text: str, index: int) -> None:
-        if self._updating_ui or not 0 <= index < len(CLOUD_SHADING_KEYS):
+        if self._updating_ui or not 0 <= index < len(self.cloud_shading_keys):
             return
-        self.cloud_shading = CLOUD_SHADING_KEYS[index]
+        self.cloud_shading = self.cloud_shading_keys[index]
         previous = self._updating_ui
         self._updating_ui = True
         self.cloud_combo.selected_index = index

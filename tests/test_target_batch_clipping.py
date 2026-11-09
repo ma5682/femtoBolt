@@ -29,7 +29,7 @@ class TargetBatchClippingTests(unittest.TestCase):
         rng = np.random.default_rng(261026)
         k = np.array([[1.7, 0., .2], [0., 1.3, -.4], [0., 0., 1.]])
         for scale in (1e-20, 1e-8, 1., 1e8, 1e20):
-            for size in (0, 1, 7, 8, 31, 64):
+            for size in (0, 1, 7, 8, 31, 64, 65, 127, 128, 255, 256):
                 with self.subTest(scale=scale, size=size):
                     triangles = rng.uniform(-2, 2, (size, 3, 3)) * scale
                     triangles[:, :, 2] = rng.uniform(.5, 2, (size, 3)) * scale

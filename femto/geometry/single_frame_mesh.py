@@ -15,7 +15,44 @@ from femto.geometry.fusion import _native_cache_path
 from femto.io_utils import write_json
 
 
-def build_pixel_mesh(depth_mm, color_bgr, intrinsic, distortion, T_WC):
+def build_pixel_mesh(depth_mm, color_bgr, intrinsic, distortion, T_WC, *, depth_min_mm=250, depth_max_mm=2210):
+    mesh, uv, report, _ = _build_pixel_surface(depth_mm, color_bgr, intrinsic, distortion, T_WC,
+        depth_min_mm=depth_min_mm, depth_max_mm=depth_max_mm, include_cloud=False)
+    return mesh, uv, report
+
+
+def build_pixel_mesh_and_cloud(depth_mm, color_bgr, intrinsic, distortion, T_WC, *,
+                               depth_min_mm=250, depth_max_mm=2210):
+    """Return mesh/UV/report and all measured points from one backprojection.
+
+    The cloud retains row-major pixel order, including isolated measured points
+    that cannot form a triangle. Both outputs use the same calibrated rays.
+    """
+    return _build_pixel_surface(depth_mm, color_bgr, intrinsic, distortion, T_WC,
+        depth_min_mm=depth_min_mm, depth_max_mm=depth_max_mm, include_cloud=True)
+
+
+def _eligible_quads(rows, cols):
+    """Compact pixel IDs, pruning impossible cells in sparse bounding boxes.
+
+    np.nonzero preserves the original full-image row-major cell order. Keep
+    three-corner cells: either diagonal can still retain one valid triangle.
+    Dense boxes use the original slicing traversal: building a sparse index
+    there would cost more than discarding the few invalid triangles later.
+    """
+    top, left = int(rows.min()), int(cols.min())
+    ids = np.full((int(rows.max())-top+1, int(cols.max())-left+1), -1, np.int32)
+    ids[rows-top, cols-left] = np.arange(len(rows), dtype=np.int32)
+    if len(rows)*4 >= ids.size*3:
+        return ids[:-1, :-1].ravel(), ids[:-1, 1:].ravel(), ids[1:, :-1].ravel(), ids[1:, 1:].ravel()
+    occupied = (ids >= 0).astype(np.uint8)
+    corners = occupied[:-1, :-1] + occupied[:-1, 1:] + occupied[1:, :-1] + occupied[1:, 1:]
+    y, x = np.nonzero(corners >= 3)
+    return ids[y, x], ids[y, x+1], ids[y+1, x], ids[y+1, x+1]
+
+
+def _build_pixel_surface(depth_mm, color_bgr, intrinsic, distortion, T_WC, *,
+                         depth_min_mm, depth_max_mm, include_cloud):
     """Connect only measured neighboring pixels; no resampling or hole filling.
 
     Each triangle must satisfy all three depth edges. The diagonal with the
@@ -27,10 +64,12 @@ def build_pixel_mesh(depth_mm, color_bgr, intrinsic, distortion, T_WC):
         raise ValueError("Aligned RGB-D dimensions must match color calibration")
     if "BROWN_CONRADY_K6" not in str(distortion.get("model", "")):
         raise ValueError("Pixel mesh requires RGB BROWN_CONRADY_K6 calibration")
-    valid = np.isfinite(depth_mm) & (depth_mm >= 250) & (depth_mm <= 2210)
+    if not np.isfinite([depth_min_mm,depth_max_mm]).all() or not 0 < depth_min_mm < depth_max_mm:
+        raise ValueError('Invalid pixel-mesh depth range')
+    valid = np.isfinite(depth_mm) & (depth_mm >= depth_min_mm) & (depth_mm <= depth_max_mm)
     rows, cols = np.nonzero(valid)
     if not len(rows):
-        raise ValueError("No measured pixels in 0.25–2.21 m")
+        raise ValueError("No measured pixels in the configured depth range")
     matrix = np.array([[intrinsic.fx, 0, intrinsic.cx], [0, intrinsic.fy, intrinsic.cy], [0, 0, 1]], float)
     coeff = np.array([distortion[k] for k in ('k1', 'k2', 'p1', 'p2', 'k3', 'k4', 'k5', 'k6')])
     rays = cv2.undistortPoints(np.column_stack((cols, rows)).astype(float).reshape(-1, 1, 2), matrix, coeff).reshape(-1, 2)
@@ -40,9 +79,7 @@ def build_pixel_mesh(depth_mm, color_bgr, intrinsic, distortion, T_WC):
     xyz, rows, cols, z = xyz[finite], rows[finite], cols[finite], z[finite]
     if not len(xyz):
         raise ValueError("No finite calibrated points")
-    ids = np.full((height, width), -1, np.int32)
-    ids[rows, cols] = np.arange(len(rows), dtype=np.int32)
-    a, b, c, d = ids[:-1, :-1].ravel(), ids[:-1, 1:].ravel(), ids[1:, :-1].ravel(), ids[1:, 1:].ravel()
+    a, b, c, d = _eligible_quads(rows, cols)
     def diagonal_cost(i, j):
         return np.where((i >= 0) & (j >= 0), np.abs(z[i] - z[j]), np.inf)
     use_ad = diagonal_cost(a, d) < diagonal_cost(b, c)
@@ -52,7 +89,10 @@ def build_pixel_mesh(depth_mm, color_bgr, intrinsic, distortion, T_WC):
         np.column_stack((a[use_ad], d[use_ad], b[use_ad])),
         np.column_stack((a[use_ad], c[use_ad], d[use_ad])),
     ))
-    candidates = len(triangles)
+    generated_candidates = len(triangles)
+    # Preserve full-image accounting for old report consumers; omitted cells
+    # would only have contributed missing-depth rejections.
+    candidates = 2 * (height-1) * (width-1)
     triangles = triangles[np.all(triangles >= 0, axis=1)]
     measured_candidates = len(triangles)
     keep = np.ones(len(triangles), bool)
@@ -75,10 +115,11 @@ def build_pixel_mesh(depth_mm, color_bgr, intrinsic, distortion, T_WC):
     report = {
         "method": "single_frame_pixel_adjacency", "frame_count": 1,
         "unit": "metre", "coordinate_system": "World RDF; T_WC maps camera to world",
-        "depth_range_mm_inclusive": [250, 2210],
+        "depth_range_mm_inclusive": [depth_min_mm, depth_max_mm],
         "depth_edge_limit_m": "max(0.010, 0.02 * min(endpoint_depths_m))",
         "spatial_edge_limit_m": "sqrt(2) * depth_edge_limit_m",
         "candidate_triangles": candidates,
+        "generated_candidate_triangles": generated_candidates,
         "rejected_missing_depth_triangles": candidates - measured_candidates,
         "rejected_discontinuity_triangles": measured_candidates - len(triangles),
         "vertices": len(vertices), "triangles": len(triangles),
@@ -87,7 +128,11 @@ def build_pixel_mesh(depth_mm, color_bgr, intrinsic, distortion, T_WC):
         "uv_convention": "pixel centers: u=(column+0.5)/width, v=1-(row+0.5)/height",
         "limitations": ["Depth continuity is heuristic; noise and small depth steps can remain.",
                         "RGB sharpness is texture detail, not added depth resolution or verified accuracy."]}
-    return mesh, uv, report
+    cloud = None
+    if include_cloud:
+        cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz @ T_WC[:3, :3].T + T_WC[:3, 3]))
+        cloud.colors = o3d.utility.Vector3dVector(color_bgr[rows, cols, ::-1] / 255.)
+    return mesh, uv, report, cloud
 
 
 def export_pixel_mesh(mesh, uv, source_rgb: Path, output: Path, report: dict):

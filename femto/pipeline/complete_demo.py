@@ -20,6 +20,7 @@ from femto.tracking.scene_pose_estimator import estimate_poses
 from femto.pipeline.scene_reconstruction import reconstruct_scene
 from femto.pipeline.scene_to_nerfstudio import convert
 from femto.pipeline.synthetic_scene_demo import generate_dataset
+from femto.operation_diagnostics import diagnosed
 
 
 from femto.paths import REPO_ROOT as ROOT
@@ -220,12 +221,20 @@ def _complete_local_processing(processing_path: Path, posed_dataset: Path, resul
     processing['state'] = 'complete'
     processing['reconstruction'] = dict(status='complete', error=None,
         depth_quality=reconstruction.get('depth_quality'),metrics=reconstruction.get('metrics'))
+    scope=reconstruction.get('reconstruction_scope')
+    if scope is not None:
+        processing.setdefault('frame_counts',{}).update(
+            used_for_reconstruction=scope['contributing_frame_count'],
+            basis='actual_local_surface_inputs',local_frames=scope['frames'])
+        processing['reconstruction']['mesh_method']=reconstruction['parameters']['mesh_method']
     processing['result'] = str(result_root)
     write_json_strict(result_root / 'processing_report.json', processing)
-    write_html(result_root / 'processing_report.html', processing)
+    if scope is None:
+        write_html(result_root / 'processing_report.html', processing)
     summary['local_processing_report'] = str(result_root / 'processing_report.json')
 
 
+@diagnosed('reconstruction.with_validation_and_exports')
 def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     if args.mode == "synthetic":
         dataset = generate_dataset(args.datasets_root, frames=args.synthetic_frames)
@@ -282,12 +291,16 @@ def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         depth_min_m=minimum_mm / 1000.0,
         depth_max_m=maximum_mm / 1000.0,
         point_stride=1,
-        single_frame_quality=bool(single_fixed_view and minimum_mm == 250 and maximum_mm == 2210),
+        single_frame_quality=bool(single_fixed_view and minimum_mm == 250 and maximum_mm == 2210
+                                  and getattr(args,'region_request',None) is None),
+        region_request=getattr(args,'region_request',None),
     )
     local_measured=bool(posed_manifest.get('local_capture',{}).get('measured_only'))
-    skip_nerfstudio=local_measured and len(frames)<12 and not getattr(args,'force_nerfstudio',False)
+    local_route = reconstruction.get('reconstruction_scope') is not None
+    skip_nerfstudio=local_route or (local_measured and len(frames)<12 and not getattr(args,'force_nerfstudio',False))
     nerfstudio = None if skip_nerfstudio else convert(posed_dataset, nerfstudio_dir, allow_static=fixed_camera)
-    _contact_sheet(posed_dataset, result_root / "rgbd_contact_sheet.jpg")
+    if not local_route:
+        _contact_sheet(posed_dataset, result_root / "rgbd_contact_sheet.jpg")
     low_depth_coverage = bool(
         fixed_camera and reconstruction["metrics"]["valid_depth_ratio_mean"] < 0.35
     )
@@ -324,7 +337,8 @@ def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     }
     if skip_nerfstudio:
         summary.update(nerfstudio_skipped_reason='local_capture_has_fewer_than_12_views',
-                       reconstruction_source_mode='moving', local_measured=True)
+                       reconstruction_source_mode='local_single' if reconstruction['parameters']['local_single_frame'] else 'moving',
+                       contributing_frame_count=reconstruction['frame_count'],local_measured=True)
     if publication_id:
         summary.update(publication_required=True, publication_id=publication_id)
     if posed_manifest.get('local_capture', {}).get('capture_scope') == 'interrupted_prefix':
@@ -332,6 +346,13 @@ def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
                        capture_scope='interrupted_prefix',
                        capture_label='中断前数据建模 / Interrupted-prefix reconstruction',
                        interrupted_prefix=posed_manifest['local_capture']['interrupted_prefix'])
+    if local_route:
+        from femto.reconstruction_profile import LOCAL_ROUTE_PROFILE, LOCAL_ROUTE_SKIP_REASON
+        state = ('interrupted_prefix' if summary.get('capture_scope') == 'interrupted_prefix'
+                 else 'warning_low_depth_coverage' if low_depth_coverage else 'pass')
+        summary.update(artifact_profile=LOCAL_ROUTE_PROFILE, status=state+'_local_geometry',
+                       gaussian_status='not_generated', nerfstudio_skipped_reason=LOCAL_ROUTE_SKIP_REASON,
+                       auxiliary_reports_status='not_generated')
     if args.mode == "synthetic":
         _add_synthetic_ground_truth_error(summary, reconstruction_dir, posed_dataset)
     if reconstruction.get("outputs", {}).get("quality_report"):
@@ -341,9 +362,10 @@ def run_demo(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         _complete_local_processing(Path(processing_path), posed_dataset, result_root,
                                    reconstruction, summary)
     write_json(result_root / "demo_summary.json", summary)
-    from femto.reports.scene_quality_report import write_report
-    write_report(result_root)
-    _write_html_report(result_root, summary)
+    if not local_route:
+        from femto.reports.scene_quality_report import write_report
+        write_report(result_root)
+        _write_html_report(result_root, summary)
     args.outputs_root.resolve().mkdir(parents=True, exist_ok=True)
     if getattr(args, 'publish_latest', True):
         (args.outputs_root.resolve() / "latest_complete_demo.txt").write_text(

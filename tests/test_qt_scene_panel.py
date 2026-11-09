@@ -78,12 +78,13 @@ class ScenePanelTests(unittest.TestCase):
             self.assertTrue(fixture.page.undo_button.isHidden())
             self.assertFalse(fixture.page.canvas.editable)
             self.assertTrue(fixture.page.inspector_scroll.isHidden())
-            self.assertTrue(fixture.page.action_dock.isHidden())
+            # The current workbench keeps its next-step controls in the 3D view.
+            self.assertFalse(fixture.page.action_dock.isHidden())
             self.assertTrue(fixture.page.scene_panel.notice.isHidden())
             fixture.page._error='检查未完成'
             fixture.page.refresh()
             self.assertFalse(fixture.page.action_dock.isHidden())
-            self.assertTrue(fixture.page.primary.isHidden())
+            self.assertFalse(fixture.page.primary.isHidden())
             fixture.page._error=''
             fixture.page.scene_panel.show_reference()
             self.assertTrue(fixture.page.tools.isEnabled())
@@ -124,6 +125,20 @@ class ScenePanelTests(unittest.TestCase):
         view.style.OnMiddleButtonDown.assert_called_once()
         view.style.OnMiddleButtonUp.assert_called_once()
         view.style.OnLeftButtonDown.assert_not_called()
+
+    def test_new_region_refits_view_and_capture_editor_cannot_add_surroundings(self):
+        from femto.app.qt_region_capture import CaptureRegionEditor
+        editor=CaptureRegionEditor();self.addCleanup(editor.close)
+        self.assertEqual(editor.margin.value(),0)
+        editor.margin.setValue(40)
+        self.assertEqual(editor.margin.value(),0)
+        self.assertTrue(editor.margin.isHidden())
+        panel=ScenePanel(PlanningCanvas());self.addCleanup(panel.close)
+        with patch('femto.app.qt_scene_panel.create_viewport',side_effect=FakeViewport):
+            model=object();panel.set_scene(model,object());panel.mode.setCurrentIndex(1)
+            panel.set_scene(model,object())
+            self.assertTrue(panel.viewport.calls[-1][1]['reset_camera'])
+            self.assertIn('仅显示',panel.notice.text())
 
 
 if __name__=='__main__':unittest.main()

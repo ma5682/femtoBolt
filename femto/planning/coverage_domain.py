@@ -150,6 +150,9 @@ class CoverageDomain:
 
     @classmethod
     def _checked_target(cls, ledger, revision) -> CoverageDomain:
+        from femto.planning.target_surface import is_deferred
+        if is_deferred(ledger.metadata):
+            raise ValueError('目标面积尚未计算，不能创建覆盖证明域')
         arrays = ledger.arrays
         binding = dict(scope='p1_original_reference_selection', target_sha256=ledger.metadata['sha256'],
                        computation_sha256=revision['sha256'], target_id=revision['target_id'],
@@ -203,23 +206,39 @@ def scan_endpoints(trajectory: Any, original_faces: np.ndarray) -> list[dict]:
 
 
 def from_plan(model: Any, region: dict, plan: dict,
-              check: Callable[[], None] = lambda: None) -> tuple[CoverageDomain, list[dict], dict, dict]:
+              check: Callable[[], None] = lambda: None, *,
+              binding_factory: Callable | None = None) -> tuple[CoverageDomain, list[dict], dict, dict]:
     """Run the retained P1/v3 validators before an independent coverage experiment."""
     from femto.planning import planning_revision, planning_state, surface_workspace, footprint_model
     context = plan.get('planning_context')
     if context is None:raise ValueError('覆盖原型需要已验证的 P1 原目标台账，请生成新版本')
+    from femto.planning.surface_trajectory import canonical_json_bytes
+    before = canonical_json_bytes(plan) if binding_factory is not None else None
     planning_revision.require_current(model, region, plan['treatment_head'], context['revision'])
     trajectory = planning_state.validated_surface(plan, model.store.mesh, region, check=check)
+    checked_bytes = canonical_json_bytes(trajectory.to_dict()) if binding_factory is not None else None
     if trajectory.planner['algorithm_version'] not in ('quality-constrained-surface-v3', 'source-anchored-surface-v1', 'coverage-refined-surface-v1', 'constructed-surface-route-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
         raise ValueError('独立覆盖原型当前只接受原 v3 路线')
     ledger = surface_workspace.target_for(model, plan, check, reproduce=True)
     domain = CoverageDomain._checked_target(ledger, context['revision'])
     seeds = scan_endpoints(trajectory, ledger.arrays['region_faces'])
     model_record = footprint_model.for_trajectory(trajectory)
-    route = dict(schema='femto-accepted-v3-coverage-source-v1', route_record_sha256=digest(plan['surface_trajectory']),
-                 result_sha256=trajectory.to_dict()['result_sha256'], computation_sha256=context['revision']['sha256'],
-                 algorithm=trajectory.planner['algorithm_version'], accepted_scan_edges_only=True)
-    if trajectory.planner['algorithm_version'] in ('source-anchored-surface-v1', 'coverage-refined-surface-v1', 'constructed-surface-route-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
+    if binding_factory is not None:
+        route = binding_factory(trajectory)
+    elif trajectory.planner['algorithm_version'] in ('source-anchored-surface-v1', 'coverage-refined-surface-v1', 'constructed-surface-route-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
         from femto.planning.coverage_workflow import route_binding
         route = route_binding(trajectory)
+    else:
+        route = dict(schema='femto-accepted-v3-coverage-source-v1', route_record_sha256=digest(plan['surface_trajectory']),
+                     result_sha256=trajectory.to_dict()['result_sha256'], computation_sha256=context['revision']['sha256'],
+                     algorithm=trajectory.planner['algorithm_version'], accepted_scan_edges_only=True)
+    if binding_factory is not None:
+        # Consume only the trajectory fully checked in this invocation. Bind
+        # it before returning and reject changes during target preparation or
+        # callbacks, even if the caller has recalculated the public hashes.
+        planning_revision.require_current(model, region, plan['treatment_head'], context['revision'])
+        planning_state.validate_binding(plan, model.store.mesh, region, check=check)
+        if (canonical_json_bytes(plan) != before
+                or canonical_json_bytes(trajectory.to_dict()) != checked_bytes):
+            raise ValueError('三维路线在覆盖核验期间发生变化，请重新核验')
     return domain, seeds, model_record, route

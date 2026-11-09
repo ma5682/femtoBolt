@@ -14,9 +14,10 @@ class SceneSnapshot:
     colors: np.ndarray | None
     region_ids: np.ndarray
     route_runs: tuple
+    source_triangle_ids: np.ndarray
 
 
-def scene_snapshot(model, region=None, plan=None):
+def scene_snapshot(model, region=None, plan=None, *, selection_only=False):
     mesh = model.mesh
     vertices = np.array(mesh.vertices, dtype=np.float64, copy=True)
     raw_triangles = np.asarray(mesh.triangles)
@@ -42,6 +43,16 @@ def scene_snapshot(model, region=None, plan=None):
     ids = np.array(ids, dtype=np.int64, copy=True).reshape(-1)
     if ids.size and (ids.min() < 0 or ids.max() >= len(triangles)):
         raise ValueError('Region triangle index outside original mesh')
+    source_ids = np.arange(len(triangles), dtype=np.int64)
+    if selection_only:
+        if region is None:
+            vertices, triangles, colors, ids = np.empty((0,3)), np.empty((0,3),np.int64), None, np.empty(0,np.int64)
+            source_ids = ids.copy()
+            plan = None
+        else:
+            from femto.viewer.selected_surface import selected_surface
+            vertices, triangles, colors, source_ids = selected_surface(vertices, triangles, colors, ids, region)
+            ids = np.arange(len(triangles), dtype=np.int64)
     runs = []
     if plan is not None:
         if plan.get('unit', 'metre') != 'metre' or plan.get('coordinate_frame', 'world_rdf') != 'world_rdf':
@@ -59,7 +70,7 @@ def scene_snapshot(model, region=None, plan=None):
                     run.append(xyz.copy())
             if len(run) >= 2:
                 runs.append(np.array(run))
-    for value in (vertices, triangles, colors, ids, *runs):
+    for value in (vertices, triangles, colors, ids, source_ids, *runs):
         if value is not None:
             value.setflags(write=False)
-    return SceneSnapshot(vertices, triangles, colors, ids, tuple(runs))
+    return SceneSnapshot(vertices, triangles, colors, ids, tuple(runs), source_ids)

@@ -21,10 +21,17 @@ def spacing_report(mesh,region,plan,target_mm,tolerance_mm,check=lambda:None,bud
     """
     vertices=np.asarray(mesh.vertices);faces=np.asarray(mesh.triangles);ids=region['triangle_indices']
     graph={int(v):{} for v in np.unique(faces[ids])}
-    for ordinal,face in enumerate(faces[ids]):
+    selected=np.asarray(faces[ids]).reshape(-1,3)
+    starts=selected.reshape(-1);ends=selected[:,[1,2,0]].reshape(-1)
+    from femto.small_vectors import row_norms
+    # Same per-edge values and insertion order as one norm call per edge.
+    lengths=row_norms(vertices[starts]-vertices[ends]).tolist() if len(starts) else []
+    starts,ends=starts.tolist(),ends.tolist()
+    for ordinal in range(len(selected)):
         if ordinal%1024==0:check()
-        for a,b in ((face[0],face[1]),(face[1],face[2]),(face[2],face[0])):
-            graph[int(a)][int(b)]=graph[int(b)][int(a)]=float(np.linalg.norm(vertices[a]-vertices[b]))
+        for k in range(ordinal*3,ordinal*3+3):
+            a,b=starts[k],ends[k]
+            graph[a][b]=graph[b][a]=lengths[k]
     levels=sorted({p['surface_level_m'] for c in plan['segments'] for p in c})
     state=budget if budget is not None else dict(expansions=0,distance_pairs=0)
     rows=[];max_expanded=2000000

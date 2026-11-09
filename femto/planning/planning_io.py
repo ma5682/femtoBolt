@@ -1,5 +1,6 @@
 """Cooperative task feedback and a serialized cancellation/publication boundary."""
 from __future__ import annotations
+from femto.performance_detail import observed
 from typing import Any, Callable, Iterator
 
 import os
@@ -71,6 +72,7 @@ def durable(path: str | Path) -> None:
     with open(path,'r+b') as stream:os.fsync(stream.fileno())
 
 
+@observed('io.copy_stream')
 def copy_stream(source: Any, target: Any, check: Any) -> None:
     while True:
         check();block=source.read(1024*1024)

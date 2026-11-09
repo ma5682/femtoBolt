@@ -16,6 +16,7 @@ import trimesh
 from femto.operation_diagnostics import diagnosed
 from femto.geometry.region_reuse import operation as geometry_operation
 from femto.planning.nominal_revisit_metrics import operation as metric_operation
+from femto.planning.evidence_preparation import operation as evidence_operation
 
 from femto.planning.surface_trajectory import (
     ORDERED_SELECTION_ALGORITHM, SurfaceTrajectory, to_player_plan, validate_trajectory,
@@ -151,11 +152,32 @@ def snapshot(model, region, check, *, include_texture=True):
     return path.parent/'region_1.json'
 
 
+def generate(model, region, head, check=lambda: None, progress=lambda text: None, **options):
+    """Generate the existing preview contract; independent validation is unchanged."""
+    return _generate_core(model, region, head, check, progress,
+                          _validation_check_factory=None, **options)
+
+
+def generate_checked(model, region, head, check=lambda: None, progress=lambda text: None,
+                     *, validation_check_factory=None, **options):
+    """Generate and fully validate once before projecting the checked object.
+
+    The final validation stays inside this task's preparation scope. No accepted
+    result is retained for a later validation, save, readback or another thread.
+    UI callers can create the original separate validation budget at this stage.
+    """
+    factory = validation_check_factory if validation_check_factory is not None else lambda: check
+    return _generate_core(model, region, head, check, progress,
+                          _validation_check_factory=factory, **options)
+
+
 @diagnosed('route.generate')
 @geometry_operation()
 @metric_operation()
-def generate(model, region, head, check=lambda: None, progress=lambda text: None, *, layout_algorithm=None, routing_algorithm=None,
-             target_algorithm=None, research_row_shifts=None, minimum_metric_fraction=None):
+@evidence_operation()
+def _generate_core(model, region, head, check, progress, *, layout_algorithm=None, routing_algorithm=None,
+                   target_algorithm=None, research_row_shifts=None, minimum_metric_fraction=None, defer_target=False,
+                   _validation_check_factory):
     from femto.planning.continuous_quality import candidate, replan
     from femto.planning.planning_state import binding, region_signature
     head = checked_head(head)
@@ -246,8 +268,12 @@ def generate(model, region, head, check=lambda: None, progress=lambda text: None
     from femto.planning.quality_constrained import evidence
     progress('核验真实参考深度与网格的一致性')
     quality = evidence(model, region, check, allow_empty=True)
-    progress('按原选区像素建立目标表面台账，保留未定位范围')
-    target = target_surface.build(model, region, revision, evidence=quality, check=check)
+    if defer_target and target_algorithm is not None:
+        raise ValueError('显式精确目标计算不能同时延后目标面积')
+    progress('保留目标输入，面积与覆盖按需计算' if defer_target else
+             '按原选区像素建立目标表面台账，保留未定位范围')
+    target = target_surface.build(model, region, revision, evidence=quality, check=check,
+                                  deferred=defer_target)
     from femto.planning.effective_domain import build as build_domain
     from femto.planning.surface_trajectory import canonical_json_bytes
     progress('构建质量合格的表面域并识别缺失范围')
@@ -313,6 +339,9 @@ def generate(model, region, head, check=lambda: None, progress=lambda text: None
     trajectory = replace(trajectory, planning_context=context)
     assessment.update(status='research_preview_generated',route_report=trajectory.gap_report)
     assessment_path.write_bytes(canonical_json_bytes(assessment))
+    if _validation_check_factory is not None:
+        return _checked_generated_plan(trajectory, model, region, head, revision,
+                                       _validation_check_factory())
     plan = to_player_plan(trajectory)
     plan.update(schema=SCHEMA, region_id=region['annotation_id'],
         region_signature=region_signature(region), coordinate_frame='world_rdf', unit='metre',
@@ -321,18 +350,85 @@ def generate(model, region, head, check=lambda: None, progress=lambda text: None
     return plan
 
 
-def validate(plan, mesh, region, check=lambda: None):
-    """Validate local face support and the exact player projection, offline too."""
-    from femto.annotation.scene_annotations import mesh_digest
-    from femto.planning.planning_state import region_signature
+@diagnosed('route.finalize_checked')
+def _checked_generated_plan(trajectory, model, region, head, revision, check):
+    """The generated object is the one checked and then used for display.
+
+    Serialized documents still go through from_dict. Here headers are produced
+    by to_dict itself; only its item-level constructor checks need to be made
+    before the same structural/geometric validator. Content is fingerprinted
+    around callbacks so nested mutations cannot inherit an earlier acceptance.
+    """
+    from hashlib import sha256
+    from femto.planning.surface_trajectory import (
+        ScanSegment, Gap, _player_plan_view, _export_fingerprint, canonical_json_bytes,
+    )
+    from femto.planning import planning_revision, planning_state
+    from femto.planning.coverage_workflow import check_binding
+    check()
+    payload = trajectory.to_dict()
+    before = sha256(canonical_json_bytes(payload)).digest()
+    for item in trajectory.ordered_items:
+        check()
+        if isinstance(item, ScanSegment):
+            ScanSegment.from_dict(item.to_dict())
+        elif isinstance(item, Gap):
+            Gap.from_dict(item.to_dict())
+        else:
+            raise ValueError('Invalid generated trajectory item')
+    context = dict(treatment_head=head, planning_context=trajectory.planning_context)
+    checked_head = _validate_plan_context(context, model.mesh, region)
+    local = canonical_region_mesh(model.mesh, region)
+    validate_trajectory(trajectory, mesh=local, region=region, check=check,
+                        expected_result_sha256=payload['result_sha256'])
+    _validate_workspace_contract(trajectory, model.mesh, region, checked_head, context)
+    check()
+    # Projection is still private to this call. Publish only after the final
+    # callback and full content/input checks below; an intermediate full dump
+    # would repeat that work without protecting an additional handoff.
+    plan = _player_plan_view(trajectory)
+    plan.update(schema=SCHEMA, region_id=region['annotation_id'],
+        region_signature=planning_state.region_signature(region), coordinate_frame='world_rdf', unit='metre',
+        treatment_head=deepcopy(head), surface_trajectory=payload)
+    plan['plan_binding'] = planning_state.binding(model.store.mesh, region, plan)
+    check_binding(plan)
+    planning_state.validate_binding(plan, model.mesh, region, check=check)
+    # The last cancellation callback is also allowed to expose a changed input.
+    if before != _export_fingerprint(trajectory):
+        raise ValueError('路线在生成核验期间发生变化')
+    planning_revision.require_current(model, region, head, revision)
+    return plan
+
+
+def _validate_plan_context(plan, mesh, region):
     head = checked_head(plan['treatment_head'])
     if plan.get('planning_context') is not None:
         from femto.planning.planning_revision import validate_context
         revision = validate_context(plan['planning_context'], mesh=mesh, region=region)
         if revision['inputs']['effect_model']['treatment_head'] != head:
             raise ValueError('覆盖宽度或治疗头参数与计算修订不一致，请重新生成路线')
+    return head
+
+
+def validate(plan, mesh, region, check=lambda: None):
+    """Validate local face support and the exact player projection, offline too."""
+    head = _validate_plan_context(plan, mesh, region)
     local = canonical_region_mesh(mesh, region)
     trajectory = SurfaceTrajectory.from_dict(plan['surface_trajectory'], mesh=local, region=region, check=check)
+    _validate_workspace_contract(trajectory, mesh, region, head, plan)
+    from femto.planning.surface_trajectory import _player_plan_view
+    check()
+    expected = _player_plan_view(trajectory)
+    for key, value in expected.items():
+        if key != 'schema' and plan.get(key) != value:
+            raise ValueError('三维路线显示与原始轨迹不一致：'+key)
+    check()
+    return trajectory
+
+
+def _validate_workspace_contract(trajectory, mesh, region, head, plan):
+    from femto.annotation.scene_annotations import mesh_digest
+    from femto.planning.planning_state import region_signature
     layout=trajectory.planner['parameters'].get('fixed_width_layout')
     if (head['mode']=='fixed_width_auto') != (layout is not None):
         raise ValueError('固定宽度排布模式与保存路线不一致')
@@ -353,14 +449,6 @@ def validate(plan, mesh, region, check=lambda: None):
             or trajectory.source['region_id'] != region['annotation_id']
             or trajectory.planner['parameters']['row_spacing_mm'] != head['row_spacing_mm']):
         raise ValueError('三维路线与当前模型、选区或行距不匹配')
-    from femto.planning.surface_trajectory import _player_plan_view
-    check()
-    expected = _player_plan_view(trajectory)
-    for key, value in expected.items():
-        if key != 'schema' and plan.get(key) != value:
-            raise ValueError('三维路线显示与原始轨迹不一致：'+key)
-    check()
-    return trajectory
 
 
 def canonical_region_mesh(mesh, region):
@@ -408,6 +496,8 @@ def target_for(model, plan, check=lambda: None, *, reproduce=False):
 @geometry_operation()
 @metric_operation()
 def export(model, region, plan, check=lambda: None, progress=lambda text: None, commit=None, *, verified_sink=None, target_session=None):
+    from femto.planning.patch_reference import verify_asset
+    verify_asset(model, check)
     from femto.planning.trajectory_export import export_trajectory
     from femto.planning.mesh_slice_planner import _source_record
     from femto.planning.trajectory_diagram import write_visual_outputs

@@ -52,6 +52,11 @@ def _project_uv(points: np.ndarray, intrinsic: np.ndarray) -> np.ndarray:
 def selection_face_assignment(region: dict[str, Any], vertices: np.ndarray, faces: np.ndarray
                               ) -> tuple[dict[str, Any], dict[str, Any] | None, np.ndarray, np.ndarray]:
     """(intent, support, component label image, face -> selection component id)."""
+    from femto.planning.task_preparation import selection_key, selection_lookup, selection_remember
+    key=selection_key(region,vertices,faces,(validate_selection_intent,validate_selection_support,
+                                            component_labels,components_of_pixels,_project_uv))
+    prepared=selection_lookup(key)
+    if prepared is not None:return prepared
     from femto.planning.mesh_slice_planner import Unplannable
     if not isinstance(region.get("selection_intent"), dict):
         raise Unplannable("selection_intent_missing", INTENT_MISSING_MESSAGE)
@@ -66,7 +71,9 @@ def selection_face_assignment(region: dict[str, Any], vertices: np.ndarray, face
     if np.any(owners < 0):
         raise ValueError("Region PLY contains faces whose centroid pixel is outside the selection mask; "
                          "the export is inconsistent with its selection intent")
-    return intent, support, labels, owners
+    result=(intent, support, labels, owners)
+    selection_remember(key,result)
+    return result
 
 
 def _reading_key(bbox: list[float], component_id: int, corner: str) -> tuple[float, float, int]:
@@ -845,21 +852,29 @@ def check_projection_inside_selection(segments: list[ScanSegment], blocks: list[
                                       intrinsic: np.ndarray, image_size: np.ndarray) -> None:
     """Every scan/connector point and every edge between consecutive points must project onto the
     pixels of its own selection component: never onto unselected pixels or another block."""
-    from femto.planning.surface_row_turns import edge_pixels_allowed
+    from femto.planning.surface_row_turns import projected_edge_pixels_allowed
     from femto.planning.mesh_slice_planner import _project
+    # Adjacent segments usually belong to the same block. Retain one mask,
+    # rather than one full-resolution image for every disconnected component.
+    previous_component = None
+    allowed = None
     for segment in segments:
-        allowed = labels == blocks[segment.block_index]["component_id"] + 1
+        component = blocks[segment.block_index]["component_id"]
+        if component != previous_component:
+            allowed = labels == component + 1
+            previous_component = component
         previous = None
         for point in segment.points:
-            pixel = _project(np.asarray(point["xyz_m"], dtype=np.float64), intrinsic, image_size)
+            # One projection per point, the same one edge_pixels_allowed makes.
+            pixel = _project(np.asarray(point["xyz_m"], dtype=float), intrinsic, image_size)
             if pixel is None:
                 raise ValueError("Trajectory point projects outside the reference image")
             u, v = int(np.floor(pixel[0] + .5)), int(np.floor(pixel[1] + .5))
             if not (0 <= u < allowed.shape[1] and 0 <= v < allowed.shape[0] and allowed[v, u]):
                 raise ValueError("Trajectory point projects onto an explicitly unselected pixel or another block")
-            if previous is not None and not edge_pixels_allowed(previous, point["xyz_m"], intrinsic, image_size, allowed):
+            if previous is not None and not projected_edge_pixels_allowed(previous, pixel, allowed):
                 raise ValueError("Trajectory edge crosses explicitly unselected pixels or another block")
-            previous = point["xyz_m"]
+            previous = pixel
 
 
 def _check_selection_binding(trajectory: SurfaceTrajectory, blocks: list[dict[str, Any]], segments: list[ScanSegment],

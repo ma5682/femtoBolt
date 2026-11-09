@@ -12,6 +12,8 @@ from femto.planning.coverage_domain import CoverageDomain, from_plan, scan_endpo
 from femto.planning.planning_revision import digest
 from femto.planning.surface_trajectory import SurfaceTrajectory
 from femto.operation_diagnostics import diagnosed
+from femto.geometry.region_reuse import operation as geometry_operation
+from femto.planning.evidence_preparation import operation as evidence_operation
 
 KEY = 'coverage_evidence'
 ROUTE_SCHEMA = 'femto-accepted-v3-coverage-source-v2'
@@ -108,15 +110,20 @@ def check_binding(plan):
 
 
 @diagnosed('coverage.operation', operation=True)
+@geometry_operation()
+@evidence_operation()
 def calculate(model, region, plan, check=lambda:None, progress=lambda text:None, *, budget=None):
+    from femto.planning.target_surface import is_deferred
+    if is_deferred((plan.get('planning_context') or {}).get('target')):
+        raise ValueError('目标面积尚未计算，请先计算目标面积再核验覆盖')
     if plan['surface_trajectory']['planner']['algorithm_version'] in ('nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
         from femto.planning.variable_footprint import require_current
         require_current(plan['surface_trajectory']['planner']['parameters']['variable_footprint'])
     if plan['surface_trajectory']['planner']['algorithm_version'] in ('coverage-refined-surface-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-refined-surface-v1'):
         raise ValueError('补充版本已保存逐轮核验证据；请恢复补充前路线后重新核验')
     progress('核对原目标、作用宽度与同一条扫描路线')
-    domain, seeds, footprint, _ = from_plan(model, region, plan, check)
-    route = route_binding(SurfaceTrajectory.from_dict(plan['surface_trajectory']))
+    domain, seeds, footprint, route = from_plan(model, region, plan, check,
+                                               binding_factory=route_binding)
     previous = cached(model, plan)
     guided = previous is not None and footprint['schema'] == footprint_model.SCHEMA
     if guided:
@@ -137,6 +144,8 @@ def calculate(model, region, plan, check=lambda:None, progress=lambda text:None,
     return certificate, domain.ledger
 
 
+@geometry_operation()
+@evidence_operation()
 def attach(model, region, plan, certificate, ledger, *, check=lambda:None):
     """Install a locally computed or fully replayed certificate, not imported metadata."""
     from femto.planning.planning_state import binding
@@ -220,7 +229,10 @@ def summaries(plan):
     path = (f"路径：{stats.get('segment_count', '未知')} 条连续路线，"
             f"{stats.get('gap_count', '未知')} 处断点。" if plan else '路径：尚未生成。')
     target = (plan.get('planning_context') or {}).get('target')
-    if target:
+    from femto.planning.target_surface import is_deferred, summary_text as target_summary
+    if is_deferred(target):
+        geometry = target_summary(target)
+    elif target:
         values = target['summary']
         geometry = (f"原目标几何：已定位 {values['located_area_m2']*1e6:.1f} mm²；"
                     f"{values['unlocated_pixel_count']} 个像素含未定位范围。")

@@ -57,12 +57,23 @@ def publish_result(result: str | Path, outputs: str | Path, session_id: str, *, 
             or quality.get('source_session_id') != session_id
             or quality.get('reconstruction', {}).get('status') != 'complete'):
         raise ValueError('Unfinished or mismatched local result cannot be published')
-    required = ['demo_report.html', 'processing_report.html', 'result_quality.html',
-                'reconstruction/reconstruction_report.json']
+    from femto.reconstruction_profile import local_route_result, LOCAL_ROUTE_SKIP_REASON
+    reconstruction = load_json_object(result / 'reconstruction/reconstruction_report.json')
+    local_route = local_route_result(summary, reconstruction)
+    required = ['reconstruction/reconstruction_report.json']
+    if local_route:
+        required += ['processing_report.json', 'reconstruction/scene_tsdf_mesh_m.ply',
+                     'reconstruction/scene_fused_points_m.ply', 'reconstruction/local_geometry.json',
+                     'reconstruction/region_request.json', 'reconstruction/requested_mask.png']
+    else:
+        required += ['demo_report.html', 'processing_report.html', 'result_quality.html']
     nerfstudio_skipped = (summary.get('nerfstudio') is None
         and summary.get('local_measured') is True
-        and summary.get('reconstruction_source_mode') == 'moving'
-        and summary.get('nerfstudio_skipped_reason') == 'local_capture_has_fewer_than_12_views')
+        and (summary.get('reconstruction_source_mode') == 'moving'
+             or summary.get('reconstruction_source_mode') == 'local_single'
+                and summary.get('contributing_frame_count',summary.get('frame_count')) == 1)
+        and (summary.get('nerfstudio_skipped_reason') == 'local_capture_has_fewer_than_12_views'
+             or local_route and summary.get('nerfstudio_skipped_reason') == LOCAL_ROUTE_SKIP_REASON))
     if not nerfstudio_skipped:
         required.append('nerfstudio/transforms.json')
     for name in required:
@@ -70,7 +81,8 @@ def publish_result(result: str | Path, outputs: str | Path, session_id: str, *, 
             raise ValueError('Missing completed result artifact: ' + name)
     values = {outputs / 'latest_complete_demo.txt': str(result / 'reconstruction').encode('utf-8')}
     if (summary.get('data_kind') == 'real_femto' and summary.get('fixed_camera') is False
-            and type(summary.get('frame_count')) is int and summary['frame_count'] >= 3):
+            and type(summary.get('contributing_frame_count',summary.get('frame_count'))) is int
+            and summary.get('contributing_frame_count',summary.get('frame_count')) >= 2):
         values[outputs / 'latest_moving_reconstruction.txt'] = str(result).encode('utf-8')
     before, temporaries, committed, rolled_back, rollback_errors = {}, {}, [], [], []
     token = uuid.uuid4().hex
@@ -138,7 +150,7 @@ def publish_result(result: str | Path, outputs: str | Path, session_id: str, *, 
 
 class LocalOfflineJob:
     def __init__(self, dataset, output, outputs, session_id, cancelled, progress=None,
-                 *, timeout_s=TIME_BUDGET_S, memory_mb=MEMORY_BUDGET_MB):
+                 *, timeout_s=TIME_BUDGET_S, memory_mb=MEMORY_BUDGET_MB, region_request=None):
         self.dataset, self.output, self.outputs = map(lambda p: Path(p).resolve(), (dataset, output, outputs))
         if self.output == self.dataset or self.dataset in self.output.parents:
             raise ValueError('Offline reports must be outside the posed input')
@@ -148,6 +160,7 @@ class LocalOfflineJob:
         self.path = self.output / 'optimization' / 'processing_report.json'
         self.report, self.result, self.stats = empty_report(), None, {}
         self._last_journal = None
+        self.region_request = str(region_request) if region_request is not None else None
 
     def _refresh(self, stats=None):
         if stats is not None:
@@ -191,7 +204,7 @@ class LocalOfflineJob:
     def run(self) -> Any:
         from femto.pipeline.local_comparison import StageStopped, supervise
         request = dict(dataset=str(self.dataset), output=str(self.output), outputs=str(self.outputs),
-                       session_id=self.session_id)
+                       session_id=self.session_id, region_request=self.region_request)
         write_json_strict(self.output / 'request.json', request)
         try:
             self.stats = supervise([sys.executable, '-X', 'utf8', '-m', 'femto.pipeline.local_offline',
@@ -227,11 +240,13 @@ class LocalOfflineJob:
     def _save_report(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         write_json_strict(self.path, self.report)
-        write_html(self.path.with_suffix('.html'), self.report)
+        if self.region_request is None:
+            write_html(self.path.with_suffix('.html'), self.report)
         if self.result is not None:
             self._owned_result(self.result)
             write_json_strict(self.result / 'processing_report.json', self.report)
-            write_html(self.result / 'processing_report.html', self.report)
+            if self.region_request is None:
+                write_html(self.result / 'processing_report.html', self.report)
 
     def terminal(self, status: str, error: Any) -> list[Any]:
         """Reporting failures cannot suppress the caller's terminal event."""
@@ -279,6 +294,13 @@ def _source_paths(dataset):
 
 
 def worker(request_file: Any) -> Any:
+    from femto.operation_diagnostics import record_operation
+    request=load_json_object(request_file)
+    with record_operation('local.offline',root=Path(request['output'])/'diagnostics') as trace:
+        return _worker(request_file,trace)
+
+
+def _worker(request_file: Any, trace) -> Any:
     from femto.pipeline.local_comparison import changed_files, fingerprints
     from femto.local.local_processing import LocalProcessing
     request = load_json_object(request_file)
@@ -289,7 +311,9 @@ def worker(request_file: Any) -> Any:
         if any(value is None for value in before.values()):
             raise ValueError('Missing immutable source evidence')
         write_json_strict(output / 'source_hashes.json', before)
-        job = LocalProcessing(request['dataset'], output / 'optimization')
+        job = LocalProcessing(request['dataset'], output / 'optimization',
+                              write_html_report=request.get('region_request') is None)
+        job.report['performance_record'] = str(trace.directory/'operation.json') if trace.directory else None
         if job.report.get('source_session_id') != request['session_id']:
             raise ValueError('Offline source session mismatch')
         selected, _ = job.run()
@@ -299,13 +323,15 @@ def worker(request_file: Any) -> Any:
             datasets_root=Path(request['dataset']).parent, outputs_root=Path(request['outputs']),
             no_viewer=True, publish_latest=False, no_source_report=True,
             publication_id=request['session_id'], created_result_file=output / 'created_result.json',
-            local_processing_report=str(job.path)))
+            local_processing_report=str(job.path),region_request=request.get('region_request')))
         changed = changed_files(before)
         write_json_strict(output / 'source_integrity.json', dict(source_unchanged=not changed, changed_files=changed))
         if changed:
             raise ValueError('Source evidence changed during offline processing')
-        job.report['result'] = str(result)
-        job.reconstruction('complete')
+        # run_demo binds actual local contributors and geometry metrics here.
+        # Do not replace them with the pre-reconstruction progress snapshot.
+        job.report=load_json_object(result/'processing_report.json')
+        job.publish()
         write_json_strict(output / 'worker_result.json', dict(status='complete', session_id=request['session_id'], result=str(result)))
         return 0
     except Exception as error:

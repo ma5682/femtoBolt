@@ -90,7 +90,7 @@ class AdaptiveLayoutResearchTests(unittest.TestCase):
             head=head_parameters('fixed_width_auto',effective_treatment_width_mm=5,overlap_percent=20)
             with self.assertRaisesRegex(ValueError,'仅用于指定的研究排布'):
                 workspace.generate(model,region,head,target_algorithm=planning_revision.EXACT_TARGET)
-            with self.assertRaisesRegex(ValueError,'仅用于指定的研究排布'):
+            with self.assertRaisesRegex(ValueError,'仅用于指定的局部分区排布'):
                 workspace.generate(model,region,head,layout_algorithm=ADAPTIVE_PATCH_VERSION,
                     routing_algorithm=BRIDGE_REORDER_ROUTING,target_algorithm='unknown')
             legacy=workspace.generate(model,region,head,layout_algorithm=ADAPTIVE_PATCH_VERSION,routing_algorithm=BRIDGE_REORDER_ROUTING)

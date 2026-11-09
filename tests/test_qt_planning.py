@@ -836,7 +836,7 @@ class QtPlanningTests(unittest.TestCase):
     def test_failed_recalculation_keeps_last_reviewable_route(self):
         self.mark();self.page.generate();self.wait_task();previous=deepcopy(self.page.plan)
         self.page.reviewed.setChecked(True)
-        with patch('femto.app.qt_planning.surface_workspace.generate',side_effect=RuntimeError('synthetic planner failure')):
+        with patch('femto.app.qt_planning.surface_workspace.generate_checked',side_effect=RuntimeError('synthetic planner failure')):
             self.page.generate()
             deadline=time.monotonic()+10
             while self.page.busy and time.monotonic()<deadline:QTest.qWait(20)
@@ -850,7 +850,7 @@ class QtPlanningTests(unittest.TestCase):
             progress('等待取消')
             while True:check()
 
-        with patch('femto.app.qt_planning.surface_workspace.generate',side_effect=blocked):
+        with patch('femto.app.qt_planning.surface_workspace.generate_checked',side_effect=blocked):
             self.page.generate()
             deadline=time.monotonic()+5
             while not self.page.busy and time.monotonic()<deadline:QTest.qWait(10)

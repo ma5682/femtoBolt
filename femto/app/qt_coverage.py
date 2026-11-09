@@ -102,11 +102,14 @@ class CoveragePanel(QWidget):
     def display(self):return self._display
 
     def set_context(self, model, plan, *, ready=False, busy=False):
+        from femto.planning.target_surface import is_deferred
+        deferred=is_deferred(((plan or {}).get('planning_context') or {}).get('target'))
         for label, value in zip(self.labels, summaries(plan)):label.setText(value)
         if plan and not ready and not busy:
             self.labels[2].setText('模型覆盖：当前不可使用；请先核对输入与路线。')
         metadata = (plan or {}).get(KEY)
-        if self._compact:self.labels[2].setVisible(metadata is not None)
+        if self._compact:self.labels[2].setVisible(metadata is not None or deferred)
+        if deferred and ready:self.labels[2].setText('面积与覆盖尚未计算，可按需检查。')
         algorithm = (plan or {}).get('surface_trajectory', {}).get('planner', {}).get('algorithm_version')
         self._algorithm = algorithm
         refined = algorithm in ('coverage-refined-surface-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-refined-surface-v1')
@@ -159,7 +162,7 @@ class CoveragePanel(QWidget):
             self.reason.setCurrentIndex(0)
         self._display = display
         self._pixel_reasons(changed)
-        self.verify.setText('重新核验模型覆盖' if metadata else '核验模型覆盖')
+        self.verify.setText('计算面积与覆盖' if deferred else '重新核验模型覆盖' if metadata else '核验模型覆盖')
         self.verify.setEnabled(bool(ready and not busy and (plan or {}).get('planning_context')))
         available = bool(ready and not busy and display is not None)
         availability_changed = available != self._available

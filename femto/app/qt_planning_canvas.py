@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
+import math
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
@@ -14,6 +15,7 @@ class PlanningCanvas(QWidget):
     changed = Signal()
     editing_started = Signal()
     unchanged_stroke = Signal()
+    zoom_changed = Signal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -31,6 +33,12 @@ class PlanningCanvas(QWidget):
         self.role = 'work'
         self.erase = False
         self.brush_size = 40
+        self.brush_shape = 'square'
+        self.work_color = (73,135,225,76)
+        self.selection_outline = False
+        self._outline_path = None
+        self.show_zoom = True
+        self.background_color = '#06101A'
         self.editable = True
         self.support = False
         self._quality_image = None
@@ -73,6 +81,7 @@ class PlanningCanvas(QWidget):
     def reset_view(self):
         self.zoom = 1.
         self.pan = QPointF()
+        self.zoom_changed.emit(self.zoom)
         self.update()
 
     def image_rect(self):
@@ -97,6 +106,7 @@ class PlanningCanvas(QWidget):
         scale=base*self.zoom
         self.pan=QPointF((self._rgb.width()/2-(xs.min()+xs.max()+1)/2)*scale,
                          (self._rgb.height()/2-(ys.min()+ys.max()+1)/2)*scale)
+        self.zoom_changed.emit(self.zoom)
         self.update()
 
     def image_point(self, position):
@@ -108,13 +118,44 @@ class PlanningCanvas(QWidget):
 
     def rebuild_layers(self):
         self._layers = []
+        self._outline_path = None
         if self.model is None:
             return
-        for mask, rgba in ((self.work, (73,135,225,76)), (self.forbidden, (239,71,111,115))):
+        for mask, rgba in ((self.work, self.work_color), (self.forbidden, (239,71,111,115))):
             layer = np.zeros((*mask.shape, 4), np.uint8)
             layer[mask.astype(bool)] = rgba
             self._layers.append(QImage(layer.data, layer.shape[1], layer.shape[0], layer.strides[0], QImage.Format_RGBA8888).copy())
         self.update()
+
+    def _update_mask_layer(self, index, left, top, right, bottom):
+        mask = self.work if index == 0 else self.forbidden
+        image = self._layers[index]
+        pixels = np.ndarray((image.height(), image.width(), 4), np.uint8,
+                            buffer=image.bits(), strides=(image.bytesPerLine(), 4, 1))
+        patch = pixels[top:bottom, left:right]
+        selected = mask[top:bottom, left:right].astype(bool)
+        patch[:] = 0
+        patch[selected] = self.work_color if index == 0 else (239,71,111,115)
+        if index == 0:self._outline_path = None
+
+    def _draw_selection_outline(self, painter, rect):
+        if self._outline_path is None:
+            import cv2
+            contours, _ = cv2.findContours(self.work, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+            path = QPainterPath()
+            for contour in contours:
+                points = contour[:,0,:]
+                if len(points) < 2:continue
+                path.moveTo(float(points[0,0]), float(points[0,1]))
+                for x,y in points[1:]:path.lineTo(float(x),float(y))
+                path.closeSubpath()
+            self._outline_path = path
+        painter.save(); painter.setClipRect(rect)
+        painter.translate(rect.x(), rect.y())
+        painter.scale(rect.width()/self._rgb.width(), rect.height()/self._rgb.height())
+        pen = QPen(QColor('#00E2D3'), 1.4); pen.setCosmetic(True)
+        painter.setPen(pen); painter.setBrush(Qt.NoBrush)
+        painter.drawPath(self._outline_path); painter.restore()
 
     def set_quality_overlay(self, rgba):
         self._quality_image = None if rgba is None else rgb_image(rgba)
@@ -163,7 +204,7 @@ class PlanningCanvas(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor('#06101A'))
+        p.fillRect(self.rect(), QColor(self.background_color))
         if self._rgb.isNull():
             draw_empty_viewport(p,self.rect(),'加载模型，开始区域规划',
                                 '打开已采集的三维模型或保存的区域方案。',kind='planning')
@@ -187,6 +228,8 @@ class PlanningCanvas(QWidget):
         if self._coverage_image is None and self.support and self._quality_image is not None:
             p.drawImage(rect, self._quality_image)
         p.setRenderHint(QPainter.Antialiasing)
+        if self.selection_outline and self.show_regions and self._coverage_image is None:
+            self._draw_selection_outline(p, rect)
         def point(value):
             return QPointF(rect.x()+value[0]*rect.width()/self._rgb.width(), rect.y()+value[1]*rect.height()/self._rgb.height())
         if self.show_plan and self.show_nominal_bands and self._coverage_image is None:
@@ -215,9 +258,12 @@ class PlanningCanvas(QWidget):
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(QColor('#ef476f' if self.erase or self.role=='forbidden' else '#06d6a0'),1.5))
             half=self.brush_size/2
-            p.drawRect(QRectF(self._cursor.x()-half,self._cursor.y()-half,self.brush_size,self.brush_size))
-        p.setPen(QColor('#EAF2F8'))
-        p.drawText(12,24,f'{self.zoom*100:.0f}%')
+            cursor = QRectF(self._cursor.x()-half,self._cursor.y()-half,self.brush_size,self.brush_size)
+            if self.brush_shape == 'round':p.drawEllipse(cursor)
+            else:p.drawRect(cursor)
+        if self.show_zoom:
+            p.setPen(QColor('#EAF2F8'))
+            p.drawText(12,24,f'{self.zoom*100:.0f}%')
 
     def set_coverage_overlay(self, rgba):
         self._coverage_image = None
@@ -228,11 +274,24 @@ class PlanningCanvas(QWidget):
 
     def _paint(self, pixel):
         from femto.annotation.square_brush import stroke
+        if self.brush_shape == 'round':
+            from femto.annotation.round_brush import stroke
         mask = self.work if self.role=='work' else self.forbidden
         scale=self._rgb.width()/self.image_rect().width()
-        stroke(mask, self._last or pixel, pixel, self.brush_size*scale, self.erase)
+        start = self._last or pixel
+        size = self.brush_size*scale
+        stroke(mask, start, pixel, size, self.erase)
         self._last=pixel
-        self.rebuild_layers()
+        # The original brush still writes the original mask. Refresh only its
+        # swept bounds; two pixels enclose 1/16px rounding and raster endpoints.
+        half = max(1., float(size))/2
+        left = max(0, math.floor(min(start[0], pixel[0])-half)-2)
+        top = max(0, math.floor(min(start[1], pixel[1])-half)-2)
+        right = min(mask.shape[1], math.ceil(max(start[0], pixel[0])+half)+2)
+        bottom = min(mask.shape[0], math.ceil(max(start[1], pixel[1])+half)+2)
+        index = 0 if self.role=='work' else 1
+        self._update_mask_layer(index, left, top, right, bottom)
+        self.update()
 
     def finish_stroke(self):
         if self._before is None:
@@ -292,6 +351,7 @@ class PlanningCanvas(QWidget):
             anchor=QPointF(new.x()+(position.x()-old.x())*ratio,
                            new.y()+(position.y()-old.y())*ratio)
             self.pan+=position-anchor
+        self.zoom_changed.emit(self.zoom)
         self.update()
 
     def undo(self):

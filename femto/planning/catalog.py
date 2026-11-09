@@ -184,6 +184,7 @@ def scan_saved_versions(outputs,check=lambda:None):
     roots=[outputs/'saved_projects']
     roots.extend(outputs.glob('complete_demo_*/reconstruction'))
     roots.extend(p.parent for p in (outputs/'region_workspaces').glob('*/region_project_history'))
+    roots.extend(p.parent for p in (outputs/'planning_models').glob('*/region_project_history'))
     rows=[];seen=set()
     for root in roots:
         check()
@@ -200,5 +201,26 @@ def scan_saved_versions(outputs,check=lambda:None):
     return sorted(rows,key=lambda row:row['stamp'],reverse=True)
 
 
+def scan_capture_exports(reconstruction, *, outputs=None, check=lambda:None):
+    """Join saved derivatives to their exact capture, never by task/display name."""
+    root = Path(reconstruction).resolve()
+    rows = scan_exports(root, check=check)
+    outputs = Path(outputs) if outputs is not None else root.parent.parent
+    seen = {str(Path(row.get('project_location') or row.get('target') or row['source']).resolve()).casefold()
+            for row in rows}
+    mesh = root/'scene_tsdf_mesh_m.ply'
+    for row in scan_saved_versions(outputs, check=check):
+        check()
+        details = row.get('details') or {}
+        lineage = details.get('source_lineage') or {}
+        source = lineage.get('source_mesh') or details.get('source_mesh')
+        if not source or Path(source).resolve() != mesh:
+            continue
+        key = str(Path(row.get('project_location') or row.get('target') or row['source']).resolve()).casefold()
+        if key not in seen:
+            rows.append(row); seen.add(key)
+    return sorted(rows, key=lambda row: row['stamp'], reverse=True)
+
+
 __all__ = ['local_asset', 'register_project', 'scan_region_exports', 'scan_exports', 'scan_saved_versions',
-           'history_record_status']
+           'scan_capture_exports', 'history_record_status']

@@ -23,6 +23,8 @@ def _install(model,region,plan,trajectory,target,check):
 
 
 def calculate(model,region,plan,check=lambda: None,progress=lambda text: None,*,budget=None):
+    from femto.planning.target_preparation import prepare
+    plan=prepare(model,region,plan,check,progress)
     planning_revision.require_current(model,region,plan['treatment_head'],plan['planning_context']['revision'])
     planning_state.validate(plan,model.store.mesh,region,check)
     base=SurfaceTrajectory.from_dict(plan['surface_trajectory'])

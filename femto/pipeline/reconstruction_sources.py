@@ -30,10 +30,14 @@ def mode_of(root: str | Path) -> str | None:
             resolve_source(root)
             return 'keyframe'
         if data.get('fixed_camera') is False and int(data.get('frame_count', 0)) > 1:
+            from femto.reconstruction_profile import local_route_result, LOCAL_ROUTE_SKIP_REASON
+            reconstruction = json.loads((root / 'reconstruction/reconstruction_report.json').read_text(encoding='utf-8-sig'))
             if ((root / 'nerfstudio' / 'transforms.json').is_file()
                     or (data.get('local_measured') is True
                         and data.get('reconstruction_source_mode') == 'moving'
-                        and data.get('nerfstudio_skipped_reason') == 'local_capture_has_fewer_than_12_views')):
+                        and (data.get('nerfstudio_skipped_reason') == 'local_capture_has_fewer_than_12_views'
+                             or local_route_result(data, reconstruction)
+                                and data.get('nerfstudio_skipped_reason') == LOCAL_ROUTE_SKIP_REASON))):
                 return 'moving'
     except (OSError, ValueError, KeyError, TypeError):
         pass

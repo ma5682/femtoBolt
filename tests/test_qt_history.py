@@ -132,7 +132,7 @@ class QtHistoryTests(unittest.TestCase):
                       name="默认工作区", status="可打开继续规划",
                       folder=self.rec, source=self.rec / "region_project_history/index.json",
                       project=self.rec / "region.zip", file_status="工程资产指纹一致")
-        with patch("femto.app.qt_history.scan_exports", return_value=[export]) as scan:
+        with patch("femto.app.qt_history.scan_capture_exports", return_value=[export]) as scan:
             self.dialog.tabs.setCurrentIndex(1)
             self.wait(lambda: not self.dialog.busy and self.dialog.tabs.currentIndex() == 1
                       and self.dialog.records)
@@ -172,7 +172,7 @@ class QtHistoryTests(unittest.TestCase):
             time.sleep(.15)
             return [second_export]
 
-        with patch("femto.app.qt_history.scan_exports", side_effect=slow_scan):
+        with patch("femto.app.qt_history.scan_capture_exports", side_effect=slow_scan):
             self.dialog.tabs.setCurrentIndex(1)
             self.assertEqual(self.dialog.record_tree.topLevelItemCount(), 0)
             self.wait(lambda: not self.dialog.busy and self.dialog.records)
@@ -202,7 +202,7 @@ class QtHistoryTests(unittest.TestCase):
         session = self.dialog.current()
         row = dict(time='2026-10-20', kind='区域工程 / 方案', name='仅方案匹配名称',
                    status='可打开', folder=self.rec, project=self.rec/'region.zip')
-        with patch('femto.app.qt_history.scan_exports', return_value=[row]) as scan:
+        with patch('femto.app.qt_history.scan_capture_exports', return_value=[row]) as scan:
             self.dialog.tabs.setCurrentIndex(1)
             self.wait(lambda: not self.dialog.busy)
             self.dialog.search.setText(row['name'])
@@ -220,7 +220,7 @@ class QtHistoryTests(unittest.TestCase):
         row = dict(time='2026-10-20', kind='区域工程 / 方案', name='独立方案搜索',
                    status='可打开', folder=self.rec, project=self.rec/'region.zip')
         self.dialog.search.setText(session['name'])
-        with patch('femto.app.qt_history.scan_exports', return_value=[row]) as scan:
+        with patch('femto.app.qt_history.scan_capture_exports', return_value=[row]) as scan:
             self.dialog.tabs.setCurrentIndex(1)
             self.wait(lambda: not self.dialog.busy)
             self.assertEqual(self.dialog.search.text(), '')
@@ -257,7 +257,7 @@ class QtHistoryTests(unittest.TestCase):
                 release.wait(5)
                 return [first]
             return [second]
-        with patch('femto.app.qt_history.scan_exports', side_effect=scan) as scanned:
+        with patch('femto.app.qt_history.scan_capture_exports', side_effect=scan) as scanned:
             try:
                 self.dialog.tabs.setCurrentIndex(1)
                 self.wait(entered.is_set)
@@ -293,7 +293,7 @@ class QtHistoryTests(unittest.TestCase):
                 release.wait(5)
                 return [first]
             return [second]
-        with patch('femto.app.qt_history.scan_exports', side_effect=scan) as scanned:
+        with patch('femto.app.qt_history.scan_capture_exports', side_effect=scan) as scanned:
             try:
                 self.dialog.tabs.setCurrentIndex(1)
                 self.wait(entered.is_set)
@@ -319,7 +319,7 @@ class QtHistoryTests(unittest.TestCase):
         def scan(*args, **kwargs):
             release.wait(5)
             return []
-        with patch('femto.app.qt_history.scan_exports', side_effect=scan):
+        with patch('femto.app.qt_history.scan_capture_exports', side_effect=scan):
             try:
                 self.dialog.tabs.setCurrentIndex(1)
                 self.assertTrue(self.dialog.busy)
@@ -333,10 +333,10 @@ class QtHistoryTests(unittest.TestCase):
     def test_export_refresh_failure_preserves_rows(self):
         row = dict(time='2026-10-20', kind='区域工程 / 方案', name='保留记录',
                    status='可打开', folder=self.rec, project=self.rec/'region.zip')
-        with patch('femto.app.qt_history.scan_exports', return_value=[row]):
+        with patch('femto.app.qt_history.scan_capture_exports', return_value=[row]):
             self.dialog.tabs.setCurrentIndex(1)
             self.wait(lambda: not self.dialog.busy)
-        with patch('femto.app.qt_history.scan_exports', side_effect=ValueError('索引损坏')):
+        with patch('femto.app.qt_history.scan_capture_exports', side_effect=ValueError('索引损坏')):
             self.dialog.refresh()
             self.wait(lambda: not self.dialog.busy)
         self.assertEqual(self.dialog.current(), row)
@@ -354,7 +354,7 @@ class QtHistoryTests(unittest.TestCase):
         first = dict(time='2026-10-20', kind='区域工程 / 方案', name='第一版',
                      status='可打开', folder=self.rec, project=self.rec/'first.zip')
         second = dict(first, name='第二版', project=self.rec/'second.zip')
-        with patch('femto.app.qt_history.scan_exports', return_value=[first, second]):
+        with patch('femto.app.qt_history.scan_capture_exports', return_value=[first, second]):
             self.dialog.tabs.setCurrentIndex(1)
             self.wait(lambda: not self.dialog.busy)
             self.dialog.record_tree.setCurrentItem(self.dialog.record_tree.topLevelItem(1))
@@ -514,7 +514,7 @@ class QtHistoryTests(unittest.TestCase):
         row = dict(time='2026-10-20', kind='区域工程 / 方案', name='已保存',
                    status='可打开', folder=self.rec, project=self.rec/'region.zip',
                    project_id='project', revision_id='abcdefgh-match-at-end', parent_revision_id='parent')
-        with patch('femto.app.qt_history.scan_exports', return_value=[row]):
+        with patch('femto.app.qt_history.scan_capture_exports', return_value=[row]):
             self.dialog.tabs.setCurrentIndex(1)
             self.wait(lambda: not self.dialog.busy)
         self.dialog.search.setText('match-at-end')

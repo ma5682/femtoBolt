@@ -27,15 +27,22 @@ def profile(stride: int, sample_step_mm: float, *, sampling_policy: str | None =
             or sample_step_mm not in SAMPLE_STEPS):
         raise ValueError('简化路线取点间隔无效')
     if sampling_policy is not None:
-        from femto.planning.route_sampling import POLICY
-        if sampling_policy != POLICY or sample_step_mm != 5.:
+        from femto.planning.route_sampling import POLICY, CURVATURE_POLICY
+        if sampling_policy not in (POLICY, CURVATURE_POLICY) or sample_step_mm != 5.:
             raise ValueError('自动取点策略或最大采样间隔无效')
-        return f'stride{stride}-original-mesh-{POLICY}'
+        return f'stride{stride}-original-mesh-{sampling_policy}'
     return f'stride{stride}-original-mesh-step{sample_step_mm:g}mm-v1'
 
 
 def route_sample_step_mm(view_reference: dict, *, decision: dict | None = None, mesh=None) -> float:
     derivation = view_reference.get('derivation') if isinstance(view_reference, dict) else None
+    from femto.planning.patch_reference import SCHEMA as PATCH_SCHEMA, checked
+    if isinstance(derivation, dict) and derivation.get('schema') == PATCH_SCHEMA:
+        checked(derivation)
+        from femto.planning.route_sampling import validate
+        if not isinstance(decision, dict) or decision.get('policy') != derivation['sampling_policy']:
+            raise ValueError('粗分区沿线取点策略不一致')
+        return float(validate(decision, mesh)['sample_step_mm'])
     if not isinstance(derivation, dict) or derivation.get('schema') != SCHEMA:
         return 1.
     step, stride = derivation.get('route_sample_step_mm'), derivation.get('stride')
@@ -45,6 +52,8 @@ def route_sample_step_mm(view_reference: dict, *, decision: dict | None = None, 
         raise ValueError('简化参考配置与路线取点间隔不一致')
     if policy is not None:
         from femto.planning.route_sampling import validate
+        if not isinstance(decision,dict) or decision.get('policy')!=policy:
+            raise ValueError('沿线取点决策与参考策略版本不一致')
         return float(validate(decision, mesh)['sample_step_mm'])
     if decision is not None:
         raise ValueError('固定采样参考不能附带自动取点决策')

@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
+import numpy as np
 from unittest.mock import patch
 
 from PySide6.QtWidgets import QApplication
@@ -63,25 +64,29 @@ class TaskOnlyWorkflowTests(unittest.TestCase):
         self.addCleanup(page.shutdown)
         return page
 
-    def test_initial_page_has_five_steps_and_no_body_picker(self):
+    def test_initial_page_has_region_first_steps_and_no_body_picker(self):
         page = self.page()
-        self.assertEqual([button.text() for button in page.workflow.buttons],
-                         ['01  局部采集', '02  检查模型', '03  标记区域', '04  生成路线', '05  核对保存'])
+        self.assertEqual([button.text() for button in page.workflow.stage_buttons],
+                         ['01  采集', '02  涂抹选区', '03  模型与路线', '04  保存'])
         self.assertEqual(page.workflow.current_step, 1)
         self.assertEqual(page.prepare_action.text(), '连接相机')
         for name in ('task_region', 'body_site_button', 'choose_body_site', 'apply_body_selection'):
             self.assertFalse(hasattr(page, name), name)
 
-    def test_ready_frame_still_requires_explicit_scan_roi_before_start(self):
+    def test_ready_frame_can_start_without_a_second_region_selection(self):
         page = self.page()
-        with patch.object(page, 'live_frame_valid', return_value=True), patch.object(page, 'send') as send:
+        from test_segmented_capture import make_frame
+        frame=make_frame([500]*19200,1)
+        frame.depth_mm=frame.depth_mm.reshape(120,160)
+        frame.color_bgr=np.zeros((120,160,3),np.uint8)
+        page.host.latest_frame=frame
+        page.device_info={'depth_range_m':[.25,2.21]}
+        with patch.object(page, 'live_frame_valid', return_value=True), patch.object(page, 'send',return_value=True) as send:
             page.start()
-            send.assert_not_called()
-            self.assertFalse(page.session.active)
-            self.assertIn('扫描范围', page.roi_message)
-        with patch.object(page, 'live_frame_valid', return_value=True), patch.object(page, 'choose_scan_roi') as choose:
-            page.prepare_next()
-            choose.assert_called_once()
+            self.assertTrue(page.session.active)
+            self.assertEqual(send.call_args.kwargs['scan_roi']['rect_norm'],[0.,0.,1.,1.])
+            self.assertTrue(send.call_args.kwargs['region_first'])
+        page.session.active=False
 
     def test_rescan_preserves_task_identity_and_clears_geometry_without_picker(self):
         page = self.page()

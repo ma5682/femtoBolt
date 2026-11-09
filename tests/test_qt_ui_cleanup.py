@@ -1,4 +1,4 @@
-"""Regression checks for progressive disclosure and empty-selection actions."""
+"""Regression checks for the compact capture page and empty-selection actions."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
@@ -12,17 +12,21 @@ class UiCleanupTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_capture_details_survive_refresh_and_can_be_collapsed(self):
+    def test_capture_refresh_never_reopens_removed_sidebar_or_details(self):
         page = CapturePage(connect_camera=False)
         try:
-            self.assertFalse(page.details_toggle.isHidden())
-            self.assertTrue(page.details_panel.isHidden())
-            page.details_toggle.click()
+            page.show()
             page.refresh()
-            self.assertFalse(page.details_panel.isHidden())
-            page.details_toggle.click()
+            self.assertFalse(hasattr(page, 'details_toggle'))
+            self.assertFalse(hasattr(page, 'inspector_dialog'))
+            self.assertFalse(page.inspector_scroll.isVisible())
+            self.assertFalse(page.task_name.isVisible())
+            self.assertEqual(page.count_label.text(), '0 / 3 帧')
+            page.hide()
+            page.show()
             page.refresh()
-            self.assertTrue(page.details_panel.isHidden())
+            self.assertFalse(page.inspector_scroll.isVisible())
+            self.assertTrue(page.frame_progress.isVisible())
         finally:
             page.shutdown()
             page.close()

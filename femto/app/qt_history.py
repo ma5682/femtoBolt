@@ -26,7 +26,7 @@ from femto.app.qt_icons import line_icon
 from femto.paths import REPO_ROOT
 from femto.history_store import HistoryStore
 from femto.pipeline.local_history import existing_actions, scan_history, set_records_deleted
-from femto.planning.catalog import local_asset, scan_exports, scan_saved_versions
+from femto.planning.catalog import local_asset, scan_saved_versions, scan_capture_exports
 from femto.planning.planning_io import TaskControl
 
 
@@ -760,7 +760,7 @@ class HistoryDialog(QDialog):
         def read(control):
             rows = (scan_saved_versions(self.outputs, check=control.check)
                     if reconstruction == self.outputs/'saved_projects'
-                    else scan_exports(reconstruction, check=control.check))
+                    else scan_capture_exports(reconstruction, check=control.check))
             self.store.replace(collection, rows, search_text=self._search_text, check=control.check)
             return self.store.query(collection, check=control.check)['rows']
         self._start("核验区域与轨迹", read, done)

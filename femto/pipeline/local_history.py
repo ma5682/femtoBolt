@@ -138,6 +138,10 @@ def scan_history(datasets: str | Path,outputs: str | Path,*,cancel: Any=None,sec
             report=load_json_object(reconstruction/'reconstruction_report.json')
             row['session_id']=metadata.get('session_id')
             row['count']=report.get('frame_count')
+            scope=report.get('reconstruction_scope')
+            if isinstance(scope,dict):
+                row['count']=scope.get('input_frame_count',row['count'])
+                row['contributing_frame_count']=scope.get('contributing_frame_count')
             dataset=Path(report['source_dataset'])
             tracking=Path(metadata['tracking_report'])
             source=tracking.parent.parent

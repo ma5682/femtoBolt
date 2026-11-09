@@ -1,4 +1,11 @@
 /* Femto Bolt medical workstation theme. */
+/* Preparation occupies the same destination as the finished model. */
+QFrame#planningPreparationBanner {
+    background: transparent; border: none; border-bottom: 1px solid #355366;
+}
+QLabel#preparationTitle { font-size: 16px; font-weight: 600; color: #edf7fc; }
+QLabel#preparationReferenceHeading { font-size: 16px; font-weight: 600; color: #edf7fc; }
+QWidget#planningStatusArea { background: transparent; }
 QWidget {
     background: #08131F;
     color: #EAF2F8;
@@ -8,6 +15,37 @@ QWidget {
     selection-color: #EAF2F8;
 }
 QMainWindow, QWidget#root, QWidget#appRoot, QWidget#center { background: #08131F; }
+/* Step 02: compact tools and a quiet, full-width reference canvas. */
+QWidget#capturePage[selectionMode="true"], QWidget#captureRegionEditor { background: #0D171F; }
+QWidget#captureRegionEditor QLabel { background: transparent; }
+QLabel#regionHeading { font-size: 22px; font-weight: 700; color: #F2F6F7; }
+QFrame#regionHeadingAccent { background: #00B9AA; border: none; }
+QLabel#regionFrameCount { color: #AFBBC3; font-size: 15px; }
+QLabel#regionInstruction { color: #93A2AD; font-size: 14px; }
+QFrame#regionToolbar { background: transparent; border-top: 1px solid #2B3D48; border-bottom: 1px solid #2B3D48; }
+QFrame#regionToolSeparator { background: #2B3D48; border: none; margin: 0; }
+QWidget#captureRegionEditor QPushButton {
+    background: qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #1D2B35,stop:1 #17232D);
+    color: #EDF4F4; border: 1px solid #2D404D; border-radius: 5px;
+    padding: 0 14px; min-height: 40px;
+}
+QWidget#captureRegionEditor QPushButton:hover { background: #253B45; border-color: #527078; }
+QWidget#captureRegionEditor QPushButton:checked {
+    background: #009F93; border-color: #00C4B3; color: #FFFFFF;
+}
+QWidget#captureRegionEditor QPushButton:pressed { background: #007F78; }
+QWidget#captureRegionEditor QPushButton:disabled { background: #141F28; color: #657780; border-color: #25343F; }
+QSpinBox#regionBrushValue { background: #0C161F; border: 1px solid #2B3D48; border-radius: 5px; padding: 6px 2px; min-height: 28px; color: #F1F5F6; }
+QWidget#captureRegionEditor QSlider#regionBrushSlider { background: transparent; min-height: 26px; }
+QWidget#captureRegionEditor QSlider#regionBrushSlider::groove:horizontal { height: 4px; background: #53626C; border-radius: 2px; }
+QWidget#captureRegionEditor QSlider#regionBrushSlider::sub-page:horizontal { background: #00BFAF; border-radius: 2px; }
+QWidget#captureRegionEditor QSlider#regionBrushSlider::handle:horizontal { background: #F0F5F5; border: 1px solid #F8FCFC; width: 13px; margin: -5px 0; border-radius: 7px; }
+QWidget#capturePage[selectionMode="true"] QFrame#actionBar { background: #0D171F; border-top: 1px solid #354954; }
+QLabel#regionFooterNote { color: #98A8B2; font-size: 14px; }
+QWidget#capturePage[selectionMode="true"] QFrame#actionBar QPushButton { background: #192832; border: 1px solid #304651; border-radius: 5px; color: #E9F2F4; padding: 0 24px; min-height: 46px; }
+QWidget#capturePage[selectionMode="true"] QFrame#actionBar QPushButton[role="primary"] { background: #009F93; border-color: #00C4B3; color: #FFFFFF; font-weight: 700; }
+QWidget#capturePage[selectionMode="true"] QFrame#actionBar QPushButton[role="primary"]:hover { background: #00B3A4; }
+QWidget#capturePage[selectionMode="true"] QFrame#actionBar QPushButton:disabled { background: #16262E; color: #657D86; border-color: #2B4149; }
 QLabel { background: transparent; }
 
 /* Header */
@@ -81,6 +119,10 @@ QLabel#deviceRowValue { font-size: 12px; }
 QLabel#prototypeBadge { color: #637B8D; font-size: 12px; }
 
 /* Viewport and controls */
+QFrame#captureFrameProgress { background: transparent; border-left: 1px solid #29465D; border-right: 1px solid #29465D; }
+QLabel#captureFrameCount { color: #05DDD0; font-size: 18px; font-weight: 700; }
+QFrame#captureFrameSegment { background: #304A5B; border: none; border-radius: 4px; }
+QFrame#captureFrameSegment[accepted="true"] { background: #05DDD0; }
 QFrame#titleBar { background: #08131F; }
 QLabel#pageTitle, QLabel[role="pageTitle"] { color: #EAF2F8; font-size: 24px; font-weight: 700; }
 QLabel#pageSubtitle { color: #91A9BB; font-size: 13px; }

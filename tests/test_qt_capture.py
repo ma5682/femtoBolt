@@ -120,28 +120,42 @@ class CaptureStateTests(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_QT, "PySide6 is required for the Qt workbench")
 class CapturePageTests(unittest.TestCase):
-    def test_three_view_limit_disables_requests_and_preserves_historical_counts(self):
+    def test_three_views_block_more_requests_and_preserve_historical_counts(self):
         page = CapturePage(connect_camera=False)
         try:
             page.session.begin(); page.session.state = 'tracking'; page.session.count = 3
             page.session.record = {'state': 'tracking', 'received_monotonic': time.monotonic()}
             with patch.object(page, 'live_frame_valid', return_value=True), patch.object(page, 'send') as send:
                 page.refresh()
-                self.assertEqual(page.count_label.text(), '3/3 帧')
+                self.assertEqual(page.count_label.text(), '3 / 3 帧')
                 self.assertFalse(page.primary.isEnabled())
+                self.assertTrue(all(segment.property('accepted') for segment in page.frame_steps))
                 page.request_view(); send.assert_not_called()
                 page.handle_event('local_finishing', {'session_id': page.session.session_id,
                                                      'reason': 'accepted_view_limit'})
                 page.refresh()
                 self.assertFalse(page.finish_button.isEnabled())
                 self.assertTrue(page.cancel_button.isEnabled())
-                self.assertIn('自动结束', page._capture_message(page.session, True, False, '', False)[1])
+                self.assertIn('自动结束', page._capture_message(page.session, True, False, False)[1])
             page.session.active = False; page.session.finishing = False
             page.session.count = 6; page.refresh()
             self.assertEqual(page.count_label.text(), '6 帧')
         finally:
             page.session.active = False
             page.shutdown()
+
+    def test_finish_available_after_one_valid_frame_but_not_before(self):
+        page=CapturePage(connect_camera=False)
+        try:
+            page.session.begin();page.session.state='tracking'
+            page.session.record={'state':'tracking','received_monotonic':time.monotonic()}
+            with patch.object(page,'live_frame_valid',return_value=True),patch.object(page,'send',return_value=True) as send:
+                page.refresh();self.assertFalse(page.finish_button.isEnabled())
+                page.finish();send.assert_not_called()
+                page.session.count=1;page.refresh();self.assertTrue(page.finish_button.isEnabled())
+                page.finish();send.assert_called_once_with('local_finish',True)
+        finally:
+            page.session.active=False;page.shutdown()
 
     def test_stage_request_rejection_does_not_claim_busy_without_backend_ack(self):
         page=CapturePage(connect_camera=False)
@@ -164,7 +178,7 @@ class CapturePageTests(unittest.TestCase):
         page = CapturePage(connect_camera=False)
         self.assertFalse(page.camera_ready)
         self.assertTrue(page.can_leave())
-        self.assertIn("确认范围", page.primary.text())
+        self.assertEqual("开始采集", page.primary.text())
         self.assertTrue(page.shutdown())
 
     def test_live_frame_cloud_previews_before_reference_and_clears_stale_camera(self):
@@ -268,12 +282,12 @@ class CapturePageTests(unittest.TestCase):
             self.assertIs(window.pages.currentWidget(), window.capture)
             self.assertTrue(window.capture.can_leave())
             self.assertTrue(window.planning.can_leave())
-            self.assertIn("确认范围", window.capture.primary.text())
+            self.assertEqual("开始采集", window.capture.primary.text())
         finally:
             window.close()
             self.app.processEvents()
 
-    def test_page_does_not_accept_finish_without_three_views(self):
+    def test_page_does_not_accept_finish_without_live_frame(self):
         page = CapturePage(connect_camera=False)
         page.camera_ready = True
         page.session.begin()
@@ -283,7 +297,7 @@ class CapturePageTests(unittest.TestCase):
         page.session.count = 2
         page.finish(True)
         self.assertTrue(page.session.active)
-        self.assertEqual(page.session.notice, "need_more_views")
+        self.assertEqual(page.session.notice, "camera_not_ready")
         self.assertTrue(page.shutdown())
 
     def test_paused_capture_cannot_finish_until_resumed(self):
@@ -328,7 +342,7 @@ class CapturePageTests(unittest.TestCase):
             self.assertFalse(page.session.active)
             self.assertEqual(page.session.state, "camera_error")
             self.assertEqual(page.session.failure["error"], "camera_not_ready")
-            self.assertIn("重新建立扫描参考", page.primary.text())
+            self.assertEqual("重新开始采集", page.primary.text())
         finally:
             self.assertTrue(page.shutdown())
 

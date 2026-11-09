@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from femto.operation_diagnostics import diagnosed
 
 
 def clone_model(model, *, freeze_inputs=False):
@@ -53,6 +54,7 @@ def masks_from_region(region, shape):
     return work,forbidden
 
 
+@diagnosed('load.extract_region')
 def extract_region(model, work, forbidden, name, note, cancel):
     from femto.annotation.fixed_rgb_geometry import MAX_POLYGON_CORNERS, GeometryBudget
     from femto.annotation.square_brush import mask_polygon
@@ -74,3 +76,39 @@ def extract_region(model, work, forbidden, name, note, cancel):
 
 
 from femto.planning.saved_source import load_source, verified_capture_source
+
+
+def needs_model_confirmation(model):
+    record = getattr(model, 'acquisition_completion', None)
+    return record is not None and record.get('confirmed_for_planning') is not True
+
+
+def prepare_route_model(model, region, work, forbidden, source, cancel, progress):
+    """Called only by Generate: confirm the displayed version, then prepare it.
+
+    Opening a preview never writes a confirmation or relaxes saved-source gates.
+    All new geometry stays in this worker until generation succeeds.
+    """
+    from femto.annotation.fixed_rgb_geometry import GeometryBudget
+    from femto.dataset.acquisition_completion import confirm_for_planning
+    from femto.app.qt_planning_resolution import prepare_new_source
+    check = GeometryBudget(cancel).check
+    if needs_model_confirmation(model):
+        record = model.acquisition_completion
+        capture = getattr(model, 'capture_source', None)
+        if capture is None:
+            raise ValueError('原采集来源尚未核验，不能确认当前模型。')
+        progress('核对当前模型版本并准备路线')
+        model.acquisition_completion = confirm_for_planning(capture, record['binding'], check=check)
+    if getattr(model, 'route_prepare_required', False):
+        blank = clone_model(model)
+        blank.store.regions = []; blank.store.points = []; blank.store._history = []
+        blank.saved_plan = None
+        blank.pre_reconstruction_selection = work.copy()
+        blank.pre_reconstruction_forbidden = forbidden.copy()
+        prepared = prepare_new_source(blank, source, enabled=True, restore_draft=False,
+                                      check=check, progress=progress)
+        model, region = extract_region(prepared, work, forbidden, region['name'], region.get('note', ''), cancel)
+        model.route_prepare_required = False
+    check()
+    return model, region

@@ -293,7 +293,7 @@ def _chains(lines: np.ndarray, face_ids: np.ndarray) -> tuple[list[tuple[np.ndar
 
 def _resample(points: np.ndarray, edge_faces: list[int], step_m: float, *,
               preserve_face_crossings: bool = False,
-              face_local_spacing: bool = False) -> list[tuple[np.ndarray, int]]:
+              face_local_spacing: bool = False, sampling_decision=None) -> list[tuple[np.ndarray, int]]:
     lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
     keep = lengths > 1e-12
     if not np.any(keep):
@@ -306,6 +306,11 @@ def _resample(points: np.ndarray, edge_faces: list[int], step_m: float, *,
             faces.append(int(edge_faces[index]))
     points = np.asarray(clean)
     lengths = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    if sampling_decision is not None:
+        from femto.planning.route_sampling import CURVATURE_POLICY, tangent_samples
+        if sampling_decision.get('policy')==CURVATURE_POLICY:
+            if not preserve_face_crossings or not face_local_spacing:raise ValueError('曲率取点必须保留原跨面位置')
+            return tangent_samples(points,faces,step_m,sampling_decision)
     if face_local_spacing:
         if not preserve_face_crossings:raise ValueError('面内取点必须保留跨面位置')
         # The adaptive policy resets spacing at each existing face crossing.
@@ -552,7 +557,8 @@ def _slice_rows(sliced: trimesh.Trimesh, face_lookup: np.ndarray | None, compone
                 dropped_fragments.append(dropped(slice_index, length, "below_min_segment"))
                 continue
             samples = (_resample(polyline, edge_faces, step_m, preserve_face_crossings=True,
-                                 face_local_spacing=params.get('sampling_decision') is not None)
+                                 face_local_spacing=params.get('sampling_decision') is not None,
+                                 sampling_decision=params.get('sampling_decision'))
                        if params.get('preserve_face_crossings') else _resample(polyline, edge_faces, step_m))
             runs, unsupported = _split_supported(samples, intrinsic, image_size,
                                                   params["min_segment_mm"] / 1000, allowed)

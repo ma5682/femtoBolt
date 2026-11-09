@@ -306,17 +306,13 @@ class WorkflowNavigationTests(unittest.TestCase):
             self.assertEqual(show.call_count, 2)
             reload.assert_not_called(); send.assert_not_called()
 
-    def test_first_entry_to_planning_still_requires_model_confirmation(self):
+    def test_model_review_action_enters_planning_without_duplicate_dialog(self):
         self.install_capture(); self.window.pages.setCurrentWidget(self.capture)
         self.capture.scan_roi_quality = None; self.capture.refresh()
         self.assertIn('尚未核验', self.capture.guidance.text())
-        with patch('femto.app.qt_capture.QMessageBox.question', return_value=QMessageBox.No) as confirm:
+        with patch('femto.app.qt_capture.QMessageBox.question') as confirm:
             self.click(self.capture, 3)
-        confirm.assert_called_once()
-        self.assertIs(self.window.pages.currentWidget(), self.capture)
-        with patch('femto.app.qt_capture.QMessageBox.question', return_value=QMessageBox.Yes) as confirm:
-            self.click(self.capture, 3)
-        confirm.assert_called_once()
+        confirm.assert_not_called()
         self.assertIs(self.window.pages.currentWidget(), self.page)
 
     def test_active_or_paused_capture_cannot_jump_or_reset_its_reference(self):

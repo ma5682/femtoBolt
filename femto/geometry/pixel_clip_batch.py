@@ -11,7 +11,7 @@ import numpy as np
 from femto.geometry.pixel_clip import EPS, clip_triangle_planes, project
 
 
-MAX_BATCH = 64
+MAX_BATCH = 256
 
 
 def project_clipped_polygons(clipped, triangles, intrinsic):
@@ -46,7 +46,7 @@ def project_clipped_polygons(clipped, triangles, intrinsic):
 
 def clip_triangles_planes(triangles: np.ndarray, planes: np.ndarray, *,
                           scalar_clip=clip_triangle_planes) -> list[tuple[np.ndarray, bool]]:
-    """Clip at most 64 triangles against shared or per-row pixel halfspaces.
+    """Clip at most 256 triangles against shared or per-row pixel halfspaces.
 
     Matrix-vector products keep their 3-element dot order. Grouping polygons by
     their actual size also retains each original bound reduction, rather than

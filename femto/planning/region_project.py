@@ -17,6 +17,7 @@ from femto.checksum_batch import sha256_files
 SCHEMA='femto-region-project-v1'
 MAX_PROJECT_JSON_BYTES = 100 * 1024**2
 ASSETS={'scene_tsdf_mesh_m.ply','rgb.png','display_rgb.png','depth.npy','image_valid.npy',
+        'measured_source_surface.ply',
         'mesh_triangle_uv.npy','texture_multiview.png','project.json',
         'target_surface.json','target_surface.npz','coverage_certificate.json','coverage_certificate.npz'}
 from femto.planning.refinement_archive import ASSETS as REFINEMENT_ASSETS
@@ -28,6 +29,7 @@ def digest(path: str | Path, check: Callable[[], None] | None = None) -> str:
     return sha256_file(path, check)
 
 
+@diagnosed('portable.asset_hashes')
 def _project_asset_hashes(root: Path, check: Callable[[], None]) -> dict[str, str]:
     paths = tuple(root.iterdir())
     batch = sha256_files(paths, check, hasher=digest)
@@ -47,7 +49,7 @@ def _write_manifest(path, payload, check, *, allow_nan=False):
 def _pack_assets(root, check):
     from femto.planning.planning_io import copy_stream, durable
     archive=root/'bundle.zip'
-    with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED) as z:
+    with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=1) as z:
         for file in root.iterdir():
             if file.name!='bundle.zip':
                 with file.open('rb') as source,z.open(file.name,'w') as target:copy_stream(source,target,check)
@@ -58,6 +60,40 @@ def _pack_assets(root, check):
 @diagnosed('portable.validation_manifest')
 def _write_validation_plan(path, plan, check):
     write_json_strict(path, plan, indent=None, ensure_ascii=False, check=check)
+
+
+@diagnosed('portable.reference_assets')
+def _write_reference_assets(model, root, check):
+    """Copy and independently check the reference before publishing a ZIP."""
+    from femto.annotation.scene_annotations import mesh_digest
+    from femto.geometry.fusion import read_geometry_safe
+    from femto.planning.planning_io import copy_stream
+    with open(model.store.source,'rb') as source,(root/'scene_tsdf_mesh_m.ply').open('wb') as target:
+        copy_stream(source,target,check)
+    if mesh_digest(read_geometry_safe(root/'scene_tsdf_mesh_m.ply',mesh=True))!=mesh_digest(model.store.mesh):
+        raise ValueError('参考网格文件已改变，未保存方案；请重新加载正确来源')
+    check()
+    Image.fromarray(model.rgb).save(root/'rgb.png')
+    from femto.planning.patch_reference import save_assets as save_patch_assets
+    save_patch_assets(model, root, check)
+    from femto.planning.reference_display import save as save_display
+    save_display(model, root, check)
+    np.save(root/'depth.npy',model.projection.depth,allow_pickle=False)
+    np.save(root/'image_valid.npy',getattr(model.projection,'image_valid',np.ones(model.rgb.shape[:2],bool)),allow_pickle=False)
+    for name in ('mesh_triangle_uv.npy','texture_multiview.png'):
+        source=Path(model.store.source).parent/name
+        if source.is_file():shutil.copyfile(source,root/name)
+    if (root/'mesh_triangle_uv.npy').exists()!=(root/'texture_multiview.png').exists():
+        raise ValueError('Incomplete texture assets')
+
+
+@diagnosed('portable.target_write_readback')
+def _write_target_assets(root, ledger, plan, check):
+    from femto.planning import target_surface
+    target_surface.write(root, ledger, check)
+    context = plan['planning_context']; params = plan['surface_trajectory']['planner']['parameters']
+    target_surface.read(root, context['target'], context['revision'], evidence=params['quality_evidence'],
+                        domain=params['effective_domain'], check=check, reproduce=False)
 
 
 @diagnosed('portable.save', operation=True)
@@ -76,18 +112,22 @@ def save_project(model: Any,region: Any,path: str | Path,plan: Any=None,check: C
         progress('复核本次保存的原目标验证结果')
         ledger = target_for(model, plan, check, reproduce=False)
         with target_session.consume(model, region, plan, ledger, check):
-            return _save_project(model, region, path, plan, check, target_session=target_session, **options)
+            return _save_project(model, region, path, plan, check, target_session=target_session,
+                                 bound_target=ledger, **options)
     finally:
         target_session.close()
 
 
 def _save_project(model, region, path, plan, check, *, planning_parameters=None,
                   progress=lambda stage:None, commit=None, expected_digest=None,
-                  catalog_root=None, allow_replace=True, verified_assets=None, target_session=None):
+                  catalog_root=None, allow_replace=True, verified_assets=None, target_session=None,
+                  bound_target=None):
     """Keep full source geometry as occlusion context; select only one editable ROI."""
     from femto.annotation.scene_annotations import mesh_digest
     from femto.planning.region_path import signature
-    from femto.planning.planning_io import publish,copy_stream,windows_file_retry,staging_directory
+    from femto.planning.planning_io import publish,windows_file_retry,staging_directory
+    if (target_session is None) != (bound_target is None):
+        raise ValueError('复用保存目标需要当前验证会话及其已核验目标')
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
     progress('核验保存目标与方案来源')
     baseline=digest(path,check) if path.exists() else None
@@ -119,7 +159,11 @@ def _save_project(model, region, path, plan, check, *, planning_parameters=None,
         from femto.planning.surface_workspace import target_for
         planning_revision.require_current(model, region, plan['treatment_head'], plan['planning_context']['revision'])
         if target_session is None and verified_assets is None:progress('重建并核验原目标')
-        ledger = target_for(model, plan, check, reproduce=verified_assets is None and target_session is None)
+        # The public entry already validated this exact target before consuming
+        # the native-save receipt. The session below rehashes its arrays and all
+        # inputs against the normalized region before anything is written.
+        ledger = bound_target if target_session is not None else target_for(
+            model, plan, check, reproduce=verified_assets is None)
     if plan is not None:
         if plan.get('surface_trajectory', {}).get('planner', {}).get('algorithm_version') in ('nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
             from femto.planning.variable_footprint import require_current
@@ -142,25 +186,9 @@ def _save_project(model, region, path, plan, check, *, planning_parameters=None,
         check()
         # Write current bound geometry, never depend on a relocated source filename.
         progress('复制参考网格与图像资产')
-        with open(model.store.source,'rb') as source,(root/'scene_tsdf_mesh_m.ply').open('wb') as target:copy_stream(source,target,check)
-        from femto.geometry.fusion import read_geometry_safe
-        if mesh_digest(read_geometry_safe(root/'scene_tsdf_mesh_m.ply',mesh=True))!=mesh_digest(model.store.mesh):
-            raise ValueError('参考网格文件已改变，未保存方案；请重新加载正确来源')
-        check()
-        Image.fromarray(model.rgb).save(root/'rgb.png')
-        from femto.planning.reference_display import save as save_display
-        save_display(model, root, check)
-        np.save(root/'depth.npy',model.projection.depth,allow_pickle=False)
-        np.save(root/'image_valid.npy',getattr(model.projection,'image_valid',np.ones(model.rgb.shape[:2],bool)),allow_pickle=False)
-        for name in ('mesh_triangle_uv.npy','texture_multiview.png'):
-            source=Path(model.store.source).parent/name
-            if source.is_file():shutil.copyfile(source,root/name)
-        if (root/'mesh_triangle_uv.npy').exists()!=(root/'texture_multiview.png').exists():raise ValueError('Incomplete texture assets')
+        _write_reference_assets(model, root, check)
         if ledger is not None:
-            target_surface.write(root, ledger, check)
-            context = plan['planning_context']; params = plan['surface_trajectory']['planner']['parameters']
-            target_surface.read(root, context['target'], context['revision'], evidence=params['quality_evidence'],
-                                domain=params['effective_domain'], check=check, reproduce=False)
+            _write_target_assets(root, ledger, plan, check)
         if certificate is not None:
             from femto.planning.surface_trajectory import SurfaceTrajectory
             progress('保存模型覆盖证据并完整复算')
@@ -194,6 +222,7 @@ def _save_project(model, region, path, plan, check, *, planning_parameters=None,
             raise ValueError('完整工程清单超过 100 MiB 可回读预算；原方案未覆盖，当前内容仍保留')
         progress('写入方案清单与压缩包')
         archive=_pack_assets(root, check)
+        @diagnosed('portable.publish')
         def replace():
             if (digest(path,check) if path.exists() else None)!=baseline:raise ValueError('保存期间目标方案已改变，未覆盖')
             if plan is not None and plan.get('surface_trajectory', {}).get('planner', {}).get('algorithm_version') in ('nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
@@ -306,6 +335,8 @@ def _open_project(path,workspace=None,cancel=None,progress=lambda stage:None):
     progress('重建投影与遮挡支持')
     model.projection=FixedProjection(mesh,k,depth,data['depth_min_m'],data['depth_max_m'],check=budget.check)
     p=model.projection;p.image_valid=valid;p.valid[~valid]=False;p.new_support[~valid]=False;p.ids[~valid]=-1;p.z[~valid]=np.nan;p.reasons[~valid]=4
+    from femto.planning.patch_reference import install_assets as install_patch_assets
+    install_patch_assets(model, root, budget.check)
     region=dict(data['region'],source_mesh=str(mesh_path.resolve()))
     model.store.regions=[model.store.normalized_region(region)];model.store.mark_saved()
     model.prepare_display(cancel=cancel)
@@ -365,6 +396,11 @@ def _open_project(path,workspace=None,cancel=None,progress=lambda stage:None):
     budget.check()
     if digest(path,budget.check)!=source_digest:raise ValueError('加载期间工程文件已改变，请重新打开')
     model.project_source_path=path.resolve();model.project_file_digest=source_digest
+    # The archive reader validates its own assets; external capture resolution
+    # is a separate, optional step in saved_source.load_source.
+    model.capture_source=None
+    model.capture_source_verification=dict(status='not_checked',source=None,
+        message='方案内数据已核验；外部采集来源尚未核验。',issues=[])
     return model
 
 
@@ -404,6 +440,8 @@ class PortableRegionModel(FixedRGBModel):
 
 def load_source(path: str | Path,cancel: Any=None,progress: Callable[..., Any]=lambda stage:None) -> Any:
     progress('加载参考来源')
+    from femto.planning.patch_reference import RECORD, load as load_patch
+    if Path(path).is_dir() and (Path(path)/RECORD).is_file():return load_patch(path,cancel)
     return open_project(path,cancel=cancel,progress=progress) if Path(path).is_file() else FixedRGBModel(path,cancel=cancel)
 
 

@@ -1,5 +1,6 @@
 """Exact boundary-clearance predicates with conservative AABB rejection."""
 from __future__ import annotations
+from femto.performance_detail import observed
 
 import numpy as np
 
@@ -90,9 +91,12 @@ def prepare_nearest_boundary_distances(boundary,check=lambda:None):
     boundary_scale=float(np.abs(boundary).max())
     def query(points):
         return nearest_boundary_distances(points,boundary,check,_prepared=(prepared,seed_tree,boundary_scale))
+    # Batched edge checks may keep one search index for this immutable boundary.
+    query.exact_nearest={}
     return query
 
 
+@observed('route.boundary_distance')
 def nearest_boundary_distances(points, boundary, check=lambda: None, *, _prepared=None):
     """Return the exhaustive minimum, using a finite seed only for pruning."""
     import open3d as o3d
@@ -139,8 +143,9 @@ def nearest_boundary_distances(points, boundary, check=lambda: None, *, _prepare
                 float(np.abs(boundary).max()) if _prepared is None else boundary_scale)
     slack = 32 * np.finfo(float).eps * scale
 
-    def candidates(indexes, low, high):
-        delta = np.maximum(np.maximum(low - points[indexes], points[indexes] - high), 0.)
+    def candidates(indexes, low, high, positions=None):
+        positions = points[indexes] if positions is None else positions
+        delta = np.maximum(np.maximum(low - positions, positions - high), 0.)
         reach = np.nextafter(nearest[indexes], np.inf) + slack
         return indexes[np.einsum('ij,ij->i', delta, delta) <= reach ** 2]
 
@@ -155,8 +160,12 @@ def nearest_boundary_distances(points, boundary, check=lambda: None, *, _prepare
         if segments is None:
             stack.extend(((right, indexes), (left, indexes)))
             continue
+        # Coordinates stay fixed throughout a leaf; nearest distances do not.
+        # Each segment still filters against the newly tightened nearest and
+        # spends exactly the original distance budget, in the original order.
+        positions = points[indexes]
         for segment in segments:
-            group = candidates(indexes, lows[segment], highs[segment])
+            group = candidates(indexes, lows[segment], highs[segment], positions)
             if len(group):distances(group, segment)
     return nearest
 
@@ -173,6 +182,9 @@ def _nearest_single(points, boundary, lows, highs, root, seed_tree, check, bound
     scale = max(1., float(np.abs(points).max()), boundary_scale)
     slack = 32 * np.finfo(float).eps * scale
     reach_squared = None
+    scalar_boxes = (scale <= 1e6 and np.geterr() ==
+                    dict(divide='warn', over='warn', under='ignore', invalid='warn'))
+    epsilon = np.finfo(float).eps
 
     def distance(segment):
         nonlocal checked,reach_squared
@@ -187,9 +199,22 @@ def _nearest_single(points, boundary, lows, highs, root, seed_tree, check, bound
 
     def candidate(low, high):
         nonlocal reach_squared
-        delta = np.maximum(np.maximum(low-points, points-high), 0.)
+        delta = None if scalar_boxes else np.maximum(np.maximum(low-points, points-high), 0.)
         if reach_squared is None:
             reach_squared = (np.nextafter(nearest, np.inf) + slack) ** 2
+        if scalar_boxes:
+            x, y, z = points[0].tolist()
+            lx, ly, lz = low.tolist(); hx, hy, hz = high.tolist()
+            dx = max(lx-x, x-hx, 0.); dy = max(ly-y, y-hy, 0.); dz = max(lz-z, z-hz, 0.)
+            squared = dx*dx + dy*dy + dz*dz
+            reach = float(reach_squared[0])
+            # Nonnegative three-term squares: cover both scalar/einsum
+            # reduction roundoff, with an absolute floor for tiny distances.
+            # Near the pruning boundary, keep the original NumPy predicate.
+            guard = 32*epsilon*max(1., squared, reach)
+            if squared < reach-guard:return True
+            if squared > reach+guard:return False
+        if delta is None:delta = np.maximum(np.maximum(low-points, points-high), 0.)
         return bool((np.einsum('ij,ij->i', delta, delta) <= reach_squared)[0])
 
     check()

@@ -10,11 +10,13 @@ from __future__ import annotations
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import replace
+from functools import lru_cache
 import heapq
-from itertools import combinations
+from itertools import combinations, islice
 import math
 
 import numpy as np
+from femto.plain_copy import clone
 from femto.operation_diagnostics import diagnosed
 
 from femto.planning.surface_trajectory import ScanSegment, Gap, SurfaceTrajectory, ORDERED_SELECTION_ALGORITHM
@@ -48,11 +50,11 @@ def candidate(source, *, check=lambda: None, fixed_width_layout=None, layout_evi
     manifest_path, manifest, mesh = _load_input(source)
     reference = manifest['region']['view_reference']
     sampling = None
-    if (reference.get('derivation') or {}).get('schema') == 'reduced-planning-reference-v1':
+    if (reference.get('derivation') or {}).get('schema') in ('reduced-planning-reference-v1', 'surface-patch-planning-reference-v1'):
         from femto.planning.planning_resolution import route_sample_step_mm
         if reference['derivation'].get('sampling_policy') is not None:
             from femto.planning.route_sampling import decision
-            check();sampling = decision(mesh);check()
+            check();sampling = decision(mesh,reference['derivation']['sampling_policy']);check()
         step = route_sample_step_mm(reference, decision=sampling)
         if values.get('sampling_decision', sampling) != sampling:
             raise ValueError('自动取点决策与选区不一致')
@@ -96,10 +98,12 @@ class VerifiedSurfaceGraph:
         _, _, _, owners = selection_face_assignment(region, vertices, faces)
         self.nodes, self.support = [], []
         on_face, edge_faces = defaultdict(list), defaultdict(list)
-        for fi in np.flatnonzero(allowed):
+        allowed_ids = np.flatnonzero(allowed)
+        for fi in allowed_ids:
             check()
-            for a, b in zip(faces[fi], np.roll(faces[fi], -1)):
-                edge_faces[tuple(sorted((int(a), int(b))))].append(int(fi))
+            a, b, c = faces[fi].tolist()
+            for left, right in ((a, b), (b, c), (c, a)):
+                edge_faces[tuple(sorted((left, right)))].append(int(fi))
 
         def node(xyz, fs):
             if len(self.nodes) >= BUDGET:raise ValueError('连续路线面内搜索节点超过预算，请缩小选区')
@@ -108,16 +112,33 @@ class VerifiedSurfaceGraph:
             for fi in fs:on_face[int(fi)].append(index)
             return index
 
-        for edge, fs in sorted(edge_faces.items()):
+        edges = iter(sorted(edge_faces.items()))
+        while batch := list(islice(edges, 512)):
             check()
-            if len(fs) == 2 and owners[fs[0]] == owners[fs[1]]:
-                if getattr(self, 'quarter_portals', False):
-                    for fraction in (0.25, 0.5, 0.75):
-                        node(vertices[edge[0]]*(1-fraction)+vertices[edge[1]]*fraction, fs)
-                else:
-                    node(vertices[list(edge)].mean(axis=0), fs)
-        for fi in np.flatnonzero(allowed):
-            node(vertices[faces[fi]].mean(axis=0), [fi])
+            shared = [(edge, fs) for edge, fs in batch if len(fs) == 2 and owners[fs[0]] == owners[fs[1]]]
+            if not shared:
+                continue
+            pairs = vertices[[edge for edge, _ in shared]]
+            if getattr(self, 'quarter_portals', False):
+                positions = [pairs[:, 0]*(1-f) + pairs[:, 1]*f for f in (0.25, 0.5, 0.75)]
+                for i, (_, fs) in enumerate(shared):
+                    for xyz in positions:
+                        node(xyz[i], fs)
+            else:
+                for xyz, (_, fs) in zip(pairs.mean(axis=1), shared):
+                    node(xyz, fs)
+        for start in range(0, len(allowed_ids), 512):
+            check()
+            ids = allowed_ids[start:start + 512]
+            for xyz, fi in zip(vertices[faces[ids]].mean(axis=1), ids):
+                node(xyz, [fi])
+
+        @lru_cache(maxsize=256)
+        def incident_faces(fi):
+            a, b, c = faces[fi].tolist()
+            candidates = dict.fromkeys(other for left, right in ((a, b), (b, c), (c, a))
+                                       for other in edge_faces[tuple(sorted((left, right)))])
+            return tuple(other for other in candidates if owners[other] == owners[fi])
         self.endpoints = []
         self.base_segments = [s for s in base.ordered_items if isinstance(s, ScanSegment)]
         for segment in self.base_segments:
@@ -127,11 +148,9 @@ class VerifiedSurfaceGraph:
             # These nodes are tied to actual incident faces, never XYZ-welded.
             for pi, p in enumerate(segment.points):
                 fi = p['triangle_index'];fs = {fi}
-                for a, b in zip(faces[fi], np.roll(faces[fi], -1)):
-                    for other in edge_faces[tuple(sorted((int(a),int(b))))]:
-                        if owners[other] == owners[fi] and _point_on_triangle(
-                                p['xyz_m'], vertices, faces[other], _prepared=prepared_faces(int(other))):
-                            fs.add(other)
+                for other in incident_faces(fi):
+                    if _point_on_triangle(p['xyz_m'], vertices, faces[other], _prepared=prepared_faces(other)):
+                        fs.add(other)
                 index = node(p['xyz_m'], sorted(fs))
                 if pi == 0 or pi == len(segment.points)-1:pair.append(index)
             self.endpoints.append(pair)
@@ -208,12 +227,14 @@ class VerifiedSurfaceGraph:
                     if not valid:rejected.add(pi);continue
                     half=(lo+hi)/2
                     tasks.extend([(pi,lo,half,a,mid,depth+1),(pi,half,hi,mid,b,depth+1)])
+            from femto.small_vectors import row_norms
+            ends=np.asarray([(a,b) for a,b,_ in group],dtype=np.int64).reshape(-1,2)
+            distances=row_norms(self.nodes[ends[:,0]]-self.nodes[ends[:,1]]).tolist()
             for pi,(a,b,fi) in enumerate(group):
                 if pi in rejected:continue
                 points=np.asarray([self.nodes[a]]+[q for _,_,q in sorted(leaves[pi],key=lambda t:t[0])])
                 self.paths[(a,b,fi)]=points
-                distance=float(np.linalg.norm(self.nodes[a]-self.nodes[b]))
-                self._add_verified_edge(a,b,fi,distance)
+                self._add_verified_edge(a,b,fi,distances[pi])
 
     def _add_verified_edge(self,a,b,fi,distance):
         self.adjacency[a].append((b,distance,fi));self.adjacency[b].append((a,distance,fi))
@@ -263,10 +284,13 @@ class LazyVerifiedSurfaceGraph(VerifiedSurfaceGraph):
     """
     def _admit_pairs(self,pairs):
         self.candidate_pairs={}
-        for a,b,fi in pairs:
+        pairs=list(pairs)
+        from femto.small_vectors import row_norms
+        ends=np.asarray([(a,b) for a,b,_ in pairs],dtype=np.int64).reshape(-1,2)
+        lengths=row_norms(self.nodes[ends[:,0]]-self.nodes[ends[:,1]]).tolist()
+        for (a,b,fi),length in zip(pairs,lengths):
             self.check()
             self.candidate_pairs[(min(a,b),max(a,b),fi)]=(a,b,fi)
-            length=float(np.linalg.norm(self.nodes[a]-self.nodes[b]))
             self.adjacency[a].append((b,length,fi));self.adjacency[b].append((a,length,fi))
 
     def _add_verified_edge(self,a,b,fi,distance):
@@ -347,7 +371,8 @@ def replan(candidate, mesh, region, record, width, *, domain, check=lambda:None,
     if routing not in (ROUTING,LAZY_ROUTING,DENSE_ROUTING,ORDERED_ROUTING,IMPROVED_ROUTING,SUPPORT_ROUTING,BALANCED_ROUTING,SEAM_ROUTING,SEAM_BALANCED_ROUTING,PRESERVED_DETOUR_ROUTING,SHORT_DETOUR_ROUTING,JOINT_REORDER_ROUTING,BRIDGE_REORDER_ROUTING,RELOCATION_ROUTING,DEEP_RELOCATION_ROUTING,FLOOR_DETOUR_ROUTING,UNIFIED_FLOOR_ROUTING,GLOBAL_FLOOR_ROUTING):raise ValueError('连续路线寻路版本不受支持')
     from femto.planning.effective_domain import validate as validate_domain
     allowed=validate_domain(domain,record,width,mesh,region,check)
-    base=quality.constrain(candidate,mesh,region,record,width,check,domain=domain)
+    # constrain() would validate the identical domain again with the same inputs.
+    base=quality.constrain(candidate,mesh,region,record,width,check,domain=domain,_allowed_faces=allowed.copy())
     segments=[s for s in base.ordered_items if isinstance(s,ScanSegment)]
     class QuarterPortalGraph(LazyVerifiedSurfaceGraph):
         quarter_portals = True
@@ -546,7 +571,7 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
         if layout['request']['effective_width_mm']!=params['effective_width_mm']:
             raise ValueError('自动排布与几何核验作用宽度不一致')
     reference = params['quality_evidence']['view_reference']
-    if (reference.get('derivation') or {}).get('schema') == 'reduced-planning-reference-v1':
+    if (reference.get('derivation') or {}).get('schema') in ('reduced-planning-reference-v1', 'surface-patch-planning-reference-v1'):
         from femto.planning.planning_resolution import route_sample_step_mm
         if params.get('sample_step_mm') != route_sample_step_mm(
                 reference, decision=params.get('sampling_decision'), mesh=mesh):
@@ -572,19 +597,44 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
         raise ValueError('连续路线的寻路证据无效')
     base_items=[ScanSegment.from_dict(p) if p.get('kind')=='scan_segment' else Gap.from_dict(p)
                 for p in report.get('base_items',[])]
-    classes,_=quality.checked_evidence(params['quality_evidence'],region)
+    classes,residual=quality.checked_evidence(params['quality_evidence'],region)
+    # One evidence check, effective domain and selection assignment per call;
+    # every later consumer in this call receives a copy instead of a recheck.
+    share=quality._ValidationShare(params['quality_evidence'],region,(classes.copy(),residual.copy()))
+
+    def evidence():
+        return share.evidence(params['quality_evidence'],region)
+
+    def allowed_faces():
+        found=share.allowed(params['effective_domain'],params['effective_width_mm'],mesh,region)
+        if found is None:
+            from femto.planning.effective_domain import validate as validate_domain
+            shared=evidence()
+            found=validate_domain(params['effective_domain'],params['quality_evidence'],params['effective_width_mm'],
+                                  mesh,region,check,_classes=None if shared is None else shared[0])
+            share.remember_allowed(params['effective_domain'],params['effective_width_mm'],mesh,region,found)
+        return found
+
+    def selection_labels():
+        found=share.selection_labels(region,mesh)
+        if found is None:
+            from femto.planning.selection_blocks import selection_face_assignment
+            found=selection_face_assignment(region,np.asarray(mesh.vertices),np.asarray(mesh.faces))[2]
+            share.remember_selection(region,mesh,found.copy())
+        return found
+
     base_stats,base_blocks=quality._summaries(base_items,trajectory.blocks['items'],classes)
     base_params={k:v for k,v in params.items() if k!='continuous_routing'}
     base_report={k:v for k,v in trajectory.gap_report.items() if k!='reconnection'}
     base_report['counts']=base_stats['gap_counts']
     base=replace(trajectory,planner=dict(trajectory.planner,algorithm_version=quality.DOMAIN_ALGORITHM,
         parameters=base_params),ordered_items=base_items,statistics=base_stats,blocks=base_blocks,gap_report=base_report)
-    quality.validate(base,mesh,region,check)
+    quality.validate(base,mesh,region,check,_share=share)
     segments=[s for s in base_items if isinstance(s,ScanSegment)]
     links=report.get('connections')
     if not isinstance(links,list) or len(links)!=len(segments)-1:
         raise ValueError('连续路线的连接记录缺失')
-    chains=[(segments[0].block_index,deepcopy(segments[0].points))];added=0
+    chains=[(segments[0].block_index,clone(segments[0].points))];added=0
     for index,(link,following) in enumerate(zip(links,segments[1:] if routing not in (ORDERED_ROUTING,IMPROVED_ROUTING,SUPPORT_ROUTING,BALANCED_ROUTING,SEAM_ROUTING,SEAM_BALANCED_ROUTING,PRESERVED_DETOUR_ROUTING,SHORT_DETOUR_ROUTING,JOINT_REORDER_ROUTING,BRIDGE_REORDER_ROUTING,RELOCATION_ROUTING,DEEP_RELOCATION_ROUTING,FLOOR_DETOUR_ROUTING,UNIFIED_FLOOR_ROUTING,GLOBAL_FLOOR_ROUTING) else []),1):
         check()
         same=segments[index-1].block_index==following.block_index
@@ -598,11 +648,11 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
                     or samples[-1].get('xyz_m')!=following.points[0]['xyz_m']
                     or any(p.get('role')!='connector' or p.get('row_index')!=following.points[0]['row_index'] for p in samples)):
                 raise ValueError('连续路线跨工作块或连接端点不一致')
-            chains[-1][1].extend(deepcopy(samples));chains[-1][1].extend(deepcopy(following.points[1:]));added+=len(samples)
+            chains[-1][1].extend(clone(samples));chains[-1][1].extend(clone(following.points[1:]));added+=len(samples)
         else:
             if link.get('reason')!=('no_verified_graph_path' if same else 'separate_work_blocks'):
                 raise ValueError('连续路线的未连接原因无效')
-            chains.append((following.block_index,deepcopy(following.points)))
+            chains.append((following.block_index,clone(following.points)))
     if routing in (ORDERED_ROUTING,IMPROVED_ROUTING,SUPPORT_ROUTING,BALANCED_ROUTING,SEAM_ROUTING,SEAM_BALANCED_ROUTING,PRESERVED_DETOUR_ROUTING,SHORT_DETOUR_ROUTING,JOINT_REORDER_ROUTING,BRIDGE_REORDER_ROUTING,RELOCATION_ROUTING,DEEP_RELOCATION_ROUTING,FLOOR_DETOUR_ROUTING,UNIFIED_FLOOR_ROUTING,GLOBAL_FLOOR_ROUTING):
         from femto.planning.scan_visit_order import reconstruct,propose,VERSION as ORDER_VERSION
         ordering=report.get('ordering') or {}
@@ -636,10 +686,10 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
                 final_visits,middle_chains=validate_record(improvement,segments,visits,first_links,improved_links,params['row_spacing_mm']/1000,check,
                     **({'allow_search_budget':True} if routing==GLOBAL_FLOOR_ROUTING else {}))
                 if mesh is not None:
-                    from femto.planning.effective_domain import validate as validate_middle_domain
-                    middle_allowed=validate_middle_domain(params['effective_domain'],params['quality_evidence'],params['effective_width_mm'],mesh,region,check)
+                    middle_allowed=allowed_faces()
                     middle_segments=[s for s in quality._items(middle_chains) if isinstance(s,ScanSegment)]
-                    flags,_,_=quality.edge_checks(middle_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=middle_allowed)
+                    flags,_,_=quality.edge_checks(middle_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=middle_allowed,
+                                                  _evidence=evidence())
                     if not flags.all():raise ValueError('接缝中间路线包含未核验连接')
             elif routing==SEAM_ROUTING:
                 from femto.planning.seam_visit_proposal import validate_record
@@ -652,9 +702,7 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
                 final_visits=validate_record(improvement,segments,visits,first_links,improved_links,check)
             if routing in (SUPPORT_ROUTING,BALANCED_ROUTING,SEAM_ROUTING,SEAM_BALANCED_ROUTING,PRESERVED_DETOUR_ROUTING,SHORT_DETOUR_ROUTING,JOINT_REORDER_ROUTING,BRIDGE_REORDER_ROUTING,RELOCATION_ROUTING,DEEP_RELOCATION_ROUTING,FLOOR_DETOUR_ROUTING,UNIFIED_FLOOR_ROUTING,GLOBAL_FLOOR_ROUTING):
                 from femto.planning.connector_endpoint_support import validate_record as validate_support
-                from femto.planning.effective_domain import validate as validate_support_domain
-                allowed_support=(validate_support_domain(params['effective_domain'],params['quality_evidence'],params['effective_width_mm'],mesh,region,check)
-                                 if mesh is not None else None)
+                allowed_support=allowed_faces() if mesh is not None else None
                 support_decision={k:v for k,v in support.items() if k!='baseline_connections'} if isinstance(support,dict) else None
                 detour=ordering.get('preserved_detour') if routing in (PRESERVED_DETOUR_ROUTING,SHORT_DETOUR_ROUTING,JOINT_REORDER_ROUTING,BRIDGE_REORDER_ROUTING,RELOCATION_ROUTING,DEEP_RELOCATION_ROUTING,FLOOR_DETOUR_ROUTING,UNIFIED_FLOOR_ROUTING,GLOBAL_FLOOR_ROUTING) else None
                 supported_links=detour.get('baseline_connections') if isinstance(detour,dict) else links
@@ -669,7 +717,8 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
                 supported_chains,_,_=reconstruct(segments,final_visits,supported_links,check)
                 if mesh is not None:
                     supported_segments=[s for s in quality._items(supported_chains) if isinstance(s,ScanSegment)]
-                    flags,_,_=quality.edge_checks(supported_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=allowed_support)
+                    flags,_,_=quality.edge_checks(supported_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=allowed_support,
+                                                  _evidence=evidence())
                     if not flags.all():raise ValueError('端点保留绕行基准包含未核验连接')
                 detour_decision={k:v for k,v in detour.items() if k!='baseline_connections'}
                 joint=ordering.get('joint_reorder') if routing in (JOINT_REORDER_ROUTING,BRIDGE_REORDER_ROUTING,RELOCATION_ROUTING,DEEP_RELOCATION_ROUTING,FLOOR_DETOUR_ROUTING,UNIFIED_FLOOR_ROUTING,GLOBAL_FLOOR_ROUTING) else None
@@ -701,7 +750,8 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
                     joint_baseline,_,_=reconstruct(segments,joint_visits,detour_links,check,preserve_endpoint_faces=True,budget=BUDGET)
                     if mesh is not None and joint_decision.get('skipped')!='baseline_face_handoff':
                         joint_segments=[s for s in quality._items(joint_baseline) if isinstance(s,ScanSegment)]
-                        flags,_,_=quality.edge_checks(joint_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=allowed_support)
+                        flags,_,_=quality.edge_checks(joint_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=allowed_support,
+                                                      _evidence=evidence())
                         if not flags.all():raise ValueError('联合换序基准包含未核验连接')
                     if joint_decision.get('skipped')=='baseline_face_handoff':
                         if (joint_decision!={'version':JOINT_VERSION,'adopted':False,'skipped':'baseline_face_handoff'}
@@ -717,12 +767,12 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
                             raise ValueError('扫描段移动基准顺序不一致')
                         if mesh is not None:
                             prior_segments=[s for s in quality._items(chains) if isinstance(s,ScanSegment)]
-                            flags,_,_=quality.edge_checks(prior_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=allowed_support)
+                            flags,_,_=quality.edge_checks(prior_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=allowed_support,
+                                                          _evidence=evidence())
                             if not flags.all():raise ValueError('扫描段移动基准包含未核验连接')
                             if region is not None:
-                                from femto.planning.selection_blocks import selection_face_assignment,check_projection_inside_selection
-                                _,_,labels,_=selection_face_assignment(region,np.asarray(mesh.vertices),np.asarray(mesh.faces))
-                                check_projection_inside_selection(prior_segments,trajectory.blocks['items'],labels,
+                                from femto.planning.selection_blocks import check_projection_inside_selection
+                                check_projection_inside_selection(prior_segments,trajectory.blocks['items'],selection_labels(),
                                     np.asarray(region['view_reference']['undistorted_intrinsic']),np.asarray(region['view_reference']['image_size']))
                         spacing=params['row_spacing_mm']/1000
                         skipped,limits=_relocation_context(segments,current_visits,joint_output_links,chains,
@@ -743,12 +793,12 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
                                 raise ValueError('额外扫描段移动基准顺序不一致')
                             if mesh is not None:
                                 prior_segments=[s for s in quality._items(chains) if isinstance(s,ScanSegment)]
-                                flags,_,_=quality.edge_checks(prior_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=allowed_support)
+                                flags,_,_=quality.edge_checks(prior_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=allowed_support,
+                                                              _evidence=evidence())
                                 if not flags.all():raise ValueError('额外扫描段移动基准包含未核验连接')
                                 if region is not None:
-                                    from femto.planning.selection_blocks import selection_face_assignment,check_projection_inside_selection
-                                    _,_,labels,_=selection_face_assignment(region,np.asarray(mesh.vertices),np.asarray(mesh.faces))
-                                    check_projection_inside_selection(prior_segments,trajectory.blocks['items'],labels,
+                                    from femto.planning.selection_blocks import check_projection_inside_selection
+                                    check_projection_inside_selection(prior_segments,trajectory.blocks['items'],selection_labels(),
                                         np.asarray(region['view_reference']['undistorted_intrinsic']),np.asarray(region['view_reference']['image_size']))
                             skipped,deep_limits=_relocation_context(segments,deep_visits,relocation_output_links,chains,
                                 trajectory.blocks['items'],classes,spacing,check)
@@ -783,13 +833,14 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
             # Baseline cost is measured geometry evidence too, not a trusted
             # scalar that could be inflated to justify a longer proposal.
             baseline_segments=[s for s in quality._items(baseline_chains) if isinstance(s,ScanSegment)]
-            from femto.planning.effective_domain import validate as validate_order_domain
-            order_allowed=validate_order_domain(params['effective_domain'],params['quality_evidence'],params['effective_width_mm'],mesh,region,check)
-            flags,_,_=quality.edge_checks(baseline_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=order_allowed)
+            order_allowed=allowed_faces()
+            flags,_,_=quality.edge_checks(baseline_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=order_allowed,
+                                          _evidence=evidence())
             if not flags.all():raise ValueError('扫描段排序基准包含未核验连接')
             if routing in (IMPROVED_ROUTING,SUPPORT_ROUTING,BALANCED_ROUTING,SEAM_ROUTING,SEAM_BALANCED_ROUTING,PRESERVED_DETOUR_ROUTING,SHORT_DETOUR_ROUTING,JOINT_REORDER_ROUTING,BRIDGE_REORDER_ROUTING,RELOCATION_ROUTING,DEEP_RELOCATION_ROUTING,FLOOR_DETOUR_ROUTING,UNIFIED_FLOOR_ROUTING,GLOBAL_FLOOR_ROUTING):
                 first_segments=[s for s in quality._items(first_chains) if isinstance(s,ScanSegment)]
-                flags,_,_=quality.edge_checks(first_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=order_allowed)
+                flags,_,_=quality.edge_checks(first_segments,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=order_allowed,
+                                              _evidence=evidence())
                 if not flags.all():raise ValueError('优化前扫描段排序包含未核验连接')
     from femto.planning.selection_blocks import _mark_revisits
     for _,points in chains:
@@ -817,13 +868,12 @@ def validate(trajectory, mesh=None, region=None, check=lambda:None):
         parameters=dict(params,selection_blocks=False,block_planning=False,connect_rows=True)),
         ordered_items=shadow,blocks=None),mesh=mesh,check=check)
     if mesh is not None:
-        from femto.planning.effective_domain import validate as validate_domain
-        allowed=validate_domain(params['effective_domain'],params['quality_evidence'],params['effective_width_mm'],mesh,region,check)
+        allowed=allowed_faces()
         final=[s for s in expected if isinstance(s,ScanSegment)]
         if region is not None:
-            from femto.planning.selection_blocks import selection_face_assignment,check_projection_inside_selection
-            _,_,labels,_=selection_face_assignment(region,np.asarray(mesh.vertices),np.asarray(mesh.faces))
-            check_projection_inside_selection(final,blocks['items'],labels,
+            from femto.planning.selection_blocks import check_projection_inside_selection
+            check_projection_inside_selection(final,blocks['items'],selection_labels(),
                 np.asarray(region['view_reference']['undistorted_intrinsic']),np.asarray(region['view_reference']['image_size']))
-        okay,_,_=quality.edge_checks(final,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=allowed)
+        okay,_,_=quality.edge_checks(final,mesh,params['quality_evidence'],params['effective_width_mm'],check,allowed_faces=allowed,
+                                     _evidence=evidence())
         if not okay.all():raise ValueError('连续路线存在未通过几何或宽度检查的连接')

@@ -119,11 +119,17 @@ def assess_model(model, roi, cancel=None, *, preview=False, evidence=False):
                      unmapped_raw_target_pixels=raw_count-int(len(represented)),
                      raw_pixel_bounds=[x0,y0,x1,y1],
                      meaning='raw_target_sampling_accounting_not_surface_coverage')
+    from femto.geometry.local_region import model_selection
+    selected = model_selection(model)
+    if selected is not None:
+        mask = selected
+        raw_mapping = None  # Intent was painted directly in undistorted pixels.
     result = assess_selection(model, mask, np.zeros_like(mask), cancel)
     summary = dict(status=result['status'], requested_pixels=result['selected'],
                 supported_pixels=result['supported'], pending_pixels=result['pending'],
                 supported_pixel_fraction=result['ratio'], message=result['message'],
                 raw_target_mapping=raw_mapping,
+                target_scope='painted_region' if selected is not None else 'scan_guidance_rectangle',
                 meaning='reference_image_pixel_support_not_surface_area_or_treatment_coverage')
     if not preview and not evidence:
         return summary

@@ -1,8 +1,9 @@
 """Per-construction preparation for the unchanged source-triangle predicates.
 
 This is only for three original projected vertices. Clipped pixel polygons keep
-the general predicates in pixel_clip. Axes, reductions and exact orientations
-use the same expressions and order; preparation only reuses a face's own work.
+the general predicates in pixel_clip. A bounded axis-aligned edge can provide
+the same separating witness directly; all other cases keep the original axes,
+reductions and exact orientations. Preparation stays local to one construction.
 """
 from __future__ import annotations
 
@@ -56,7 +57,7 @@ def _finite_signs(start: np.ndarray, end: np.ndarray, points: np.ndarray) -> set
 class PreparedTriangle:
     """Lazy, bounded-by-owner preparation of immutable source coordinates."""
 
-    __slots__ = ('points', 'vertex_ids', 'finite', '_edges', '_orientations', '_coordinates')
+    __slots__ = ('points', 'vertex_ids', 'finite', '_edges', '_orientations', '_coordinates', '_axis_data')
 
     def __init__(self, points: np.ndarray, vertex_ids: np.ndarray):
         points.setflags(write=False)
@@ -66,6 +67,25 @@ class PreparedTriangle:
         self._coordinates = tuple(tuple(float(x) for x in point) for point in points)
         self._edges = {}
         self._orientations = {}
+        self._axis_data = None
+        # An exactly horizontal/vertical source edge is already one of the
+        # original SAT axes. Coordinate ordering can establish the same
+        # separating sign sets, including exact contact, without constructing
+        # projections for every neighbouring face. Limit coordinate magnitude
+        # so the original differences, products and gap cannot overflow.
+        if self.finite and points.dtype == np.float64 and all(
+                abs(x) <= 1e150 for point in self._coordinates for x in point):
+            bounds = tuple((min(p[d] for p in self._coordinates),
+                            max(p[d] for p in self._coordinates)) for d in range(2))
+            boundaries = []
+            for index, start in enumerate(self._coordinates):
+                end = self._coordinates[(index+1) % 3]
+                for dimension in range(2):
+                    if start[dimension] == end[dimension] and start[1-dimension] != end[1-dimension]:
+                        value = start[dimension]
+                        low, high = bounds[dimension]
+                        boundaries.append((dimension, value, low >= value, high <= value))
+            self._axis_data = bounds, tuple(boundaries)
 
     def orientation(self, start: int, end: int, point: int) -> int:
         if self.finite and point in (start, end):
@@ -116,9 +136,16 @@ def shared_edge_separates(a: PreparedTriangle, b: PreparedTriangle) -> bool:
 
 
 def prepared_overlap(a: PreparedTriangle, b: PreparedTriangle) -> bool | None:
-    """Original six-axis test, reusing only each source face's own projections."""
+    """Same overlap decision, with a cheap witness on an existing source axis."""
     if not a.finite or not b.finite:
         return interior_overlap(a.points, b.points)
+    if a._axis_data is not None and b._axis_data is not None:
+        for owner, other in ((a, b), (b, a)):
+            bounds, _ = other._axis_data
+            for dimension, value, positive, negative in owner._axis_data[1]:
+                low, high = bounds[dimension]
+                if (positive and high <= value) or (negative and low >= value):
+                    return False
     uncertain = False
     for owner, other in ((a, b), (b, a)):
         for index in range(3):

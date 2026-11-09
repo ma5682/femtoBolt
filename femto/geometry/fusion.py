@@ -1,7 +1,7 @@
 """Finite-burst RGB-D fusion and export helpers."""
 from __future__ import annotations
+from femto.performance_detail import observed, timed, count
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,6 +16,7 @@ import trimesh
 
 from femto.geometry.pose_geometry import Intrinsics, depth_to_points
 from femto.io_utils import write_json
+from femto.geometry.native_io import temporary_path, publish, cleanup
 
 
 from femto.paths import WORKSPACE_CACHE_ROOT
@@ -25,34 +26,39 @@ NATIVE_IO_CACHE.mkdir(parents=True, exist_ok=True)
 
 
 def _native_cache_path(final_path: Path) -> Path:
-    token = hashlib.sha1(str(final_path).encode("utf-8")).hexdigest()[:12]
-    return NATIVE_IO_CACHE / f"{token}_{final_path.name}"
+    return temporary_path(final_path,NATIVE_IO_CACHE)
 
 
+@observed('io.point_cloud_write')
 def write_point_cloud_safe(path: Path, cloud: o3d.geometry.PointCloud) -> bool:
     """Use an ASCII-only temporary path for Open3D's Windows native writer."""
     temporary = _native_cache_path(path)
-    temporary.unlink(missing_ok=True)
-    ok = o3d.io.write_point_cloud(str(temporary), cloud, write_ascii=False, compressed=False)
-    if ok and temporary.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(temporary), str(path))
-        return True
-    return False
+    try:
+        with timed('point_cloud.native_write'):
+            ok = o3d.io.write_point_cloud(str(temporary), cloud, write_ascii=False, compressed=False)
+        if ok and temporary.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with timed('point_cloud.publish'):
+                publish(temporary,path)
+            return True
+        return False
+    finally:
+        cleanup(temporary)
 
 
+@observed('io.geometry_read')
 def read_geometry_safe(path: Path, *, mesh: bool):
     """Copy a Chinese-path geometry to ASCII cache before native Open3D read."""
     temporary = _native_cache_path(path)
-    shutil.copy2(path, temporary)
     try:
+        shutil.copy2(path, temporary)
         return (
             o3d.io.read_triangle_mesh(str(temporary))
             if mesh
             else o3d.io.read_point_cloud(str(temporary))
         )
     finally:
-        temporary.unlink(missing_ok=True)
+        cleanup(temporary)
 
 
 def temporal_median_depth(
@@ -243,6 +249,7 @@ def fill_small_mesh_holes(
     return repaired
 
 
+@observed('io.mesh_export')
 def export_mesh_formats(
     mesh: o3d.geometry.TriangleMesh,
     output_dir: Path,
@@ -251,6 +258,8 @@ def export_mesh_formats(
     report_name: str = "mesh_report.json",
     note: str = "Top-view visible surface is normally open; no large-hole closure is applied.",
     write_obj_glb: bool = True,
+    component_reuse=None,
+    write_diagnostics: bool = True,
 ) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     ply = output_dir / f"{stem}.ply"
@@ -258,38 +267,65 @@ def export_mesh_formats(
     glb = output_dir / f"{stem}.glb"
     cached_ply = _native_cache_path(ply)
     cached_obj = _native_cache_path(obj)
-    cached_ply.unlink(missing_ok=True)
-    cached_obj.unlink(missing_ok=True)
-    if not o3d.io.write_triangle_mesh(str(cached_ply), mesh, write_ascii=False):
-        raise RuntimeError("Open3D failed to write TSDF PLY")
-    shutil.move(str(cached_ply), str(ply))
-    if write_obj_glb:
-        if not o3d.io.write_triangle_mesh(str(cached_obj), mesh, write_ascii=False):
-            raise RuntimeError("Open3D failed to write TSDF OBJ")
-        shutil.move(str(cached_obj), str(obj))
+    try:
+        with timed('mesh_export.ply_native_write'):
+            if not o3d.io.write_triangle_mesh(str(cached_ply), mesh, write_ascii=False):
+                raise RuntimeError("Open3D failed to write TSDF PLY")
+        with timed('mesh_export.ply_publish'):
+            publish(cached_ply,ply)
+        if write_obj_glb:
+            if not o3d.io.write_triangle_mesh(str(cached_obj), mesh, write_ascii=False):
+                raise RuntimeError("Open3D failed to write TSDF OBJ")
+            publish(cached_obj,obj)
+    finally:
+        cleanup(cached_ply)
+        cleanup(cached_obj)
     vertices = np.asarray(mesh.vertices)
     faces = np.asarray(mesh.triangles)
+    if not write_diagnostics and not write_obj_glb:
+        report = dict(vertices=int(len(vertices)), triangles=int(len(faces)), note=note,
+                      diagnostics_status='not_computed',
+                      diagnostics_reason='not_used_by_geometric_route')
+        write_json(output_dir / report_name, report)
+        return dict(ply=str(ply), obj=None, glb=None, report=report,
+                    intermediate_obj_glb_written=False)
     colors = np.asarray(mesh.vertex_colors)
     visual = None
     if colors.shape == vertices.shape:
         visual = np.column_stack(
             (np.rint(np.clip(colors, 0, 1) * 255).astype(np.uint8), np.full(len(colors), 255, np.uint8))
         )
-    tri = trimesh.Trimesh(vertices=vertices, faces=faces, vertex_colors=visual, process=False)
+    with timed('mesh_export.trimesh_construct'):
+        tri = trimesh.Trimesh(vertices=vertices, faces=faces, vertex_colors=visual, process=False)
     if write_obj_glb:
         tri.export(glb)
-    edge_face_counts = np.bincount(tri.edges_unique_inverse)
-    _, open3d_component_counts, _ = mesh.cluster_connected_triangles()
+    with timed('mesh_export.edge_counts'):
+        edge_face_counts = np.bincount(tri.edges_unique_inverse)
+    with timed('mesh_export.component_counts'):
+        from femto.geometry.component_reuse import ComponentReuse
+        open3d_component_counts=(component_reuse.matching_counts(mesh)
+            if isinstance(component_reuse,ComponentReuse) else None)
+        if open3d_component_counts is None:
+            count('mesh.component_reuse',cluster_fallbacks=1)
+            from femto.geometry.triangle_components import triangle_components
+            components = triangle_components(mesh)
+            if components is None:
+                _, open3d_component_counts, _ = mesh.cluster_connected_triangles()
+            else:
+                _, open3d_component_counts = components
     component_faces = sorted(
         (int(value) for value in np.asarray(open3d_component_counts)), reverse=True
     )
     # Trimesh's watertight flag is useful here; the top-view patient surface is
     # expected to remain open at its outer silhouette.
+    with timed('mesh_export.watertight_and_winding'):
+        watertight = bool(tri.is_watertight)
+        winding_consistent = bool(tri.is_winding_consistent)
     report = {
         "vertices": int(len(vertices)),
         "triangles": int(len(faces)),
-        "watertight": bool(tri.is_watertight),
-        "winding_consistent": bool(tri.is_winding_consistent),
+        "watertight": watertight,
+        "winding_consistent": winding_consistent,
         "boundary_edges": int((edge_face_counts == 1).sum()),
         "nonmanifold_edges": int((edge_face_counts > 2).sum()),
         "connected_components": len(component_faces),

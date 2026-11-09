@@ -1,5 +1,6 @@
 """Versioned planning provenance and a single UI state decision, independent of rendering."""
 from __future__ import annotations
+from femto.performance_detail import observed
 from typing import Any, Callable
 
 from functools import wraps
@@ -112,6 +113,7 @@ def validate(plan: Any, mesh: Any, region: Any, check=lambda: None) -> None:
     _validate(plan, mesh, region, check)
 
 
+@observed('save.validate_current_geometry')
 def validated_surface(plan: Any, mesh: Any, region: Any, check=lambda: None):
     """Return this invocation's checked route, never an earlier acceptance."""
     original_binding = deepcopy(plan.get('plan_binding'))

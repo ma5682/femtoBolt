@@ -65,10 +65,12 @@ def assess_selection(model, work, forbidden, cancel=None, *, check=None):
         if np.any(supported & (~np.isfinite(projection.z) | (projection.ids < 0))):
             raise ValueError('网格交点证据不可用')
         check()
-        counts = {code: int((classes == code).sum()) for code in LABELS}
-        rgba = np.zeros((*shape, 4), np.uint8)
+        totals = np.bincount(classes.ravel(), minlength=8)
+        counts = {code: int(totals[code]) for code in LABELS}
+        palette = np.zeros((8, 4), np.uint8)
         for code, color in COLORS.items():
-            check(); rgba[classes == code] = color
+            check(); palette[code] = color
+        rgba = palette[classes]
         good = counts[1]
         pending = result['selected'] - good
         return dict(result, status='checked', classes=classes, rgba=rgba, counts=counts,

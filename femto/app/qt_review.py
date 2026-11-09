@@ -112,22 +112,43 @@ class ReviewPage(QWidget):
         self.quality.invalidate('正在切换来源，当前检查已清除。')
         self.scene_panel.hide()
         self._status('正在读取并核验保存记录…')
-        def done(model):
+        def done(result):
             if self.runner._cancel.is_set():
                 failed(RuntimeError('读取已取消')); return
-            self.install_model(model,path)
+            model, opened = result
+            self.install_model(model,opened)
             self.loaded.emit(str(path))
         def failed(error):
             self.scene_panel.setVisible(self.model is not None)
             self.quality.request()
             self._status('记录未切换，读取未完成：'+str(error))
         def job(cancel, progress):
-            model = load_source(path, cancel, progress, require_confirmed=False)
+            from femto.annotation.fixed_rgb_geometry import GeometryBudget
+            from femto.planning.catalog import scan_capture_exports
+            check = GeometryBudget(cancel).check
+            capture = path/'reconstruction' if (path/'reconstruction').is_dir() else path
+            opened = path
+            if (capture/'reconstruction_report.json').is_file():
+                progress('查找此采集关联的保存方案')
+                for row in scan_capture_exports(capture, check=check):
+                    if row.get('project') and row.get('file_status') == '工程资产指纹一致':
+                        opened = Path(row['project']); break
+            model = load_source(opened, cancel, progress, require_confirmed=False)
+            if opened != path and Path(getattr(model, 'capture_source', '') or '.') != capture:
+                raise ValueError('保存方案与所选采集的来源核验不一致，请在区域与轨迹中单独查看。')
+            if not model.store.regions:
+                from femto.geometry.local_region import model_selection
+                from femto.app.qt_planning_io import extract_region
+                import numpy as np
+                mask = model_selection(model)
+                if mask is not None:
+                    progress('恢复已保存的涂抹区域')
+                    model, _ = extract_region(model, mask, np.zeros_like(mask), '工作区域 01', '', cancel)
             if expected_record is not None:
                 from femto.app.task_records import verify_record_context
                 verify_record_context(model, expected_record)
             if cancel.is_set(): raise RuntimeError('读取已取消')
-            return model
+            return model, opened
         result=self.runner.start(job,done,failed)
         self.refresh();return result
 
@@ -152,6 +173,12 @@ class ReviewPage(QWidget):
         self.source_label.setText(breakable_text(f"{task.get('name','历史记录（未填写任务信息）')}"))
         self.source_details.setText(breakable_text(f"来源：{self.source}"))
         self.source_label.setToolTip(str(self.source))
+        verification=getattr(model,'capture_source_verification',None)
+        if verification:
+            if verification['status'] not in ('verified','not_recorded'):
+                self.source_label.setText(self.source_label.text()+'\n'+verification['message'])
+            for issue in verification['issues']:
+                self.source_details.setText(self.source_details.text()+breakable_text(f"\n{issue['reason']}：{issue['source']}"))
         lines=[f"任务时间：{task.get('created_at','未记录')}",f"保存版本：{revision or '旧记录，未提供版本标识'}"]
         if parent:lines.append('基于版本：'+str(parent))
         if self.region:
@@ -161,7 +188,8 @@ class ReviewPage(QWidget):
             findings=review_findings(self.plan,self.region)
             lines.append('保存路线的待处理项：\n'+'\n'.join('• '+item for item in findings) if findings else '保存路线报告无待处理项；当前参考影像质量见下方检查。')
         else:lines.append(getattr(model,'plan_warning',None) or '此记录没有可回显的已保存路线。')
-        if not getattr(model,'capture_source',None):lines.append('关联采集未能核验；当前仅显示此记录自带的参考画面与几何。')
+        if verification:lines.append(verification['message'])
+        elif not getattr(model,'capture_source',None):lines.append('关联采集未能核验；当前仅显示此记录自带的参考画面与几何。')
         if getattr(model,'task_warning',None):lines.append('任务信息提示：'+model.task_warning)
         self.edit.setToolTip('修改后保存为新版本，原版本保留。')
         self.summary.setText('\n'.join(lines))
@@ -170,7 +198,10 @@ class ReviewPage(QWidget):
         self.refresh()
 
     def _quality_toggle(self, checked):
-        if checked:self.coverage.show_layer.setChecked(False)
+        if checked:
+            self.coverage.show_layer.setChecked(False)
+            # This evidence is bound to reference pixels, not VTK triangles.
+            self.scene_panel.show_reference()
         self.canvas.support=checked;self.canvas.update()
 
     def _coverage_layer(self,active,reason):
@@ -223,7 +254,7 @@ class ReviewPage(QWidget):
 
     def refresh(self):
         self.scene_panel.set_scene(self.model,
-            self.region if self.layers.currentIndex()>0 else None,
+              self.region,
             self.plan if self.layers.currentIndex()==2 else None)
         if not self.scene_panel.is_3d:self.scene_panel.notice.hide()
         ready=self.model is not None and not self.busy
@@ -265,9 +296,11 @@ class ReviewPage(QWidget):
         self.cancel.setText('正在取消…' if self.runner.cancelling else '取消读取')
         self.heading.setText(STEPS[self._workflow_view-1]+' · 历史只读回看' if ready else '历史结果 · 只读回看')
         model_check = self.model is not None and self._workflow_view == 2
-        self.layer_toolbar.setVisible(not model_check)
-        self.layers.setVisible(not model_check)
-        self.fit.setVisible(not model_check)
+        # Model, selection and route share the same workflow stage. Keep
+        # their local selector available even when the model layer is shown.
+        self.layer_toolbar.setVisible(self.model is not None)
+        self.layers.setVisible(True)
+        self.fit.setVisible(True)
         self.inspector_scroll.setVisible(not model_check)
         self.workflow.set_step(self._workflow_view if ready else None,
             '历史结果只读回看；流程位置不代表此前步骤已通过质量检查。')

@@ -72,12 +72,15 @@ sources and standalone annotation origins keep their original behavior.
             and original.get('status') == 'captured_pose_pending'
             and original.get('parameters', {}).get('fixed_camera') is False,
             '采集类型或位姿状态不符')
+    from femto.reconstruction_profile import local_route_result
+    local_route = local_route_result(summary, report)
     require(report.get('schema') == 'femto-scene-reconstruction-v1'
-            and report.get('status') == 'complete_geometry_gaussian_init_untrained'
+            and (report.get('status') == 'complete_geometry_gaussian_init_untrained' or local_route)
             and Path(report['outputs']['mesh']['ply']).resolve() == source,
             '模型与重建报告不符')
     require(summary.get('schema') == 'femto-complete-demo-v1'
-            and summary.get('status') == 'pass_geometry_gaussian_init_untrained'
+            and (summary.get('status') == 'pass_geometry_gaussian_init_untrained'
+                 or local_route and summary.get('status') == 'pass_local_geometry')
             and summary.get('data_kind') == 'real_femto'
             and summary.get('pose_stage') == POSE_SOURCE
             and summary.get('fixed_camera') is False

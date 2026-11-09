@@ -6,7 +6,11 @@
 
 项目权利人尚未在仓库中登记。对外发布前必须由实际公司/个人确认著作权归属、员工或承包方权利转让，以及产品最终许可条款。
 
+2026-11-04：`native/cloud_predicate.c`、`femto/geometry/cloud_radius_kernel.py` 和 `tools/build_cloud_kernel.py` 按当前项目的八子盒包络与完整半径 NumPy 判据独立编写。扩展使用 CPython buffer API 与标准 C 算术，不复制或链接新的第三方算法实现，不使用 NumPy C ABI。构建使用本机已有 MSVC 14.44.35207、CPython 3.12.10 头文件及 setuptools 84.0.0；运行环境 NumPy/Open3D 版本保持。源码、构建脚本、编译器、实际命令和 `.pyd` SHA-256 随每次构建记录在 `outputs/cloud_kernel_build_*/build.json`；本轮验证产物的具体记录见[点云本地内核提速](doc/技术资料/点云本地内核提速_20261104.md)。生成二进制不入 Git，不在应用运行时自动编译或下载。
+
 ## 有来源标记的允许适配
+
+2026-11-02：`geometry/organized_surface.py`、`local/organized_registration.py` 和相应对照/测试根据 PCL 官方文档中的积分图平均梯度、投影匹配、法向方向采样及有序边缘标签概念独立实现。反投影、积分求和、方向分桶、小位姿最小二乘及合成场景使用本项目 NumPy/OpenCV/Open3D 公共接口；没有复制 PCL 源码或链接 PCL。文档方法链接与实验入口见 `doc/技术资料/有序RGBD算法对照.md`；原始 RGB-D 不改写，实验报告与模型发布隔离。
 
 2026-09-08 新增 `live_point_cloud.py`：按用户指定参考本地 `E:\测试\05_point_cloud.py` 的 Open3D SceneWidget、相机原点取景、主要深度层目标及显示颜色交互方式。当前项目独立实现父子进程数据传递、关闭流程、K6 射线缓存与米制几何；没有运行时导入参考工程或复制其 SDK 相机采集、BAG、导出与历史合并流程。显示调用已登记 Open3D 0.19.0 的公共 [SceneWidget API](https://www.open3d.org/docs/release/python_api/open3d.visualization.gui.SceneWidget.html) 与 [Window API](https://www.open3d.org/docs/release/python_api/open3d.visualization.gui.Window.html)，渲染资源复用现有运行时缓存，中文字体使用本机 Windows 已有字体。
 

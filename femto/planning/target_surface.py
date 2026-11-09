@@ -6,11 +6,13 @@ keeps its original face, barycentric vertices, pixel parent and local route-face
 mapping. Unknown pixels have no invented area. This is not a coverage certificate.
 """
 from __future__ import annotations
+from femto.performance_detail import observed, current, _record
 
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 import json
+import math
 from pathlib import Path
 import time
 from typing import Any, Callable
@@ -29,6 +31,7 @@ from femto.operation_diagnostics import diagnosed
 
 SCHEMA = 'femto-original-target-surface-v1'
 PAGED_SCHEMA = 'femto-original-target-surface-paged-v1'
+DEFERRED_SCHEMA = 'femto-original-target-surface-deferred-v1'
 MANIFEST = 'target_surface.json'
 ASSET = 'target_surface.npz'
 MAX_ASSET_BYTES = 512 * 1024**2
@@ -94,6 +97,7 @@ def _summary(arrays: dict) -> dict:
                 coverage_status='not_evaluated', physical_accuracy_verified=False, execution_ready=False)
 
 
+@observed('target.seal_and_hash')
 def _seal(arrays: dict, revision: dict, budget: TargetBudget, metrics: dict,
           evidence_sha: str, domain_sha: str | None, *, construction_pages=None) -> TargetLedger:
     arrays = {name: np.ascontiguousarray(value, dtype=_DTYPES[name]) for name, value in arrays.items()}
@@ -101,7 +105,8 @@ def _seal(arrays: dict, revision: dict, budget: TargetBudget, metrics: dict,
         raise ValueError('目标台账数组超过 512 MiB 预算')
     for array in arrays.values():
         array.setflags(write=False)
-    metadata = dict(schema=SCHEMA, asset=ASSET, coordinate_frame='world_rdf', unit='metre',
+    metadata = dict(schema=DEFERRED_SCHEMA if metrics['stop_reason'] == 'deferred_by_request' else SCHEMA,
+                    asset=ASSET, coordinate_frame='world_rdf', unit='metre',
                     target_id=revision['target_id'], computation_sha256=revision['sha256'],
                     quality_evidence_sha256=evidence_sha, effective_domain_sha256=domain_sha,
                     source_face_space='original_full_source_mesh', local_face_space='canonical_original_region_mesh',
@@ -125,6 +130,37 @@ def _seal(arrays: dict, revision: dict, budget: TargetBudget, metrics: dict,
 
 def _empty_leaves() -> dict:
     return {name: np.empty((0, 3, 3) if name == 'barycentric' else (0,), dtype=_DTYPES[name]) for name in _LEAVES}
+
+
+def is_deferred(metadata: dict | None) -> bool:
+    return isinstance(metadata, dict) and metadata.get('schema') == DEFERRED_SCHEMA
+
+
+def _deferred(inputs: dict, revision: dict, check: Callable) -> tuple[dict, dict]:
+    """Retain bound inputs without indexing/clipping triangles or claiming area.
+
+    Route geometry is checked separately. Only raw reference-depth/image failures
+    are classified here; all other selected pixels await an explicit area check.
+    """
+    check()
+    mask = inputs['mask']
+    depth = inputs['depth'].astype(float) / 1000
+    limits = revision['inputs']['depth']
+    measured = (depth >= limits['minimum_m']) & (depth <= limits['maximum_m'])
+    status = np.zeros(mask.shape, np.uint8)
+    status[mask] = 9
+    status[mask & ~measured] = 3
+    status[mask & (depth == 0)] = 2
+    status[mask & ~inputs['image_valid']] = 4
+    arrays = dict(inputs, **_empty_leaves(), pixel_status=status,
+                  duplicate_faces=np.empty((0, 2), dtype='<i8'))
+    metrics = dict(candidate_count=0, indexed_faces=0, candidate_pixel_groups=0,
+                   processed_pixel_groups=0, clip_count=0, exact_clip_fallbacks=0,
+                   pair_checks=0, occluded_polygons=0, duplicate_face_count=0,
+                   maximum_subdivision_depth=0, coverage_seed_comparisons=0,
+                   stop_reason='deferred_by_request')
+    check()
+    return arrays, metrics
 
 
 def _quality_values(arrays: dict) -> np.ndarray:
@@ -181,6 +217,7 @@ def _source_separation(triangles: np.ndarray, intrinsic: np.ndarray,
     return separated
 
 
+@observed('target.group_candidates')
 def _candidate_groups(candidate_pixels: list, candidate_faces: list) -> tuple:
     """Group row-major pixels, preserving the original face order within each.
 
@@ -197,6 +234,22 @@ def _candidate_groups(candidate_pixels: list, candidate_faces: list) -> tuple:
 
 def _triangle_area(origin: np.ndarray, first: np.ndarray, second: np.ndarray) -> float:
     """The original float64 cross/dot norm, without generic-axis dispatch."""
+    # Keep every NumPy underflow notification mode on the original operations:
+    # a tiny intermediate product can underflow even when total area is large.
+    if (type(origin) is np.ndarray and type(first) is np.ndarray and type(second) is np.ndarray
+            and origin.shape == first.shape == second.shape == (3,)
+            and origin.dtype == first.dtype == second.dtype == np.dtype(np.float64)
+            and np.geterr()['under'] == 'ignore'):
+        o0, o1, o2 = origin.tolist()
+        f0, f1, f2 = first.tolist()
+        s0, s1, s2 = second.tolist()
+        if all(abs(value) <= 1e70 for value in (o0, o1, o2, f0, f1, f2, s0, s1, s2)):
+            a0, a1, a2 = f0-o0, f1-o1, f2-o2
+            b0, b1, b2 = s0-o0, s1-o1, s2-o2
+            c0, c1, c2 = a1*b2-a2*b1, a2*b0-a0*b2, a0*b1-a1*b0
+            norm_sq = c0*c0 + c1*c1 + c2*c2
+            if norm_sq > 1e-290:
+                return math.sqrt(norm_sq)/2.
     a, b = first-origin, second-origin
     cross = np.array((a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]))
     return float(np.sqrt(cross.dot(cross)) / 2)
@@ -206,7 +259,7 @@ class _PixelClipBatches:
     """Keep only the next bounded group of candidate clips, never decisions.
 
     The caller still visits/checks/charges every pixel and face in its original
-    order. At most 63 future candidate clips may be prepared speculatively; an
+    order. At most 255 future candidate clips may be prepared speculatively; an
     explicit replay frontier bounds even that work. No cross-build state lives
     here and no future clip is counted until the original loop consumes it.
     """
@@ -219,6 +272,8 @@ class _PixelClipBatches:
 
     def get(self, offset):
         if not self.first <= offset < self.first + len(self.cached):
+            detail=current()
+            started=time.perf_counter() if detail is not None else None
             stop = min(offset + MAX_BATCH, self.limit)
             if offset >= stop:
                 raise ValueError('Pixel clipping request exceeds construction frontier')
@@ -231,8 +286,13 @@ class _PixelClipBatches:
             planes[:, 1, 2] = x+.5 - self.k[0, 2]
             planes[:, 2, 2] = self.k[1, 2] - (y-.5)
             planes[:, 3, 2] = y+.5 - self.k[1, 2]
+            if detail is not None:
+                _record(detail,'target.clip_planes',seconds=time.perf_counter()-started,calls=1,candidates=stop-offset)
+                started=time.perf_counter()
             self.cached = clip_triangles_planes(self.triangles[self.face_ids[offset:stop]], planes,
                                                  scalar_clip=clip_triangle_planes)
+            if detail is not None:
+                _record(detail,'target.clip_batch',seconds=time.perf_counter()-started,calls=1,candidates=stop-offset)
             self.first = offset
             self.projected = None
         return self.cached[offset-self.first]
@@ -240,11 +300,16 @@ class _PixelClipBatches:
     def polygon(self, offset):
         self.get(offset)
         if self.projected is None:
+            detail=current()
+            started=time.perf_counter() if detail is not None else None
             self.projected = project_clipped_polygons(self.cached,
                 self.triangles[self.face_ids[self.first:self.first+len(self.cached)]], self.k)
+            if detail is not None:
+                _record(detail,'target.clip_projection',seconds=time.perf_counter()-started,calls=1,polygons=len(self.cached))
         return self.projected[offset-self.first]
 
 
+@observed('target.pixel_clip')
 def _clip_pixel_polygons(
     face_ids: np.ndarray, starts: np.ndarray, ends: np.ndarray, index: int,
     triangles: np.ndarray, k: np.ndarray, x: int, y: int, check: Callable, *, batches=None,
@@ -286,6 +351,44 @@ def _clip_pixel_polygons(
     return polygons, reason, clip_count, exact_count, pair_count, occluded
 
 
+def _pixel_box_hints(polygons):
+    """Bounded broad phase; only existing SAT axes may certify separation.
+
+    AABB separation alone can resolve a formerly uncertain predicate. Retain
+    that uncertainty unless an axis already used by interior_overlap proves
+    False with exactly the original arithmetic. Typical pixel-clipped polygons
+    have horizontal/vertical edges, so this can skip the other SAT axes.
+    """
+    if not 4 <= len(polygons) <= 64:return None
+    bounds, axes = [], []
+    for _, _, _, uv in polygons:
+        bounds.append((uv.min(axis=0), uv.max(axis=0)))
+        aligned = []
+        for start, end in zip(uv, np.roll(uv, -1, axis=0)):
+            edge = end-start
+            if edge[0] == 0 and edge[1] != 0:aligned.append((0, start, np.array([-edge[1], 0.])))
+            elif edge[1] == 0 and edge[0] != 0:aligned.append((1, start, np.array([0., edge[0]])))
+        axes.append(aligned)
+    return bounds, axes
+
+
+def _pixel_boxes_separate(a, b, polygons, hints):
+    if hints is None:return False
+    bounds, axes = hints
+    low_a, high_a = bounds[a]; low_b, high_b = bounds[b]
+    separated = (high_a < low_b) | (high_b < low_a)
+    if not separated.any():return False
+    ua, ub = polygons[a][3], polygons[b][3]
+    for dimension, start, axis in (*axes[a], *axes[b]):
+        if not separated[dimension]:continue
+        pa, pb = (ua-start) @ axis, (ub-start) @ axis
+        gap = min(pa.max(), pb.max())-max(pa.min(), pb.min())
+        scale = max(float(np.max(np.abs(pa))), float(np.max(np.abs(pb))), np.finfo(float).tiny)
+        if gap < -EPS*scale:return True
+    return False
+
+
+@observed('target.pixel_occlusion')
 def _resolve_pixel_occlusion(
     polygons: list, reason: int, pair_count: int, occluded: int, metrics: dict,
     budget: TargetBudget, triangles: np.ndarray, k: np.ndarray,
@@ -293,6 +396,8 @@ def _resolve_pixel_occlusion(
 ) -> tuple[set, bool, int, int, int]:
     discarded = set()
     exhausted = False
+    hints = None
+    hints_prepared = False
     if reason != 8:
         for a in range(len(polygons)):
             if a in discarded:
@@ -311,6 +416,15 @@ def _resolve_pixel_occlusion(
                 # at just one original vertex, before any clipping rounding.
                 if source_separated(fa, fb):
                     continue
+                # Most adjacent faces in a dense measured pixel mesh are
+                # already separated by the original source predicate. Prepare
+                # clipped-polygon bounds only when a pair actually needs them.
+                # Pair order, charging and all exact fallback checks stay put.
+                if not hints_prepared:
+                    hints = _pixel_box_hints(polygons)
+                    hints_prepared = True
+                if _pixel_boxes_separate(a, b, polygons, hints):
+                    continue
                 overlaps = interior_overlap(ua, ub)
                 if overlaps is False:
                     continue
@@ -327,17 +441,36 @@ def _resolve_pixel_occlusion(
     return discarded, exhausted, reason, pair_count, occluded
 
 
+def _pixel_depth_reason(visible, limits, measured, gate):
+    # Float64 scalar arithmetic keeps the same subtraction and comparisons.
+    # Other dtypes/error policies and extreme values retain NumPy notifications.
+    if (np.geterr()['under'] == 'ignore' and isinstance(measured, np.float64)
+            and abs(float(measured)) <= 1e70
+            and all(type(p[2]) is np.ndarray and p[2].dtype == np.dtype('float64') for p in visible)):
+        columns = [p[2][:, 2].tolist() for p in visible]
+        if all(abs(z) <= 1e70 for column in columns for z in column):
+            if any(z < limits['minimum_m'] or z > limits['maximum_m'] for column in columns for z in column):
+                return 3
+            measured = float(measured)
+            return 6 if any(abs(z-measured) > gate for column in columns for z in column) else 0
+    if any(((p[2][:, 2] < limits['minimum_m']) | (p[2][:, 2] > limits['maximum_m'])).any() for p in visible):return 3
+    if any((np.abs(p[2][:, 2]-measured) > gate).any() for p in visible):return 6
+    return 0
+
+
+@observed('target.pixel_children')
 def _pixel_target_children(
     polygons: list, discarded: set, reason: int, limits: dict, depth: np.ndarray,
     y: int, x: int, gate_m: float, local_lookup: np.ndarray, pixel: int,
     faces: np.ndarray, partition=None,
 ) -> tuple[list, int]:
+    detail=current()
+    started=time.perf_counter() if detail is not None else None
     visible = [p for i, p in enumerate(polygons) if i not in discarded]
     if reason not in (7, 8) and visible:
-        if any(((p[2][:, 2] < limits['minimum_m']) | (p[2][:, 2] > limits['maximum_m'])).any() for p in visible):
-            reason = 3
-        elif any((np.abs(p[2][:, 2]-depth[y, x]) > gate_m).any() for p in visible):
-            reason = 6
+        depth_reason = _pixel_depth_reason(visible, limits, depth[y, x], gate_m)
+        if depth_reason:
+            reason = depth_reason
         else:
             if partition is not None:
                 reason = partition.classify([p[0] for p in visible], x, y)
@@ -346,6 +479,9 @@ def _pixel_target_children(
                 reason = 1 if projected_area == 1. else 10
                 if projected_area > 1. + EPS * max(1, len(visible)):
                     reason = 8
+    if detail is not None:
+        _record(detail,'target.child_gates',seconds=time.perf_counter()-started,calls=1,visible=len(visible))
+        started=time.perf_counter()
     children = []
     if reason in (1, 10):
         for face, bary, xyz, _ in visible:
@@ -360,6 +496,8 @@ def _pixel_target_children(
                                  child-1, bary[[0, child, child+1]], area))
             if reason == 8:
                 break
+    if detail is not None:
+        _record(detail,'target.child_fan',seconds=time.perf_counter()-started,calls=1,returned_children=len(children))
     return children, reason
 
 
@@ -369,6 +507,8 @@ def _construct(inputs: dict, revision: dict, budget: TargetBudget, check: Callab
     """Bounded, deterministic pixel grouping; a budget stop never drops intent."""
     check(); budget.checked()
     started = time.monotonic()
+    detail = current()
+    index_started = time.perf_counter() if detail is not None else None
     vertices, faces, mask = inputs['vertices'], inputs['faces'], inputs['mask']
     h, w = mask.shape
     k = np.asarray(revision['inputs']['calibration']['intrinsic'], float)
@@ -462,6 +602,9 @@ def _construct(inputs: dict, revision: dict, budget: TargetBudget, check: Callab
     check()
     if not candidate_pixels:
         return output, metrics
+    if detail is not None:
+        _record(detail,'target.candidate_index',seconds=time.perf_counter()-index_started,calls=1,
+                candidates=metrics['candidate_count'],indexed_faces=metrics['indexed_faces'])
     groups, face_ids, starts, ends = _candidate_groups(candidate_pixels, candidate_faces)
     metrics['candidate_pixel_groups'] = len(groups)
     if start_group>len(groups):raise ValueError('原目标续算前沿超出候选范围')
@@ -491,20 +634,29 @@ def _construct(inputs: dict, revision: dict, budget: TargetBudget, check: Callab
             break
         children, reason = _pixel_target_children(polygons, discarded, reason, limits, depth, y, x, gate_m, local_lookup, pixel, faces, partition)
         if len(rows['area_m2']) + len(children) > budget.max_units:
+            if detail is not None:
+                _record(detail,'target.child_append',budget_rejected_pixels=1,budget_rejected_children=len(children))
             metrics['stop_reason'] = 'unit_budget'
             break
+        append_started=time.perf_counter() if detail is not None else None
         for child in children:
             for name, value in zip(rows, child):
                 rows[name].append(value)
+        if detail is not None:
+            _record(detail,'target.child_append',seconds=time.perf_counter()-append_started,calls=1,children=len(children))
         status[y, x] = reason
         metrics['processed_pixel_groups'] += 1
         metrics['clip_count'] += clip_count; metrics['exact_clip_fallbacks'] += exact_count
         metrics['pair_checks'] += pair_count; metrics['occluded_polygons'] += occluded
     if frontier is not None and metrics['processed_pixel_groups'] == len(groups):
         metrics['stop_reason'] = frontier['stop_reason']
+    assembly_started = time.perf_counter() if detail is not None else None
     for name, values in rows.items():
         output[name] = np.asarray(values, dtype=_DTYPES[name]).reshape((-1, 3, 3) if name == 'barycentric' else (-1,))
     output['quality_status'] = _quality_values(output)
+    if detail is not None:
+        _record(detail,'target.array_assembly',seconds=time.perf_counter()-assembly_started,calls=1,
+                children=len(output['area_m2']))
     check()
     return output, metrics
 
@@ -525,10 +677,12 @@ def _face_quality(domain: dict | None, region: dict, evidence: dict, vertices: n
 
 def build(model: Any, region: dict, revision: dict, *, evidence: dict | None = None,
           domain: dict | None = None, budget: TargetBudget | None = None,
-          check: Callable = lambda: None) -> TargetLedger:
+          check: Callable = lambda: None, deferred: bool = False) -> TargetLedger:
     from femto.planning.quality_constrained import evidence as get_evidence, checked_evidence
     revision_api.validate(revision)
-    budget = (budget or TargetBudget()).checked()
+    if type(deferred) is not bool or deferred and budget is not None:
+        raise ValueError('按需目标面积计算不能同时指定构建预算')
+    budget = (TargetBudget(0, 0, 0, 0.) if deferred else budget or TargetBudget()).checked()
     if revision['inputs']['numerics'] != revision_api.NUMERICS or not revision_api.supported_target_algorithms(revision['inputs']['algorithms']):
         raise ValueError('原目标台账不支持该算法或数值策略')
     if revision['inputs']['quality'] != revision_api.QUALITY:
@@ -553,7 +707,8 @@ def build(model: Any, region: dict, revision: dict, *, evidence: dict | None = N
                   mask=mask, quality_classes=classes.astype(np.uint8),
                   face_quality=_face_quality(domain, region, record, vertices, faces, check))
     _check_inputs(inputs, revision)
-    arrays, metrics = _construct(inputs, revision, budget, check)
+    arrays, metrics = (_deferred(inputs, revision, check) if deferred else
+                      _construct(inputs, revision, budget, check))
     return _seal(arrays, revision, budget, metrics, record['sha256'], None if domain is None else domain['sha256'])
 
 
@@ -608,7 +763,7 @@ def validate_metadata(metadata: dict, revision: dict) -> None:
             or revision['inputs']['numerics'] != revision_api.NUMERICS
             or revision['inputs']['quality'] != revision_api.QUALITY):
         raise ValueError('原目标算法或数值策略不受支持')
-    if (not isinstance(metadata, dict) or metadata.get('schema') not in (SCHEMA,PAGED_SCHEMA) or metadata.get('asset') != ASSET
+    if (not isinstance(metadata, dict) or metadata.get('schema') not in (SCHEMA,PAGED_SCHEMA,DEFERRED_SCHEMA) or metadata.get('asset') != ASSET
             or metadata.get('sha256') != revision_api.digest({k: v for k, v in metadata.items() if k != 'sha256'})
             or metadata.get('target_id') != revision['target_id'] or metadata.get('computation_sha256') != revision['sha256']
             or metadata.get('target_completion') != 'unverified' or metadata.get('coverage_certificate') is not None
@@ -625,6 +780,13 @@ def validate_metadata(metadata: dict, revision: dict) -> None:
                 or np.prod(shape, dtype=object)*np.dtype(_DTYPES[name]).itemsize > MAX_ASSET_BYTES):
             raise ValueError('原目标数组尺寸或类型无效：' + name)
     n = records['area_m2']['shape'][0]
+    if is_deferred(metadata):
+        if (metadata['budget'] != asdict(TargetBudget(0, 0, 0, 0.)) or n != 0
+                or metadata.get('metrics', {}).get('stop_reason') != 'deferred_by_request'
+                or records['duplicate_faces']['shape'] != [0, 2]):
+            raise ValueError('待计算目标不能包含面积结果或已执行的构建预算')
+    elif metadata.get('metrics', {}).get('stop_reason') == 'deferred_by_request':
+        raise ValueError('待计算目标状态与资产版本不一致')
     if metadata['schema']==PAGED_SCHEMA:
         from femto.planning.target_paging import validate_headers
         validate_headers(metadata,revision)
@@ -659,6 +821,16 @@ def validate(ledger: TargetLedger, revision: dict, *, evidence: dict, domain: di
                                      arrays['vertices'], arrays['faces'], check)
     if not np.array_equal(arrays['face_quality'], expected_quality):
         raise ValueError('原目标质量资格与有效域不一致')
+    if is_deferred(metadata):
+        # The cheap recipe is replayed even for metadata-only callers. A pending
+        # asset must never be relabelled as located/complete by rehashing it.
+        source_names = ('vertices', 'faces', 'region_faces', 'depth', 'image_valid', 'mask', 'quality_classes', 'face_quality')
+        rebuilt, counts = _deferred({name: arrays[name] for name in source_names}, revision, check)
+        expected = _seal(rebuilt, revision, TargetBudget(0, 0, 0, 0.), counts,
+                         evidence['sha256'], None if domain is None else domain['sha256'])
+        if expected.metadata != metadata:
+            raise ValueError('待计算目标的状态或输入不能重现')
+        return ledger
     if reproduce:
         if metadata['schema']==PAGED_SCHEMA:
             from femto.planning.target_paging import reproduce_materialized
@@ -682,8 +854,14 @@ def write(folder: Path, ledger: TargetLedger, check: Callable = lambda: None) ->
     """Only write inside a caller-owned derived staging/snapshot directory."""
     from femto.planning.surface_trajectory import canonical_json_bytes
     check()
-    with (Path(folder)/ASSET).open('wb') as stream:
-        np.savez_compressed(stream, **{name: ledger.arrays[name] for name in sorted(ledger.arrays)})
+    # Standard lossless NPZ, favoring interactive save time over ZIP size.
+    # Array headers/values and independent readback validation are unchanged.
+    with zipfile.ZipFile(Path(folder)/ASSET, 'w', compression=zipfile.ZIP_DEFLATED,
+                         compresslevel=1) as archive:
+        for name in sorted(ledger.arrays):
+            check()
+            with archive.open(name+'.npy', 'w', force_zip64=True) as stream:
+                np.lib.format.write_array(stream, ledger.arrays[name], allow_pickle=False)
     (Path(folder)/MANIFEST).write_bytes(canonical_json_bytes(ledger.metadata))
     check()
 
@@ -734,6 +912,8 @@ def read(folder: Path, metadata: dict, revision: dict, *, evidence: dict, domain
 def summary_text(metadata: dict | None) -> str:
     if metadata is None:
         return '原目标台账：旧记录未进行此项核验。'
+    if is_deferred(metadata):
+        return '目标面积与覆盖尚未计算；可按需检查，路线坐标使用独立的几何校验。'
     summary = metadata['summary']
     return (f"原目标：已定位面积 {summary['located_area_m2']*1e6:.1f} mm²，"
             f"其中 {summary['quality_excluded_area_m2']*1e6:.1f} mm² 未进入当前有效域；"

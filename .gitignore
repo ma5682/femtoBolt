@@ -6,6 +6,8 @@
 __pycache__/
 *.pyc
 *.pyo
+# Optional project-owned native cloud kernel; build records stay in outputs/.
+/femto/geometry/_cloud_predicate*.pyd*
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

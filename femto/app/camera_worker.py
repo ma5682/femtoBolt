@@ -47,6 +47,7 @@ class CameraWorker:
                 cancel_event=payload.get("cancel_event") if isinstance(payload, dict) else None,
                 initial_frame=payload.get("initial_frame") if isinstance(payload, dict) else None,
                 scan_roi=payload.get("scan_roi") if isinstance(payload, dict) else None,
+                region_first=payload.get("region_first",False) if isinstance(payload,dict) else False,
             )
         except Exception as error:
             self.app.event_queue.put(
@@ -392,7 +393,8 @@ class CameraWorker:
                     )
                 self.dependencies.finalize_scan(state.scan, state.camera)
         except Exception as error:
-            if state.local is not None and state.local.thread.is_alive():
+            if (state.local is not None and state.local.thread.is_alive()
+                    and not getattr(state.local,'acquisition_complete',False)):
                 state.local.abort("camera_error", str(error))
             self.app.event_queue.put(
                 (
@@ -401,7 +403,8 @@ class CameraWorker:
                 )
             )
         finally:
-            if state.local is not None and state.local.thread.is_alive():
+            if (state.local is not None and state.local.thread.is_alive()
+                    and (self.app.stop_event.is_set() or not getattr(state.local,'acquisition_complete',False))):
                 state.local.finish(False)
             if state.temporal_burst is not None:
                 self.app._dispatch_temporal(state.temporal_burst, fuse=False)

@@ -16,18 +16,36 @@ _SQRT3 = float(np.sqrt(3.))
 
 class TriangleSolve:
     """Lazily prepare one 3-by-2 matrix, shared by point and chord queries."""
-    __slots__ = ('matrix', '_ready', '_inverse', '_guard', '_inverse_norm', '_matrix_norm')
+    __slots__ = ('matrix', '_ready', '_inverse', '_guard', '_inverse_norm', '_matrix_norm',
+                 '_shared_preparation')
 
-    def __init__(self, matrix):
+    def __init__(self, matrix, *, _shared_preparation=None):
         self.matrix = matrix
         self._ready = False
         self._inverse = None
         self._guard = self._inverse_norm = self._matrix_norm = 0.
+        self._shared_preparation = _shared_preparation
 
     def _prepare(self):
         if self._ready:
             return
         self._ready = True
+        if self._shared_preparation is not None:
+            bound_matrix, obtain = self._shared_preparation
+            if self.matrix is bound_matrix:
+                try:
+                    record = obtain()
+                    if record is not None:
+                        inverse, guard, inverse_norm, matrix_norm = record
+                        inverse = (None if inverse is None else
+                                   np.frombuffer(inverse, dtype=np.float64).reshape(2, 3))
+                        self._inverse, self._guard = inverse, guard
+                        self._inverse_norm, self._matrix_norm = inverse_norm, matrix_norm
+                        return
+                except MemoryError:
+                    # The bounded shared copy is optional. Original local
+                    # preparation remains available without publishing a row.
+                    pass
         # The envelope describes binary64 arithmetic. Keep other input dtypes
         # on their original NumPy path (notably float32 rank/rounding choices).
         if self.matrix.dtype != np.dtype(np.float64):

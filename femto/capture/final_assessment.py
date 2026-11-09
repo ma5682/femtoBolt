@@ -11,17 +11,30 @@ from femto.capture.scan_roi import assess_model
 from femto.capture.scan_feedback import build_feedback, target_key
 from femto.dataset.acquisition_completion import SCHEMA
 from femto.io_utils import imwrite_unicode, load_json_object, sha256_file, write_json
+from femto.operation_diagnostics import diagnosed, record_operation
 
 
+@diagnosed('capture.final_assessment', operation=True)
 def assess_final(capture, result):
     if capture.scan_roi is None:
         return None  # Existing non-ROI acquisition keeps its historical contract.
     root=Path(result)
     budget=GeometryBudget(capture.processing_cancel)
     budget.check()
-    model=FixedRGBModel(root/'reconstruction',cancel=capture.processing_cancel)
-    summary,preview,classes=assess_model(model,capture.scan_roi,capture.processing_cancel,evidence=True)
-    binding=dict(target_key=target_key(capture.scan_roi,capture.reference_provenance,model.view_reference),
+    from femto.dataset.prepared_review import PreparedCapture, asset_fingerprints, close_prepared
+    close_prepared(getattr(capture, 'prepared_review', None))
+    capture.prepared_review = None
+    try:
+        before = asset_fingerprints(root, budget.check)
+    except (OSError, ValueError, KeyError, TypeError):
+        before = None  # Optional acceleration never changes acquisition admission.
+    with record_operation('load.fixed_rgb_model'):
+        model=FixedRGBModel(root/'reconstruction',cancel=capture.processing_cancel)
+    with record_operation('load.final_reference_assessment'):
+        summary,preview,classes=assess_model(model,capture.scan_roi,capture.processing_cancel,evidence=True)
+    scope = load_json_object(root/'reconstruction/reconstruction_report.json').get('reconstruction_scope')
+    target = dict(capture.scan_roi, reconstruction_scope=scope) if scope else capture.scan_roi
+    binding=dict(target_key=target_key(target,capture.reference_provenance,model.view_reference),
         stage_id=uuid.uuid4().hex,session_id=capture.session_id,
         reference_frame_id=capture.scan_roi['reference_frame_id'],
         model_sha256=sha256_file(model.store.source,budget.check))
@@ -37,7 +50,7 @@ def assess_final(capture, result):
         end_status=end_status,confirmed_for_planning=False,scan_summary=summary,
         operation_stop_reason=getattr(capture.checkpoints,'stop_reason',None),
         capture_end_reason=getattr(capture,'finish_reason',None),
-        feedback=feedback,scan_roi=capture.scan_roi,
+        feedback=feedback,scan_roi=capture.scan_roi,reconstruction_scope=scope,
         accepted_frame_ids=[row['frame_id'] for row in capture.accepted],
         reconstruction_report_sha256=sha256_file(root/'reconstruction/reconstruction_report.json',budget.check),
         execution_ready=False,physical_accuracy_verified=False)
@@ -53,4 +66,12 @@ def assess_final(capture, result):
     manifest=load_json_object(root/'demo_summary.json')
     manifest['acquisition_completion_required']=True
     write_json(root/'demo_summary.json',manifest,allow_nan=False,check=budget.check)
+    if before is not None:
+        try:
+            if asset_fingerprints(root, budget.check) == before:
+                capture.prepared_review = PreparedCapture(root, model, before, record,
+                                                          capture.scan_roi, summary, preview)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    budget.check()
     return record

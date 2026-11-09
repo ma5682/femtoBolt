@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from functools import wraps
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -21,7 +22,7 @@ import traceback
 import uuid
 from typing import Any, Callable, Iterator, ParamSpec, TypeVar
 
-from femto.io_utils import append_jsonl, write_json_strict
+from femto.io_utils import write_json_strict
 from femto.paths import OUTPUTS_ROOT
 
 CURRENT = ContextVar('femto_operation_diagnostics', default=None)
@@ -76,6 +77,8 @@ class OperationRecord:
         self.directory = None
         self.recording_error = None
         self.started = time.perf_counter()
+        from femto.performance_detail import current
+        self.detail = current()
         self.created_utc = datetime.now(timezone.utc).isoformat()
         self.events = self.omitted_events = self.next_stage = 0
         self.stack = []
@@ -85,6 +88,7 @@ class OperationRecord:
         self._failed_depth = None
         self.error = None
         self.retained: list[RetainedArtifact] = []
+        self._events_stream = None
         self.totals = defaultdict(lambda: dict(calls=0, inclusive_seconds=0., self_seconds=0., failed_calls=0, stopped_calls=0))
 
     def summary(self) -> OperationSummary:
@@ -99,9 +103,20 @@ class OperationRecord:
         if self.events >= MAX_EVENTS:
             self.omitted_events += 1; return
         try:
-            append_jsonl(self.directory/'events.jsonl', value)
+            # One handle per operation: identical lines, each flushed at once,
+            # without reopening the file for every stage boundary.
+            if self._events_stream is None:
+                self._events_stream = (self.directory/'events.jsonl').open('a', encoding='utf-8')
+            self._events_stream.write(json.dumps(value, ensure_ascii=False, separators=(',', ':')) + '\n')
+            self._events_stream.flush()
             self.events += 1
         except Exception as error:self.recording_error = str(error)[:4096]
+
+    def _close_events(self) -> None:
+        stream, self._events_stream = self._events_stream, None
+        if stream is not None:
+            try:stream.close()
+            except Exception as error:self.recording_error = self.recording_error or str(error)[:4096]
 
     def _save(self, status: str, error: dict[str, Any] | None = None) -> None:
         if self.directory is None:return
@@ -111,6 +126,11 @@ class OperationRecord:
             error=error, recording_error=self.recording_error,
             failed_stage=self.failed_stage, retained_artifacts=[asdict(item) for item in self.retained],
             timings_are_observations_not_replay_inputs=True)
+        if self.detail is not None:
+            try:value['performance_detail'] = self.detail.snapshot()
+            except Exception as failure:
+                self.recording_error = str(failure)[:4096]
+                value['recording_error'] = self.recording_error
         try:write_json_strict(self.directory/'operation.json', value, durable=True)
         except Exception as failure:self.recording_error = str(failure)[:4096]
 
@@ -138,8 +158,10 @@ class OperationRecord:
             elif self._failed_exception is None or (self._failed_exception is not value and value.__cause__ is not self._failed_exception):
                 self.failed_stage = self.name
             self.status, self.error = status, error
+            self._close_events()
             self._save(status, error)
         finally:
+            self._close_events()
             self._failed_exception = None
             self._failed_depth = None
             CURRENT.reset(self.token)

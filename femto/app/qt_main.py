@@ -9,7 +9,7 @@ import traceback
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QFont, QPixmap, QFontDatabase
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow,
+    QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow,
     QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -47,6 +47,7 @@ class WorkstationWindow(QMainWindow):
         self.setMinimumSize(1120, 740)
         self._planning_source = None
         self._pending_sources = {}
+        self._planning_load_origin = None
         self._close_pending = False
         self._close_timer = QTimer(self)
         self._close_timer.setInterval(250)
@@ -151,6 +152,7 @@ class WorkstationWindow(QMainWindow):
                                     self.history_button, self.devices_button, self.advanced_button)
         self._set_header_active(self.capture_button)
         self.capture.planning_requested.connect(self.open_planning)
+        self.capture.planning_preview_requested.connect(lambda source:self.open_planning(source,review_model=True))
         self.capture.history_requested.connect(self.show_history)
         self.capture.status_changed.connect(self._capture_context_changed)
         self.planning.back_requested.connect(self.show_capture)
@@ -169,6 +171,9 @@ class WorkstationWindow(QMainWindow):
         # Only remember a source after the asynchronous load has completed.  A
         # failed load must remain retryable from the same path.
         self.planning.loaded.connect(self._planning_loaded)
+        self.planning.load_return_requested.connect(self._return_from_planning_load)
+        self.planning.load_started.connect(self._remember_planning_load_origin)
+        self.planning.status_changed.connect(self._sync_context)
         self.pages.currentChanged.connect(self._sync_context)
         self.review.runner.finished.connect(lambda: self._context_finished(self.review))
         self.planning.runner.finished.connect(lambda: self._context_finished(self.planning))
@@ -194,7 +199,7 @@ class WorkstationWindow(QMainWindow):
             button.style().unpolish(button)
             button.style().polish(button)
 
-    def open_planning(self, source, *, new_version=False):
+    def open_planning(self, source, *, new_version=False,review_model=False):
         if not self.execution.can_leave():
             QMessageBox.information(self, '模拟任务进行中', '请先请求停止并等待结果，结束当前模拟任务，再切换项目。')
             return False
@@ -214,15 +219,38 @@ class WorkstationWindow(QMainWindow):
                 return False
             revision=getattr(self.review.model,'revision_id',None) if new_version and self.review.source==path else None
             self._pending_sources[self.planning] = path
-            if not self.planning.load_source(path,force=new_version,restore_draft=not new_version,new_version=new_version,expected_revision=revision):
+            options={'review_model':True} if review_model else {}
+            origin=self.pages.currentWidget()
+            if origin is self.capture and self.capture.session.result is not None:
+                result=Path(self.capture.session.result).resolve()
+                if path in (result,result/'reconstruction'):
+                    options.update(preview=self.capture.scan_roi_preview,
+                                   loading_context=self.capture.task_name.text())
+                    prepared=self.capture.take_prepared_review(path)
+                    if prepared is not None:options['prepared']=prepared
+            if not self.planning.load_source(path,force=new_version,restore_draft=not new_version,new_version=new_version,expected_revision=revision,**options):
                 self._pending_sources.pop(self.planning, None)
+                self._planning_load_origin=None
                 return False
             if not self.planning.busy:
                 self._pending_sources.pop(self.planning, None)
         self.pages.setCurrentWidget(self.planning)
         self._sync_context()
-        self._set_header_active(self.open_button)
+        self._set_header_active(self._planning_load_origin[1] if self._planning_load_origin else self.open_button)
         return True
+
+    def _remember_planning_load_origin(self):
+        header=next((button for button in self._header_nav_buttons if button.property('state')=='active'),self.open_button)
+        self._planning_load_origin=(self.pages.currentWidget(),header)
+
+    def _return_from_planning_load(self):
+        origin,header=self._planning_load_origin or (self.capture,self.capture_button)
+        self._planning_load_origin=None
+        self._pending_sources.pop(self.planning,None)
+        if not self._close_pending:
+            self.pages.setCurrentWidget(origin)
+            self._set_header_active(header)
+            self._sync_context()
 
     def open_review(self,source, *, expected_record=None):
         if not self.capture.can_leave() or self.planning.busy or self.review.busy or not self.execution.can_leave():
@@ -249,12 +277,18 @@ class WorkstationWindow(QMainWindow):
     def _sync_context(self, *_):
         """Describe only the visible page and its committed data source."""
         page = self.pages.currentWidget()
+        preparing=self.planning.loading_source is not None
+        for button in self._header_nav_buttons:button.setEnabled(not preparing)
         if page is self.execution:
             self.project_badge.setText('模拟联调 · 不可执行')
             self.subtitle.setText('模拟设备与事件回看 · 无真实运动及超声输出')
             return
         pending = self._pending_sources.get(page)
-        if pending is not None and page.busy:
+        if page is self.planning and preparing:
+            source=self.planning.loading_source
+            mode='准备模型'
+            name=self.planning._loading_request['loading_context'] or source.name
+        elif pending is not None and page.busy:
             mode, name = '正在核验来源', pending.name
             source = pending
         elif page is self.capture:
@@ -438,6 +472,7 @@ class WorkstationWindow(QMainWindow):
     def _planning_loaded(self, source):
         path = Path(source).resolve()
         self._planning_source = path
+        self._planning_load_origin = None
         self._pending_sources.pop(self.planning, None)
         self._sync_context()
 

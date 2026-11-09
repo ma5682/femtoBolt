@@ -7,7 +7,7 @@ from PySide6.QtSvg import QSvgRenderer
 
 
 @lru_cache(maxsize=80)
-def line_icon(name, active=False):
+def line_icon(name, active=False, foreground=None):
     paths = {
         'workspace': '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>',
         'folder': '<path d="M3 7V4h7l3 3h8v14H3Z"/><path d="M3 10h18"/>',
@@ -36,6 +36,7 @@ def line_icon(name, active=False):
         'brush': '<path d="m14 4 6 6-9 9-6-6ZM14 4l2-2 6 6-2 2M5 13l-3 9 9-3M4 18l2 2"/>',
         'eraser': '<path d="m3 14 10-11 9 9-8 9H9ZM7 10l9 9M14 21h8"/>',
         'redo': '<path d="m16 3 6 6-6 6M22 9H10a6 6 0 0 0 0 12h3"/>',
+        'fit': '<path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6M3 12h18"/>',
         'sliders': '<path d="M3 6h18M3 12h18M3 18h18"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="9" cy="18" r="2"/>',
     }
     icon = QIcon()
@@ -45,6 +46,7 @@ def line_icon(name, active=False):
                                (QIcon.Active, QIcon.On, '#20cfff'),
                                (QIcon.Disabled, QIcon.Off, '#496579'),
                                (QIcon.Disabled, QIcon.On, '#496579')):
+        if foreground is not None and mode != QIcon.Disabled:color = foreground
         svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
                f'fill="none" stroke="{color}" stroke-width="1.75" stroke-linecap="round" '
                'stroke-linejoin="round">'+paths[name]+'</svg>')

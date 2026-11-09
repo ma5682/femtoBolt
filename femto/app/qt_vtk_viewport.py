@@ -106,6 +106,10 @@ class VTKViewport(QWidget):
         mapper.SetInputData(data)
         if cell_colors is not None:
             mapper.SetScalarModeToUseCellData();mapper.SetColorModeToDirectScalars()
+        elif colors is not None:
+            mapper.SetScalarModeToUsePointData();mapper.SetColorModeToDirectScalars()
+        else:
+            mapper.ScalarVisibilityOff()
         actor = vtkActor()
         actor.SetMapper(mapper)
         self.renderer.AddActor(actor)
@@ -113,30 +117,32 @@ class VTKViewport(QWidget):
         return actor
 
     def set_scene(self, model, region=None, plan=None, *, reset_camera=True):
+        self._check_thread()
+        scene = scene_snapshot(model, region, plan, selection_only=True) if model is not None else None
+        self.set_snapshot(scene, reset_camera=reset_camera)
+
+    def set_snapshot(self, scene, *, reset_camera=True):
+        """Display an owned numeric preview without retaining a worker's model."""
         import numpy as np
         self._check_thread()
-        scene = scene_snapshot(model, region, plan) if model is not None else None
         self.renderer.RemoveAllViewProps()
         self.picker.InitializePickList()
         self._actors.clear()
         self._region_actor = self._route_actor = self._coverage_actor = None
-        if scene is not None:
+        if scene is not None and len(scene.vertices):
             if len(scene.triangles):
                 mesh = self._actor(scene.vertices, scene.triangles, colors=scene.colors,
-                                   ids=np.arange(len(scene.triangles)))
+                                   ids=scene.source_triangle_ids)
                 self.picker.AddPickList(mesh)
             else:
                 mesh = self._actor(scene.vertices, np.arange(len(scene.vertices)), points=True, colors=scene.colors)
                 mesh.GetProperty().SetPointSize(3)
             mesh.GetProperty().SetColor(.7, .76, .8)
-            if len(scene.region_ids):
-                overlay = self._actor(scene.vertices, scene.triangles[scene.region_ids])
-                self._region_actor = overlay
-                overlay.GetProperty().SetColor(.02, .85, .6)
-                overlay.GetProperty().SetOpacity(.42)
-                overlay.PickableOff()
-                overlay.GetMapper().SetResolveCoincidentTopologyToPolygonOffset()
-                overlay.GetMapper().SetRelativeCoincidentTopologyPolygonOffsetParameters(-1, -1)
+            # The snapshot already contains only the selected surface. A green
+            # overlay here tints every visible face and hides captured RGB.
+            if scene.colors is not None:
+                mesh.GetProperty().SetAmbient(.35)
+                mesh.GetProperty().SetDiffuse(.65)
             if scene.route_runs:
                 coords = np.concatenate(scene.route_runs)
                 offsets = np.cumsum([0] + [len(run) for run in scene.route_runs])

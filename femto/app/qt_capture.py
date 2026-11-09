@@ -55,9 +55,10 @@ REASONS = {
     'moving_wait': '正在移动，请停稳后补采。',
     'request_timeout': '补采请求超时，请停稳后重试。',
     'session_limit': '已到 5 分钟会话上限，正在结束。',
-    'accepted_view_limit': f'已接纳 {MAX_ACCEPTED_VIEWS} 个有效视角，正在自动结束采集并检查质量。',
+    'accepted_view_limit': '已达到该采集入口的视角上限，正在自动结束采集并检查质量。',
     'need_three_views': '至少需要 3 个有效且不同的视角，请重新采集。',
-    'need_more_views': '至少接纳 3 个不同视角后才能生成模型，请继续补采。',
+    'need_more_views': '至少接纳 1 个有效视角后才能完成采集，请等待首帧通过检查。',
+    'need_valid_view': '没有已接纳的有效 RGB-D 视角，请重新采集。',
     'origin_timeout': '15 秒内未能建立参考位置，请调整目标和距离。',
     'final_pose_invalid': '结束时位姿无效，本次未发布模型。',
     'calibration_changed': '标定文件发生变化，本次未发布模型。',
@@ -109,6 +110,7 @@ class CaptureState:
     acquisition_completion: dict | None = None
     checkpoint_stop_reason: str | None = None
     finish_reason: str | None = None
+    region_reference: object | None = None
 
     def begin(self):
         fresh = CaptureState(session_id=uuid.uuid4().hex, active=True)
@@ -176,6 +178,8 @@ class CaptureState:
                 return False
             return True
         if kind == 'local_pose':
+            if self.region_reference is not None:
+                return False  # A frozen reference never resumes from a late live pose.
             record = payload.get('record')
             if not isinstance(record, dict) or not isinstance(record.get('state'), str):
                 return False
@@ -232,6 +236,14 @@ class CaptureState:
         elif kind == 'local_finishing':
             self.finishing = True
             self.finish_reason = payload.get('reason')
+        elif kind == 'local_region_ready':
+            reference = payload.get('reference')
+            if reference is None or reference.binding.get('session_id') != self.session_id:
+                return False
+            self.region_reference = reference
+            self.state = 'awaiting_region'
+            self.finishing = False
+            self.notice = ''
         elif kind == 'local_processing':
             self.finishing = True
             self.state = 'processing'
@@ -467,7 +479,7 @@ class CaptureViewport(QWidget):
             self.changed.emit()
 
 
-def read_review(result, cancel, progress):
+def read_review(result, cancel, progress, *, prepared=None):
     """Bound display copies; authoritative meshes remain untouched on disk."""
     from femto.geometry.fusion import read_geometry_safe
     from femto.local.local_processing import result_quality
@@ -504,9 +516,14 @@ def read_review(result, cancel, progress):
         if report.is_file() and report.stat().st_size <= 10 * 1024 * 1024:
             metadata = json.loads(report.read_text(encoding='utf-8-sig'))
             frame_count = metadata.get('frame_count')
+            scope=metadata.get('reconstruction_scope')
+            if isinstance(scope,dict):frame_count=scope.get('input_frame_count',frame_count)
             source_dataset = metadata.get('source_dataset')
     except (OSError, ValueError, TypeError):
         pass
+    from femto.dataset.acquisition_completion import read_completion
+    from femto.annotation.fixed_rgb_geometry import GeometryBudget
+    completion = read_completion(result,check=GeometryBudget(cancel).check)
     roi = None
     roi_quality = None
     roi_preview = None
@@ -522,16 +539,24 @@ def read_review(result, cancel, progress):
                 tracking_path = (manifest.get('local_capture') or {}).get('tracking_report')
                 if tracking_path:
                     roi = read_scan_roi(Path(tracking_path).parent.parent)
+            if roi is None and completion is not None:
+                # A verified saved completion carries its acquisition context.
+                # An optional UI settings file need not exist to re-assess the
+                # immutable painted target against this model.
+                roi = completion.get('scan_roi')
             if roi is not None:
                 from femto.annotation.fixed_rgb_geometry import FixedRGBModel
+                from femto.dataset.prepared_review import PreparedCapture
                 progress('正在检查扫描范围内的实测几何与参考深度')
-                model = FixedRGBModel(result/'reconstruction', cancel=cancel)
-                roi_quality, roi_preview = assess_model(model, roi, cancel, preview=True)
+                reused = (prepared.review(result, roi, GeometryBudget(cancel).check)
+                          if isinstance(prepared, PreparedCapture) else None)
+                if reused is None:
+                    model = FixedRGBModel(result/'reconstruction', cancel=cancel)
+                    roi_quality, roi_preview = assess_model(model, roi, cancel, preview=True)
+                else:
+                    roi_quality, roi_preview = reused
         except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
             roi_quality = dict(status='unavailable', message=str(error))
-    from femto.dataset.acquisition_completion import read_completion
-    from femto.annotation.fixed_rgb_geometry import GeometryBudget
-    completion = read_completion(result,check=GeometryBudget(cancel).check)
     return dict(clouds=clouds, surface=surface, quality=result_quality(result),
                 frame_count=frame_count, source_dataset=source_dataset,
                 scan_roi=roi, scan_roi_quality=roi_quality, scan_roi_preview=roi_preview,
@@ -540,11 +565,14 @@ def read_review(result, cancel, progress):
 
 class CapturePage(QWidget):
     planning_requested = Signal(str)
+    planning_preview_requested = Signal(str)
     history_requested = Signal()
     status_changed = Signal(str)
 
     def __init__(self, parent=None, *, connect_camera=True):
         super().__init__(parent)
+        self.setObjectName('capturePage')
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.session = CaptureState()
         from femto.dataset.task_context import new_task
         self.task_context=new_task()
@@ -568,6 +596,7 @@ class CapturePage(QWidget):
         self._render_dirty = True
         self._closed = False
         self._history_replay = False
+        self._auto_plan_result = None
         self._workflow_view = None
         self.scan_roi_rect = None
         self.scan_roi_size = None
@@ -580,6 +609,7 @@ class CapturePage(QWidget):
         # from the planning page while the bounded review read is still in
         # flight without starting a second task or showing an empty viewport.
         self._review_request_result = None
+        self._prepared_review = None
         self.review_task = TaskRunner(self)
         self.render_task = TaskRunner(self)
         self._build_ui()
@@ -611,7 +641,7 @@ class CapturePage(QWidget):
         body.setSpacing(10)
         outer.addLayout(body, 1)
         center = QVBoxLayout()
-        center.setContentsMargins(16, 8, 4, 8)
+        center.setContentsMargins(16, 8, 16, 8)
         center.setSpacing(8)
         self._build_capture_views(center)
         self.alert = QLabel()
@@ -619,26 +649,41 @@ class CapturePage(QWidget):
         self.alert.setWordWrap(True)
         self.alert.hide()
         center.addWidget(self.alert)
+        self.region_progress = QProgressBar()
+        self.region_progress.setRange(0, 0)
+        self.region_progress.setTextVisible(False)
+        self.region_progress.setMaximumHeight(6)
+        self.region_progress.setObjectName('captureProgress')
+        self.region_progress.setAccessibleName('正在重建选中区域')
+        self.region_progress.hide()
+        center.addWidget(self.region_progress)
         self.viewport = CaptureViewport()
         self.viewport.changed.connect(self.invalidate_render)
         self.viewport.roi_changed.connect(self._roi_changed)
         center.addWidget(self.viewport, 1)
+        from femto.app.qt_region_capture import CaptureRegionEditor
+        self.region_editor = CaptureRegionEditor()
+        self.region_editor.changed.connect(self.refresh)
+        center.addWidget(self.region_editor,1)
+        self.region_editor.hide()
         self.preview_note = QLabel('真实 RGB-D 采集 · 研发规划预览')
         self.preview_note.setObjectName('statusTelemetry')
         self.preview_note.setWordWrap(True)
         center.addWidget(self.preview_note)
         body.addLayout(center, 1)
-        self._build_capture_inspector(body)
-        # Historical controls share the viewport toolbar; the live inspector
-        # retains its own controls and layout.
+        self._build_capture_inspector()
+        # Live progress and historical metrics share the viewport toolbar;
+        # capture does not reserve a sidebar beside the reference image.
         self.history_toolbar.insertWidget(0, self.history_metrics)
         self._build_capture_actions(outer)
 
     def _build_capture_views(self, center: QVBoxLayout) -> None:
         from femto.app.qt_icons import line_icon
         view_bar = QFrame()
+        self.capture_view_bar = view_bar
         view_bar.setObjectName('viewBar')
         toolbar = QHBoxLayout(view_bar)
+        self.capture_toolbar = toolbar
         toolbar.setContentsMargins(6, 4, 6, 4)
         toolbar.setSpacing(6)
         self.views = {}
@@ -676,11 +721,10 @@ class CapturePage(QWidget):
         toolbar.addWidget(self.fit_button)
         center.addWidget(view_bar)
 
-    def _build_capture_inspector(self, body: QHBoxLayout) -> None:
+    def _build_capture_inspector(self) -> None:
         inspector = QFrame()
         inspector.setObjectName('rightPanel')
         inspector.setMinimumWidth(280)
-        inspector.setMaximumWidth(312)
         info = QVBoxLayout(inspector)
         info.setContentsMargins(14, 12, 14, 12)
         info.setSpacing(10)
@@ -723,7 +767,7 @@ class CapturePage(QWidget):
             metrics.addLayout(column)
         self.history_metrics.hide()
         info.addWidget(self.history_metrics)
-        self.scan_roi_button.setToolTip('扫描范围包含目标及所需周边；检查模型后，再涂抹工作区域。')
+        self.scan_roi_button.setToolTip('扫描范围包含目标及所需周边；完成采集后先涂抹，再局部重建。')
         self.rescan_button = self._button('重新采集', self.rescan_current_region)
         info.addWidget(self.rescan_button)
         self.task_name.textEdited.connect(self.status_changed)
@@ -744,10 +788,10 @@ class CapturePage(QWidget):
         self.capture_heading.setObjectName('sectionHeading')
         info.addWidget(self.capture_heading)
         self.count_label = QLabel('0 帧')
-        self.count_label.setObjectName('metricValue')
+        self.count_label.setObjectName('captureFrameCount')
         self.count_label.setProperty('tone', 'good')
         info.addWidget(self.count_label)
-        self.count_label.setToolTip('建模至少需要 3 个有效且不同的视角；不代表最终几何覆盖合格。')
+        self.count_label.setToolTip('最多接纳 3 个有效视角，含首帧；接纳一帧后也可提前完成。帧数不代表覆盖合格。')
         self.stability_bar = QProgressBar()
         self.stability_bar.setRange(0, 5)
         self.stability_bar.setFormat('候选帧 %v / %m')
@@ -771,28 +815,11 @@ class CapturePage(QWidget):
         info.addWidget(self.check_button)
         info.addWidget(self.stage_review_button)
         info.addWidget(self.checkpoint_hint)
-        self.finish_button = self._button('完成采集并检查质量', lambda: self.finish(True))
+        self.finish_button = self._button('完成采集并选区', lambda: self.finish(True))
         self.cancel_button = self._button('取消本次采集', lambda: self.finish(False))
         self.cancel_button.setObjectName('quietButton')
-        self.details_toggle = QPushButton('展开任务与设备详情')
-        self.details_toggle.setObjectName('disclosureButton')
-        self.details_toggle.setCheckable(True)
-        self.details_toggle.setAccessibleName('展开或收起任务与设备详情')
-        info.addWidget(self.details_toggle)
-        self.details_panel = QWidget()
-        details = QVBoxLayout(self.details_panel)
-        details.setContentsMargins(0, 0, 0, 0)
-        details.setSpacing(8)
-        details.addWidget(QLabel('任务名称'))
-        details.addWidget(self.task_name)
-        details.addWidget(self.device_label)
-        self.details_panel.hide()
-        self.details_toggle.toggled.connect(self.details_panel.setVisible)
-        self.details_toggle.toggled.connect(lambda expanded: self.details_toggle.setText(
-            ('收起详情' if expanded else '详情') if self._history_replay and self.session.result else
-            ('收起' if expanded else '展开') + '任务与设备详情'))
-        self.details_toggle.toggled.connect(self.refresh)
-        info.addWidget(self.details_panel)
+        info.addWidget(self.task_name)
+        info.addWidget(self.device_label)
         info.addStretch()
         self.quality_button = self._button('检查采集质量', self.show_quality)
         self.report_button = self._button('查看本次报告', self.open_report)
@@ -800,18 +827,32 @@ class CapturePage(QWidget):
         self.report_button.setObjectName('quietButton')
         info.addWidget(self.quality_button)
         info.addWidget(self.report_button)
-        scroll = QScrollArea()
+        # Keep legacy state widgets owned but outside the visible layout.
+        # New captures use an automatic task name and the full live frame.
+        scroll = QScrollArea(self)
         scroll.setObjectName('captureInspector')
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(inspector)
         scroll.setMinimumWidth(292)
-        scroll.setMaximumWidth(324)
         self.inspector_scroll = scroll
-        body.addWidget(scroll)
+        scroll.hide()
+        self.frame_progress = QFrame()
+        self.frame_progress.setObjectName('captureFrameProgress')
+        progress = QHBoxLayout(self.frame_progress)
+        progress.setContentsMargins(10, 0, 10, 0);progress.setSpacing(8)
+        progress.addWidget(self.capture_heading);progress.addWidget(self.count_label)
+        self.frame_steps = []
+        for _ in range(MAX_ACCEPTED_VIEWS):
+            segment = QFrame();segment.setObjectName('captureFrameSegment')
+            segment.setFixedSize(36, 8);progress.addWidget(segment)
+            self.frame_steps.append(segment)
+        self.frame_progress.setToolTip('有效视角进度：第三帧保存成功后自动进入选区；也可在一帧或两帧时提前完成。')
+        self.capture_toolbar.insertWidget(self.capture_toolbar.indexOf(self.connection), self.frame_progress)
 
     def _build_capture_actions(self, outer: QVBoxLayout) -> None:
         footer = QFrame()
+        self.action_bar = footer
         footer.setObjectName('actionBar')
         footer_layout = QVBoxLayout(footer)
         footer_layout.setContentsMargins(18, 8, 18, 8)
@@ -827,6 +868,13 @@ class CapturePage(QWidget):
         actions.addWidget(self.new_button)
         self.retry_button = self._button('重试加载模型', self.retry_review)
         actions.addWidget(self.retry_button)
+        self.selection_footer_note = QLabel('固定首帧 RGB · 尚未生成机械臂轨迹')
+        self.selection_footer_note.setObjectName('regionFooterNote')
+        self.selection_footer_note.setAlignment(Qt.AlignCenter)
+        self.selection_footer_note.setWordWrap(True)
+        self.selection_footer_note.setToolTip('原始采集帧及位姿保留')
+        self.selection_footer_note.hide()
+        actions.addWidget(self.selection_footer_note,1)
         actions.addStretch()
         self.finish_button.setMinimumHeight(52)
         actions.addWidget(self.finish_button)
@@ -852,7 +900,7 @@ class CapturePage(QWidget):
         if not self.live_frame_valid():
             self.connect_camera()
         else:
-            self.choose_scan_roi()
+            self.start()
 
     def _clear_scan_roi(self):
         self.scan_roi_rect = self.scan_roi_size = self.scan_roi_quality = self.scan_roi_preview = None
@@ -932,6 +980,7 @@ class CapturePage(QWidget):
     def new_capture(self, *, task=None):
         if self.session.active or self.review_task.busy:
             return
+        self._discard_prepared_review()
         from femto.dataset.task_context import new_task, checked_task
         context = checked_task(task) if task else new_task()
         self.session = CaptureState()
@@ -978,10 +1027,6 @@ class CapturePage(QWidget):
     def start(self):
         if self.session.active or self.session.result or self.review_task.busy or not self.live_frame_valid():
             return
-        if self.scan_roi_rect is None:
-            self.roi_message = '请先在实时 RGB 画面框选并确认本次扫描范围'
-            self.refresh()
-            return
         from femto.capture.scan_roi import prepare
         from femto.capture.scan_session import copy_frame
         with self.host.frame_lock:
@@ -991,8 +1036,11 @@ class CapturePage(QWidget):
         try:
             if initial is None:
                 raise ValueError('相机画面已过期，请重新取景')
-            scan_roi = prepare(self.scan_roi_rect, initial, *self._depth_limits())
-            if scan_roi['image_size'] != self.scan_roi_size:
+            # Capture full raw RGB-D by default. The actual target is painted
+            # only on the locked reference after acquisition has finished.
+            rect = self.scan_roi_rect if self.scan_roi_rect is not None else [0.,0.,1.,1.]
+            scan_roi = prepare(rect, initial, *self._depth_limits())
+            if self.scan_roi_rect is not None and scan_roi['image_size'] != self.scan_roi_size:
                 raise ValueError('画面尺寸已改变，请重新确认扫描范围')
         except ValueError as error:
             self.roi_message = str(error)
@@ -1012,7 +1060,7 @@ class CapturePage(QWidget):
         self.viewport.pan[:] = 0
         self.invalidate_render()
         self.set_view('preview')
-        if not self.send('local_start', initial_frame=initial, scan_roi=scan_roi):
+        if not self.send('local_start', initial_frame=initial, scan_roi=scan_roi, region_first=True):
             # A camera can terminate between ``live_frame_valid`` and queue
             # insertion.  Do not leave a retry stuck in an active session
             # whose start command can never be consumed.
@@ -1024,8 +1072,8 @@ class CapturePage(QWidget):
         self.refresh()
 
     def request_view(self):
-        if (self.session.fresh_pose() and not self.session.paused and self.live_frame_valid()
-                and self.session.count < MAX_ACCEPTED_VIEWS
+        if (self.session.active and not self.session.finishing and self.session.count < MAX_ACCEPTED_VIEWS
+                and self.session.fresh_pose() and not self.session.paused and self.live_frame_valid()
                 and not self.session.checkpoint_stop_reason):
             if not self.send('local_request'):
                 self.session.notice = 'camera_not_ready'
@@ -1051,8 +1099,8 @@ class CapturePage(QWidget):
             state.notice_until = time.monotonic() + 4
             self.refresh()
             return
-        if reconstruct and (state.count < 3 or not state.fresh_pose() or not self.live_frame_valid()):
-            if state.count < 3:
+        if reconstruct and (state.count < 1 or not state.fresh_pose() or not self.live_frame_valid()):
+            if state.count < 1:
                 state.notice = 'need_more_views'
             elif not state.fresh_pose():
                 state.notice = 'uncertain'
@@ -1086,22 +1134,29 @@ class CapturePage(QWidget):
         self.refresh()
 
     def primary_action(self):
-        if self.session.result and self._workflow_view == 1:
+        if self.session.state == 'awaiting_region':
+            local = self.host.local_capture
+            mask = self.region_editor.canvas.work
+            if local is not None and mask is not None and mask.any():
+                if local.select_region(mask,self.region_editor.margin.value()):
+                    self.session.finishing = True
+                    self.session.state = 'processing'
+                    self.region_editor.setEnabled(False)
+                else:
+                    self.region_editor.note.setText('选区尚未提交：采集会话未就绪，请稍后重试。当前涂抹已保留。')
+            elif local is None:
+                self.region_editor.note.setText('选区未提交：采集会话已不可用，请重新采集。当前涂抹已保留。')
+            self.refresh()
+            return
+        if self.session.result and self._workflow_view == 1 and not self.has_reconstruction_selection():
             if self.review_ready():
                 self.workflow.step_requested.emit(self._workflow_view + 1)
             return
         if self.session.result and not self.session.active:
             if self.review_ready():
-                roi_pending = (self.scan_roi_quality or {}).get('pending_pixels')
-                roi_note = (f'扫描范围中有 {roi_pending} 个参考图像像素缺失或待检查；可点击“缺口检查”定位。\n'
-                            if roi_pending else '')
-                answer=QMessageBox.question(self,'检查模型后进入规划',
-                    f"当前任务：{self.task_name.text()}\n已有 {self.session.count} 个接纳视角。\n"
-                    +roi_note+
-                    '请确认目标及所需边界在模型中清楚可见。模型生成成功不代表缺失区域已补齐。\n是否进入工作区域规划？',
-                    QMessageBox.Yes|QMessageBox.No,QMessageBox.No)
-                if answer!=QMessageBox.Yes:return
-                if self.session.acquisition_completion is not None:
+                if self.has_reconstruction_selection():
+                    self.planning_preview_requested.emit(str(self.session.result / 'reconstruction'))
+                elif self.session.acquisition_completion is not None:
                     self.confirm_final_for_planning()
                 else:
                     self.planning_requested.emit(str(self.session.result / 'reconstruction'))
@@ -1109,6 +1164,29 @@ class CapturePage(QWidget):
             self.request_view()
         else:
             self.start()
+
+    def has_reconstruction_selection(self):
+        return bool((self.session.acquisition_completion or {}).get('reconstruction_scope'))
+
+    def can_rebuild_region(self):
+        local = self.host.local_capture
+        return bool(local is not None and getattr(local,'region_first',False)
+            and getattr(local,'acquisition_complete',False) and not local.thread.is_alive()
+            and self.session.result and self.session.session_id == local.session_id
+            and not self.session.active and not self.review_task.busy and not self._history_replay)
+
+    def rebuild_region(self):
+        if not self.can_rebuild_region():
+            return False
+        local = self.host.local_capture
+        if not local.restart_region():
+            return False
+        self.session = CaptureState(session_id=local.session_id,active=True,count=len(local.accepted),
+            source=local.session,state='processing',finishing=True,cancel_event=local.processing_cancel)
+        self._workflow_view = None
+        self.clouds = {};self.surface = None
+        self.refresh()
+        return True
 
     def check_current(self):
         state = self.session
@@ -1166,8 +1244,11 @@ class CapturePage(QWidget):
                 return
             if kind == 'local_started':
                 self.preview_mailbox = payload.get('preview_mailbox')
+            elif kind == 'local_region_ready':
+                self.region_editor.install(payload['reference'],payload.get('error',''))
             elif kind == 'local_finished':
                 self._history_replay = False
+                self._auto_plan_result = self.session.result if self.has_reconstruction_selection() else None
                 self.load_review()
             self.invalidate_render()
         elif kind == 'camera_ready':
@@ -1191,7 +1272,7 @@ class CapturePage(QWidget):
     def _abort_active_capture_for_camera_failure(self):
         """Close the UI side when the SDK owner dies before local events arrive."""
         state = self.session
-        if not state.active or state.finishing:
+        if not state.active or state.finishing or state.region_reference is not None:
             return
         state.cancel_event.set()
         local = self.host.local_capture
@@ -1425,14 +1506,36 @@ class CapturePage(QWidget):
                 self.viewport.set_image(rgb_image(image), cloud=True)
         self.render_task.start(render, ready, lambda error: self.preview_note.setText('三维显示失败：'+str(error)))
 
+    def _discard_prepared_review(self):
+        from femto.dataset.prepared_review import close_prepared
+        prepared, self._prepared_review = self._prepared_review, None
+        close_prepared(prepared)
+
+    def take_prepared_review(self, source):
+        """Transfer this result's private model once; readers recheck its bytes."""
+        prepared = self._prepared_review
+        if prepared is None or Path(source).resolve() not in (prepared.root, prepared.root/'reconstruction'):
+            return None
+        self._prepared_review = None
+        return prepared
+
     def load_review(self):
         session_id, result = self.session.session_id, self.session.result
         historical=self._history_replay
+        self._discard_prepared_review()
+        local = self.host.local_capture
+        prepared = getattr(local, 'prepared_review', None) if not historical else None
+        if prepared is not None and prepared.root == Path(result).resolve():
+            local.prepared_review = None
+            self._prepared_review = prepared
+        else:
+            prepared = None
         task=dict(self.task_context or {})
         self._review_request_result = Path(result).resolve() if result else None
         self.session.state = 'loading_review'
         def ready(data):
             if session_id != self.session.session_id or result != self.session.result or data is None:
+                self._discard_prepared_review()
                 return
             self.clouds.update(data['clouds'])
             self.surface = data['surface']
@@ -1470,13 +1573,21 @@ class CapturePage(QWidget):
                 self.show_model_check()
             self.refresh()
             if data.get('task_warning'):self.preview_note.setText('任务信息未保存或不可用：'+data['task_warning'])
+            if (not historical and not self._closed and self._auto_plan_result == result
+                    and self.has_reconstruction_selection() and self.review_ready()):
+                # Navigation is not a human confirmation. The route action
+                # records the decision to use this displayed model later.
+                self._auto_plan_result = None
+                self.planning_preview_requested.emit(str(result / 'reconstruction'))
         def failed(error):
+            self._discard_prepared_review()
             if session_id == self.session.session_id and result == self.session.result:
                 self.session.state = 'review_load_error'
                 self.preview_note.setText('三维预览加载失败：'+str(error))
                 self.refresh()
         def job(cancel,progress):
-            data=read_review(result,cancel,progress)
+            data=(read_review(result,cancel,progress,prepared=prepared) if prepared is not None
+                  else read_review(result,cancel,progress))
             if data is None:return None
             from femto.dataset.task_context import read_task,save_task
             try:data['task_context']=read_task(result) if historical else save_task(result,task)
@@ -1592,21 +1703,48 @@ class CapturePage(QWidget):
 
     def refresh(self) -> None:
         state = self.session
+        for mode in ('preview','depth','3d'):
+            self.views[mode].setEnabled(True)
         preparing = not state.active and not state.result
         inspecting = self._refresh_task_context(state, preparing)
         live = self.live_frame_valid()
         self._refresh_capture_range(state, preparing, live)
-        historical = bool(self._history_replay and state.result)
-        self.inspector_scroll.setVisible(not historical)
+        selecting = state.region_reference is not None and state.active
+        if self.property('selectionMode') != selecting:
+            self.setProperty('selectionMode',selecting)
+            for widget in (self, self.action_bar, self.cancel_button, self.primary):
+                widget.style().unpolish(widget); widget.style().polish(widget)
+        self.inspector_scroll.hide()
         stale = self.camera_ready and not live
         connected = self.host.camera_thread is not None and self.host.camera_thread.is_alive()
         fresh = self._refresh_capture_telemetry(state, live, stale, connected)
         title, message = self._capture_message(state, live, fresh, stale)
+        if state.state == 'awaiting_region':
+            title, message = '标记工作区域', self.region_editor.note.text()
         self._refresh_capture_notice(state, title, message, fresh, stale)
         self._refresh_capture_actions(state, live, fresh, preparing, connected, message, inspecting)
         self._refresh_history_summary()
+        self.region_editor.setVisible(selecting)
+        self.region_progress.setVisible(selecting and state.state == 'processing' and not state.cancelling)
+        self.capture_view_bar.setVisible(not selecting)
+        self.viewport.setVisible(not selecting)
+        self.selection_footer_note.setVisible(selecting)
+        if selecting:
+            # Selection has its own single instruction/error area; stale
+            # camera telemetry must not duplicate it as an amber warning.
+            self.alert.hide(); self.guidance.hide(); self.preview_note.hide()
+            if state.state == 'processing':
+                self.region_editor.note.setText('正在重建选中区域，请稍候；完成后自动进入模型与路线。')
+            for button in (self.pause_button,self.finish_button,self.check_button,self.stage_review_button):
+                button.hide()
+            self.inspector_scroll.hide()
+            self.region_editor.setEnabled(state.state == 'awaiting_region')
+            for button in self.views.values():button.setEnabled(False)
+            self.preview_note.setText('固定首帧 RGB · 原始采集帧及位姿保留 · 尚未生成机械臂轨迹')
+        # Stage checkpoints are superseded by automatic three-view finalization.
+        self.check_button.hide()
         step = self._workflow_view if state.result and self._workflow_view is not None else (
-            2 if state.result or state.finishing else 1)
+            6 if selecting else 2 if state.result or state.finishing else 1)
         self.workflow.set_step(step, ('已结束采集，只读回看本次记录。' if inspecting else '') + message)
         if message != self._last_status:
             self._last_status = message
@@ -1623,14 +1761,12 @@ class CapturePage(QWidget):
             for widget in [self.history_metrics, *self.history_metrics.findChildren(QLabel)]:
                 widget.style().unpolish(widget);widget.style().polish(widget)
         self.history_metrics.setVisible(historical)
+        self.frame_progress.setVisible(not historical)
         self.history_rescan.setVisible(historical)
         self.history_rescan.setEnabled(self.rescan_button.isEnabled())
         self.inspector_heading.setVisible(not historical)
         self.state_title.setVisible(not historical)
         self.state_title.parentWidget().setVisible(not historical)
-        self.details_toggle.setText(
-            ('收起详情' if self.details_toggle.isChecked() else '详情') if historical else
-            ('收起' if self.details_toggle.isChecked() else '展开') + '任务与设备详情')
         if not historical:
             return
         self.inspector_scroll.hide()
@@ -1664,23 +1800,19 @@ class CapturePage(QWidget):
             label.setAccessibleName(hint)
             label.setAccessibleDescription(value)
         self.rescan_button.setToolTip('新建独立采集，保留当前记录')
-        self.details_toggle.setToolTip(self.state_title.text())
-        self.quality_button.setVisible(self.details_toggle.isChecked() and self.quality_button.isEnabled())
-        self.report_button.setVisible(self.details_toggle.isChecked() and self.report_button.isEnabled())
 
     def _refresh_task_context(self, state: CaptureState, preparing: bool) -> bool:
         inspecting = bool(state.result and self._workflow_view == 1)
         self.inspector_heading.setText('局部采集 · 回看' if inspecting else '检查模型' if state.result else '局部采集')
         self.workflow_view_notice.setVisible(inspecting)
-        self.details_panel.setVisible(self.details_toggle.isChecked())
         self.task_name.setEnabled(not state.active and not state.result)
         return inspecting
 
     def _refresh_capture_range(self, state: CaptureState, preparing: bool, live: bool) -> None:
-        self.scan_roi_button.setVisible(preparing and self.scan_roi_rect is not None)
+        self.scan_roi_button.setVisible(preparing)
         self.scan_roi_button.setEnabled(not state.active and not state.result and not self.review_task.busy
                                         and live)
-        self.scan_roi_button.setText('重新框选扫描范围' if self.scan_roi_rect else '在 RGB 画面框选扫描范围')
+        self.scan_roi_button.setText('调整采集范围（可选）')
         self.views['scan_roi'].setVisible(bool(state.result))
         self.views['scan_roi'].setEnabled(self.scan_roi_preview is not None)
         for mode in ('preview', 'depth', 'frame_cloud'):
@@ -1695,8 +1827,9 @@ class CapturePage(QWidget):
                 supported = quality['supported_pixels']
                 pending = quality['pending_pixels']
                 total = quality['requested_pixels']
+                target_name='涂抹选区' if quality.get('target_scope')=='painted_region' else '扫描范围'
                 self.scan_roi_status.setText(
-                    f'扫描范围内参考图像像素：{supported}/{total} 有实测网格与深度支持；'
+                    f'{target_name}内参考图像像素：{supported}/{total} 有实测网格与深度支持；'
                     + (f'{pending} 个缺失或待检查。请检查模型，必要时重新采集。' if pending
                        else '当前检查未发现缺失，仍需核对模型。'))
             elif quality:
@@ -1704,14 +1837,14 @@ class CapturePage(QWidget):
             else:
                 self.scan_roi_status.setText('此记录没有可核验的扫描范围；请在真实模型上检查目标与边界。')
         elif self.scan_roi_rect is None:
-            self.scan_roi_status.setText(self.roi_message or '扫描范围待确认：在实时 RGB 画面框选。')
+            self.scan_roi_status.setText(self.roi_message or '默认采集完整画面，完成后再涂抹目标区域。')
         else:
             current = self.current_depth_check
             detail = (f"当前画面范围内有效深度 {current['valid_fraction']:.0%}；"
                       if current else '当前画面的深度状态待检查；')
             self.scan_roi_status.setText((self.roi_message+'；' if self.roi_message else '')
                                          +detail+'最终几何覆盖在模型生成后核验。')
-        self.scan_roi_status.setVisible(bool(state.result or self.scan_roi_rect is not None))
+        self.scan_roi_status.setVisible(bool(state.result or self.scan_roi_rect is not None or self.roi_message))
         return None
 
     def _refresh_capture_telemetry(self, state: CaptureState, live: bool, stale: bool, connected: bool) -> bool:
@@ -1735,10 +1868,19 @@ class CapturePage(QWidget):
                 + '\nRGB / 深度  ·  ' + ('已获取' if live else '等待数据')
                 + '\n参考位置  ·  ' + ('已建立' if state.count else '未建立'))
             self.capture_heading.setText('本次采集')
-        self.count_label.setText(f'{state.count}/{MAX_ACCEPTED_VIEWS} 帧' if state.active else f'{state.count} 帧')
-        self.count_label.setToolTip('通过质量检查的有效视角，包含初始参考帧。')
-        for widget in (self.capture_heading, self.count_label):
-            widget.setVisible(bool(state.active or state.result or state.count))
+        limited = not state.result and not self._history_replay and state.count <= MAX_ACCEPTED_VIEWS
+        self.count_label.setText(f'{state.count} / {MAX_ACCEPTED_VIEWS} 帧' if limited else f'{state.count} 帧')
+        self.count_label.setAccessibleName('本次已接纳 '+self.count_label.text())
+        self.count_label.setToolTip('通过质量与原始写入检查的有效视角，包含初始参考帧；重复或不合格帧不计入。')
+        self.capture_heading.setVisible(self.width() >= 1350)
+        self.count_label.show()
+        for index, segment in enumerate(self.frame_steps):
+            segment.setVisible(limited)
+            segment.setFixedWidth(36 if self.width() >= 1350 else 12)
+            accepted = index < state.count
+            if segment.property('accepted') != accepted:
+                segment.setProperty('accepted', accepted)
+                segment.style().unpolish(segment);segment.style().polish(segment)
         self.pose_label.setVisible(bool(state.active or state.count or state.result))
         count_tone = 'good' if state.count else 'idle'
         if self.count_label.property('tone') != count_tone:
@@ -1772,9 +1914,10 @@ class CapturePage(QWidget):
                 message = '位姿更新已过期，已暂停补采接纳；请停稳并等待恢复。'
             elif state.paused:
                 message = '补采已暂停，参考位置与跟踪保留。'
+            elif state.count >= MAX_ACCEPTED_VIEWS and not state.finishing:
+                message = '已接纳 3 个有效视角，正在自动结束采集并准备固定参考图。'
             elif state.state == 'tracking' and fresh:
-                message = (REASONS['accepted_view_limit'] if state.count >= MAX_ACCEPTED_VIEWS else
-                           f'移动到不同视角后停稳，再补采一帧；接纳满 {MAX_ACCEPTED_VIEWS} 个有效视角后自动生成模型。')
+                message = f'已接纳 {state.count} / {MAX_ACCEPTED_VIEWS} 帧，可提前完成；也可移动并停稳后补采，满 3 帧自动进入选区。'
         elif state.result:
             if state.state == 'review_load_error':
                 title, message = '模型预览不可用', '三维数据读取失败，请点击“重试加载模型”。'
@@ -1807,7 +1950,7 @@ class CapturePage(QWidget):
                        else '界面预览模式；可打开历史数据，连接相机后开始采集。' if self.preview_mode
                        else '请连接 Femto Bolt，并等待同步 RGB-D 画面。')
         if not state.active and not state.result and not state.failure and self.scan_roi_rect is None and live:
-            message = self.roi_message or '请在实时 RGB 画面框选本次扫描范围。'
+            message = self.roi_message or '取景清楚后点击“开始采集”，完成后在固定参考图上涂抹区域。'
         if stale and not state.result:
             message = (message+'\n' if state.failure else '')+'相机画面已过期，请检查设备；新采集与补采暂不可用。'
         return title, message
@@ -1859,8 +2002,8 @@ class CapturePage(QWidget):
         for button in (self.pause_button, self.finish_button, self.cancel_button):
             button.setVisible(state.active)
         self.pause_button.setEnabled(state.active and not state.finishing and state.state not in ('lost', 'tracking_lost'))
-        self.finish_button.setEnabled(state.count >= 3 and fresh and live and not state.paused)
-        self.finish_button.setToolTip(f'接纳满 {MAX_ACCEPTED_VIEWS} 个有效视角后自动结束；范围覆盖将在建模后核验。' if not state.paused else REASONS['paused_finish'])
+        self.finish_button.setEnabled(state.count >= 1 and fresh and live and not state.paused)
+        self.finish_button.setToolTip('接纳一帧后可提前完成；最多接纳 3 个有效视角，第三帧保存后自动进入选区。' if not state.paused else REASONS['paused_finish'])
         self.cancel_button.setEnabled(state.active and not state.cancelling)
         self.new_button.setVisible(bool(state.result))
         self.new_button.setEnabled(not state.active and not self.review_task.busy)
@@ -1870,22 +2013,31 @@ class CapturePage(QWidget):
         self.report_button.setEnabled(bool(state.source or state.result))
         self.quality_button.setVisible(self.quality_button.isEnabled())
         self.report_button.setVisible(self.report_button.isEnabled())
-        if state.result and not state.active:
-            self.primary.setText('下一步：检查模型'
-                                 if inspecting else '进入工作区域规划')
+        if state.region_reference is not None and state.active:
+            # Choose the selection state before the live-camera branch. A
+            # temporary disable/re-enable on every 100 ms poll clears Qt's
+            # pressed state and drops clicks released after that poll.
+            self.primary.setText('确认选区并重建' if state.state == 'awaiting_region' else '正在重建局部表面…')
+            mask = self.region_editor.canvas.work
+            self.primary.setEnabled(state.state == 'awaiting_region' and not state.cancelling
+                                    and mask is not None and bool(mask.any()))
+        elif state.result and not state.active:
+            self.primary.setText('进入路线规划' if self.has_reconstruction_selection() else '下一步：检查模型'
+                                 if inspecting else '已查看模型，继续规划')
             self.primary.setEnabled(self.review_ready())
         elif state.active:
-            self.primary.setText('正在生成模型…' if state.finishing else '停稳补采一帧')
+            self.primary.setText('正在生成模型…' if state.finishing else
+                                 '正在结束采集…' if state.count >= MAX_ACCEPTED_VIEWS else '停稳补采一帧')
             self.primary.setEnabled(fresh and live and not state.paused and not state.checkpoint_stop_reason
                                     and state.count < MAX_ACCEPTED_VIEWS)
         else:
-            self.primary.setText('重新建立扫描参考并开始' if state.failure or state.count else '确认范围并开始局部采集')
+            self.primary.setText('重新开始采集' if state.failure or state.count else '开始采集')
             depth_ok = (self.current_depth_check is not None
                         and self.current_depth_check['valid_fraction'] >= MIN_INITIAL_VALID_FRACTION)
             self.primary.setEnabled(live and not self.review_task.busy
-                                    and self.scan_roi_rect is not None and depth_ok and not self.roi_message)
+                                    and (self.scan_roi_rect is None or depth_ok) and not self.viewport.roi_enabled)
         self.primary.setToolTip(message if not self.primary.isEnabled() else '快捷键：Ctrl+Enter')
-        needs_preparation = preparing and (not live or self.scan_roi_rect is None)
+        needs_preparation = preparing and not live
         self.prepare_action.setVisible(needs_preparation)
         self.primary.setVisible(not needs_preparation)
         if not live:
@@ -1951,6 +2103,7 @@ class CapturePage(QWidget):
         reviewed = self.review_task.shutdown(timeout_ms=500)
         rendered = self.render_task.shutdown(timeout_ms=500)
         if stopped and reviewed and rendered:
+            self._discard_prepared_review()
             self.timer.stop()
             self._closed = True
             return True

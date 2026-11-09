@@ -5,6 +5,7 @@ bound. No missing depth, pose or registration uncertainty is invented here.
 Original regions and candidate-planner versions are never rewritten.
 """
 from __future__ import annotations
+from femto.performance_detail import observed, count
 
 from collections import Counter
 from copy import copy, deepcopy
@@ -15,6 +16,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 import numpy as np
+from femto.plain_copy import clone, plain_integers
 from femto.operation_diagnostics import diagnosed
 
 from femto.annotation.selection_intent import (
@@ -71,6 +73,11 @@ def evidence(model: Any, region: dict, check: Callable = lambda: None, *, allow_
 
 
 def _hash(record: dict) -> str:
+    from femto.planning.evidence_preparation import record_digest
+    return record_digest(record, _full_hash, canonical_json_bytes)
+
+
+def _full_hash(record: dict) -> str:
     return hashlib.sha256(canonical_json_bytes({k: v for k, v in record.items() if k != 'sha256'})).hexdigest()
 
 
@@ -81,15 +88,23 @@ def checked_evidence(record: dict, region: dict | None = None) -> tuple[np.ndarr
             or record.get('physical_accuracy_verified') is not False
             or record.get('execution_ready') is not False):
         raise ValueError('质量约束证据无效或已改变')
-    classes = decode_runs(record['classes_runs'], record['image_size'], values=range(8))
+    from femto.planning import evidence_preparation
+    decoded = evidence_preparation.lookup(record)
+    classes = (decode_runs(record['classes_runs'], record['image_size'], values=range(8))
+               if decoded is None else decoded[0])
     k=np.asarray(record['view_reference'].get('undistorted_intrinsic'),float)
     if (k.shape!=(3,3) or not np.isfinite(k).all() or min(k[0,0],k[1,1])<=0
             or record['view_reference'].get('image_size')!=record['image_size']):
         raise ValueError('质量证据参考标定或图像尺寸无效')
     runs = record['residual_um_runs']
-    if any(type(v) is not int or v < 0 or v > 100000000 for v in runs[::2]):
+    # A decoded snapshot binds the complete recomputed record hash, every
+    # current run's exact int type and the decoder policy. The same validated
+    # values cannot acquire a new range error; changed inputs still take this
+    # original check before decoding.
+    if decoded is None and any(type(v) is not int or v < 0 or v > 100000000 for v in runs[::2]):
         raise ValueError('参考残差数据无效')
-    residual = decode_runs(runs, record['image_size'], values=set(runs[::2]))
+    residual = (decode_runs(runs, record['image_size'], values=set(runs[::2]))
+                if decoded is None else decoded[1])
     if np.any(residual[classes != 1]):
         raise ValueError('缺失像素不能包含伪造残差')
     if (record.get('intent_sha256') != digest(classes>0)
@@ -101,21 +116,109 @@ def checked_evidence(record: dict, region: dict | None = None) -> tuple[np.ndarr
         if (record['view_reference'] != region['view_reference'] or record['intent_sha256'] != digest(mask)
                 or not np.array_equal(classes > 0, mask)):
             raise ValueError('质量约束与原选区或参考影像不一致')
+    evidence_preparation.remember(record, (classes, residual))
     return classes, residual
 
 
-def _rectangle(mid: np.ndarray, radius: float, k: np.ndarray) -> tuple[int, int, int, int] | None:
+class _ValidationShare:
+    """Inputs one validation call has already checked, keyed by object identity.
+
+    Created and dropped inside that call; it holds no edge or route decision.
+    Consumers still receive their own copies; only recomputing the identical
+    evidence check, effective domain and selection assignment is skipped.
+    """
+    def __init__(self, record, region, arrays):
+        self.record, self.region, self.arrays = record, region, arrays
+        self._allowed = self._selection = None
+
+    def evidence(self, record, region):
+        if record is self.record and region is self.region:
+            return tuple(value.copy() for value in self.arrays)
+        return None
+
+    def remember_allowed(self, domain, width_mm, mesh, region, allowed):
+        self._allowed = (domain, width_mm, mesh, region, allowed.copy())
+
+    def allowed(self, domain, width_mm, mesh, region):
+        found = self._allowed
+        if (found is not None and found[0] is domain and found[1] == width_mm
+                and found[2] is mesh and found[3] is region):
+            return found[4].copy()
+        return None
+
+    def remember_selection(self, region, mesh, labels):
+        self._selection = (region, mesh, labels)
+
+    def selection_labels(self, region, mesh):
+        found = self._selection
+        if found is not None and found[0] is region and found[1] is mesh:
+            return found[2].copy()
+        return None
+
+
+@observed('route.batch_projection')
+def _batch_projections(points, k, check):
+    """Prepare radius-independent centres with unchanged binary64 operations.
+
+    Norms deliberately keep the original one-vector np.linalg.norm call: an
+    axis reduction can differ by an ULP and change floor/ceil at a pixel edge.
+    No residual query, acceptance flag or work charge is prepared here.
+    """
+    if (len(points) < 64 or type(points) is not np.ndarray
+            or points.dtype != np.dtype('float64') or points.ndim != 2 or points.shape[1] != 3
+            or type(k) is not np.ndarray or k.dtype != np.dtype('float64') or k.shape != (3, 3)
+            or np.geterr() != dict(divide='warn', over='warn', under='ignore', invalid='warn')
+            or not np.isfinite(points).all() or not np.isfinite(k).all()
+            or np.abs(points).max() > 1e6 or np.abs(k).max() > 1e6
+            or np.any(points[:, 2] < 1e-6)):
+        return None
+    try:
+        uv = points[:, :2]/points[:, 2, None] * [k[0, 0], k[1, 1]] + k[:2, 2]
+        radial = np.empty(len(points), dtype=np.float64)
+    except MemoryError:
+        return None
+    for first in range(0, len(points), 1024):
+        check()
+        try:
+            radial[first:first+1024] = [np.linalg.norm(point[:2]) for point in points[first:first+1024]]
+        except MemoryError:
+            return None
+    return uv, radial
+
+
+@observed('route.projection_rectangle')
+def _rectangle(mid: np.ndarray, radius: float, k: np.ndarray, *, _projection=None) -> tuple[int, int, int, int] | None:
     # Contains the projection of the entire 3D ball, including off-axis rays.
     z = mid[2]
     if z <= radius:
         return None
-    uv = mid[:2]/z * [k[0, 0], k[1, 1]] + k[:2, 2]
-    bound = max(k[0, 0], k[1, 1])*radius/(z-radius)*(1+np.linalg.norm(mid[:2])/z)
+    # One probe uses the same centre/calibration for its outer and final ball.
+    # Retain the original norm, operation order and floor/ceil at both radii.
+    cached = _projection is not None and len(_projection) == 2
+    uv = _projection[0] if cached else mid[:2]/z * [k[0, 0], k[1, 1]] + k[:2, 2]
+    scale = max(k[0, 0], k[1, 1])*radius/(z-radius)
+    radial = _projection[1] if cached else np.linalg.norm(mid[:2])
+    bound = scale*(1+radial/z)
+    if _projection is not None and not cached:
+        _projection.extend((uv, radial))
+    # Only the four scalar integer bounds are needed. Keep projection, norm
+    # and radius arithmetic above unchanged, then avoid four tiny arrays.
+    # Ordinary binary64 +/- and floor/ceil have the same rounding here;
+    # retain NumPy conversions/warnings for unusual dtypes, ranges or policies.
+    if (type(uv) is np.ndarray and uv.dtype == np.dtype('float64')
+            and type(bound) in (float, np.float64)
+            and np.geterr() == dict(divide='warn', over='warn', under='ignore', invalid='warn')):
+        x, y = uv.tolist()
+        radius_px = float(bound)
+        if abs(x) + abs(radius_px) < 2**30 and abs(y) + abs(radius_px) < 2**30:
+            return (math.floor(x-radius_px-.5), math.floor(y-radius_px-.5),
+                    math.ceil(x+radius_px+.5), math.ceil(y+radius_px+.5))
     low = np.floor(uv-bound-.5).astype(int)
     high = np.ceil(uv+bound+.5).astype(int)
     return int(low[0]), int(low[1]), int(high[0]), int(high[1])
 
 
+@observed('route.chord_support')
 def _supported_chord(a: np.ndarray, b: np.ndarray, faces: np.ndarray,
                      vertices: np.ndarray, face_ids: list[int], *, _prepared_faces=None) -> bool:
     """Certify the chord is covered by the supplied triangles, not just samples.
@@ -141,8 +244,10 @@ def _supported_chord(a: np.ndarray, b: np.ndarray, faces: np.ndarray,
         offsets = np.column_stack((a-origin, b-origin))
         if (_prepared_faces is not None and math.isfinite(length)
                 and prepared.solver.chord_inside_one(offsets)):
+            count('route.chord_paths',single_fast=1)
             intervals.append((0., 1.))
             continue
+        count('route.chord_paths',lstsq_fallback=1)
         coords = np.linalg.lstsq(matrix, offsets, rcond=None)[0]
         weights = np.vstack((1-coords.sum(axis=0), coords))
         lo, hi = 0., 1.
@@ -160,6 +265,9 @@ def _supported_chord(a: np.ndarray, b: np.ndarray, faces: np.ndarray,
     return reach >= 1.-1e-10
 
 
+_ORIGINAL_SUPPORTED_CHORD = _supported_chord
+
+
 class ReferenceEnvelope:
     """The existing reference-image gate, reusable for candidate screening.
 
@@ -167,24 +275,31 @@ class ReferenceEnvelope:
     support still require edge_checks. The residual-neighborhood budget covers
     every probe made with this instance.
     """
-    def __init__(self, record: dict, width_mm: float):
+    def __init__(self, record: dict, width_mm: float, *, _evidence=None):
         if isinstance(width_mm, bool) or not np.isfinite(width_mm) or not .5 <= width_mm <= 100:
             raise ValueError('有效作用宽度必须在 0.5–100 mm 范围内')
-        self.classes, self.residual = checked_evidence(record)
+        # _evidence: (classes, residual) of this record, checked by the same call.
+        self.classes, self.residual = checked_evidence(record) if _evidence is None else _evidence
         self.k = np.asarray(record['view_reference']['undistorted_intrinsic'], float)
         self.width_mm = width_mm
-        self.integral = np.pad((self.classes != 1).astype(np.int64), ((1, 0), (1, 0))).cumsum(0).cumsum(1)
+        from femto.planning.task_preparation import integral_image
+        self.integral = integral_image(self.classes)
         self.height, self.width = self.classes.shape
         self.global_residual = float(self.residual.max())/1e6
         self.sampled_pixels = 0
         self._residual_tiles = None
+        self._shared_residual_tiles = None
+        from femto.planning.reference_tiles import bind_task
+        bind_task(self)
+        count('route.residual_work',envelopes=1)
 
+    @observed('route.residual_maximum')
     def _residual_max(self, outer):
         """Exact rectangle maximum: whole 16px tiles plus unrounded borders.
 
-        Count values actually reduced, including tile construction. This keeps
-        the existing work limit without charging overlapping rectangles for
-        rescanning every interior pixel. No residual or footprint is rounded.
+        Preserve historical work charging, including the first tile access in
+        each batch even when immutable preparation is shared by a graph. Actual
+        preparation work is observed separately. No residual is rounded.
         """
         x0, y0, x1, y1 = outer
         # Match the original NumPy slice semantics, including off-image bounds.
@@ -199,34 +314,42 @@ class ReferenceEnvelope:
             pieces = [self.residual[ya:yb, xa:xb]]
         else:
             if self._residual_tiles is None:
+                count('route.residual_work',logical_tile_starts=1)
                 self.sampled_pixels += self.residual.size + ((self.height+tile-1)//tile)*self.width
                 if self.sampled_pixels > 100000000:
                     raise ValueError('局部残差邻域检查超过预算，请缩小选区')
-                rows = np.maximum.reduceat(self.residual, np.arange(0, self.height, tile), axis=0)
-                self._residual_tiles = np.maximum.reduceat(rows, np.arange(0, self.width, tile), axis=1)
-                self._residual_tiles.setflags(write=False)
+                if self._shared_residual_tiles is not None:
+                    self._residual_tiles=self._shared_residual_tiles.get(self.residual)
+                if self._residual_tiles is None:
+                    rows = np.maximum.reduceat(self.residual, np.arange(0, self.height, tile), axis=0)
+                    self._residual_tiles = np.maximum.reduceat(rows, np.arange(0, self.width, tile), axis=1)
+                    self._residual_tiles.setflags(write=False)
+                    count('route.residual_work',tile_builds=1,tile_input_values=self.residual.size)
             pieces = [self.residual[ya:top, xa:xb], self.residual[bottom:yb, xa:xb],
                       self.residual[top:bottom, xa:left], self.residual[top:bottom, right:xb],
                       self._residual_tiles[top//tile:bottom//tile, left//tile:right//tile]]
         self.sampled_pixels += sum(piece.size for piece in pieces)
+        count('route.residual_work',queries=1,reduced_values=sum(piece.size for piece in pieces),pieces=len(pieces))
         if self.sampled_pixels > 100000000:
             raise ValueError('局部残差邻域检查超过预算，请缩小选区')
         return float(max(piece.max() for piece in pieces if piece.size))/1e6
 
-    def probe(self, mid: np.ndarray, half: float, *, details=False, width_mm=None):
+    @observed('route.reference_probe')
+    def probe(self, mid: np.ndarray, half: float, *, details=False, width_mm=None, _projection=None):
         width = self.width_mm if width_mm is None else width_mm
         if width_mm is not None and (isinstance(width, bool) or not np.isfinite(width) or not .5 <= width <= 100):
             raise ValueError('逐边外包宽度必须在 0.5–100 mm 范围内')
         margin = 0.
         reason = 'outer_projection_unavailable'
         rect = None
-        outer = _rectangle(mid, half+width/2000+self.global_residual, self.k)
+        projection = [] if _projection is None else _projection
+        outer = _rectangle(mid, half+width/2000+self.global_residual, self.k, _projection=projection)
         if outer is not None:
             margin = self._residual_max(outer)
             # Identical radii produce the identical rectangle; the residual
             # query above still runs and consumes the unchanged work budget.
             rect = (outer if margin == self.global_residual else
-                    _rectangle(mid, half+width/2000+margin, self.k))
+                    _rectangle(mid, half+width/2000+margin, self.k, _projection=projection))
             reason = 'footprint_projection_unavailable'
             if rect is not None:
                 x0, y0, x1, y1 = rect
@@ -252,15 +375,18 @@ class ReferenceEnvelope:
         return reason == 'accepted', margin, diagnostic
 
 
+_BATCH_REFERENCE_PROBE = ReferenceEnvelope.probe
+
+
 @diagnosed('route.edge_checks')
 def edge_checks(segments: list[ScanSegment], mesh: Any, record: dict, width_mm: float,
                 check: Callable = lambda: None, *, allowed_faces: np.ndarray | None = None,
                 support_checker: Any = None, diagnostics: list | None = None,
-                edge_widths_mm: list[float] | None = None) -> tuple[np.ndarray, list[str], np.ndarray]:
+                edge_widths_mm: list[float] | None = None, _evidence=None) -> tuple[np.ndarray, list[str], np.ndarray]:
     """Reject whole edges; accepted coverage balls cannot touch unknown pixels."""
     if isinstance(width_mm, bool) or not np.isfinite(width_mm) or not .5 <= width_mm <= 100:
         raise ValueError('有效作用宽度必须在 0.5–100 mm 范围内')
-    reference = ReferenceEnvelope(record, width_mm)
+    reference = ReferenceEnvelope(record, width_mm, _evidence=_evidence)
     return _edge_checks(segments, mesh, reference, width_mm, check, allowed_faces=allowed_faces,
                         support_checker=support_checker, diagnostics=diagnostics, edge_widths_mm=edge_widths_mm)
 
@@ -276,6 +402,8 @@ def _prepare_edge_checks(mesh, record, width_mm, check, allowed_faces):
     """
     check()
     reference = ReferenceEnvelope(record, width_mm)
+    from femto.planning.reference_tiles import bind
+    bind(reference)
     from femto.geometry.triangle_support import prepare_triangle_faces
     vertices, faces, prepared_faces = prepare_triangle_faces(mesh.vertices, mesh.faces)
     frozen_mesh = SimpleNamespace(vertices=vertices, faces=faces)
@@ -306,6 +434,7 @@ def _prepare_edge_checks(mesh, record, width_mm, check, allowed_faces):
     return evaluate
 
 
+@observed('route.mesh_edge_context')
 def _mesh_edge_context(vertices,faces,allowed_faces):
     vertex_order = np.argsort(faces.ravel(), kind='stable')
     vertex_offsets = np.r_[0, np.cumsum(np.bincount(faces.ravel(), minlength=len(vertices)))]
@@ -315,7 +444,8 @@ def _mesh_edge_context(vertices,faces,allowed_faces):
             raise ValueError('有效区域没有可规划网格面，请检查缺失范围或补扫')
     boundary_faces=faces if allowed_faces is None else faces[allowed_faces]
     edges = np.sort(boundary_faces[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2), axis=1)
-    unique, counts = np.unique(edges, axis=0, return_counts=True)
+    from femto.geometry.mesh_edges import unique_edge_rows
+    unique, counts = unique_edge_rows(edges)
     boundary = vertices[unique[counts == 1]]
     if np.any(counts > 2) or not len(boundary):
         raise ValueError('缺少可核验的流形网格边界，不能检查覆盖带')
@@ -327,6 +457,8 @@ def _edge_checks(segments, mesh, reference, width_mm, check, *, allowed_faces=No
                  _mesh_context=None,_boundary_distances=None,_prepared_faces=None):
     """The same complete edge predicates for fresh and graph-bound inputs."""
     pairs = [(a, b) for s in segments for a, b in zip(s.points, s.points[1:])]
+    size=len(pairs)
+    count('route.edge_batches',**{('empty' if not size else 'one' if size==1 else 'two_to_seven' if size<8 else 'eight_to_63' if size<64 else '64_to_1023' if size<1024 else '1024_plus'):1},edges=size)
     if len(pairs) > 200000:raise ValueError('质量约束路线超过检查预算')
     if edge_widths_mm is not None and (len(edge_widths_mm) != len(pairs) or any(
             isinstance(w, bool) or not np.isfinite(w) or not .5 <= w <= width_mm for w in edge_widths_mm)):
@@ -347,9 +479,19 @@ def _edge_checks(segments, mesh, reference, width_mm, check, *, allowed_faces=No
         # proxy for existing width/reference checks. Enclose its rounding error
         # before applying those same predicates. Legacy arithmetic is unchanged.
         half = np.nextafter(half + support_checker.begin(pairs), np.inf)
+    if (support_checker is None and diagnostics is None and edge_widths_mm is None
+            and ReferenceEnvelope.probe is _BATCH_REFERENCE_PROBE):
+        # Same decisions in batch form; None keeps this original loop below.
+        from femto.planning.edge_check_batch import evaluate as evaluate_batch
+        batched = evaluate_batch(pairs, a, b, mid, half, faces, vertices, reference, width_mm, check,
+                                 allowed_faces, boundary, _boundary_distances, _prepared_faces,
+                                 vertex_order, vertex_offsets)
+        if batched is not None:
+            return batched
     from femto.planning.boundary_clearance import nearest_boundary_distances
     distance = (nearest_boundary_distances(mid, boundary, check) if _boundary_distances is None
                 else _boundary_distances(mid))
+    projections = _batch_projections(mid, reference.k, check) if type(reference) is ReferenceEnvelope else None
     accepted = np.zeros(len(pairs), bool)
     margins = np.zeros(len(pairs), float)
     reasons = []
@@ -369,6 +511,7 @@ def _edge_checks(segments, mesh, reference, width_mm, check, *, allowed_faces=No
                 check()
                 prepared = _prepared_faces(index)
                 interior_chords[ids] = prepared.solver.chord_inside(a[ids], b[ids], prepared)
+        count('route.chord_paths',batch_fast=int(interior_chords.sum()))
     for i, (left, right) in enumerate(pairs):
         if i % 128 == 0:check()
         if allowed_faces is not None and not all(allowed_faces[p['triangle_index']] for p in (left,right)):
@@ -376,8 +519,13 @@ def _edge_checks(segments, mesh, reference, width_mm, check, *, allowed_faces=No
             reasons.append('outside_effective_domain');continue
         reason = 'quality_or_width_boundary'
         current_width = width_mm if edge_widths_mm is None else edge_widths_mm[i]
-        passed, margin, detail = reference.probe(mid[i], half[i], details=diagnostics is not None,
-                                               width_mm=None if edge_widths_mm is None else current_width)
+        if projections is None:
+            passed, margin, detail = reference.probe(mid[i], half[i], details=diagnostics is not None,
+                                                   width_mm=None if edge_widths_mm is None else current_width)
+        else:
+            passed, margin, detail = reference.probe(mid[i], half[i], details=diagnostics is not None,
+                width_mm=None if edge_widths_mm is None else current_width,
+                _projection=(projections[0][i], projections[1][i]))
         margins[i] = margin*1000
         if passed:
             if distance[i]-half[i] >= current_width/2000+margin+1e-9:
@@ -407,7 +555,7 @@ def _items(chains: list[tuple[int, list[dict]]]) -> list:
     items, route = [], 0
     previous = None
     for index, (block, raw) in enumerate(chains):
-        points = deepcopy(raw)
+        points = clone(raw)
         for point in points:
             point['route_index'] = route
             route += 1
@@ -435,26 +583,22 @@ def _items(chains: list[tuple[int, list[dict]]]) -> list:
 
 def _summaries(items: list, templates: list[dict], classes: np.ndarray) -> tuple[dict, dict]:
     from femto.planning.selection_blocks import _walk_connectors
-    from femto.annotation.selection_intent import label_components
-    labels, _ = label_components(classes > 0)
-    pending = int(((classes > 0) & (classes != 1)).sum())
+    from femto.planning.quality_statistics import component_support, edge_lengths
+    pending, counts = component_support(classes, [source['component_id'] for source in templates])
     blocks = []
     segments = [s for s in items if isinstance(s, ScanSegment)]
     gaps = [g for g in items if isinstance(g, Gap)]
-    for source in templates:
+    for source, (component_pending, by_class) in zip(templates, counts):
         block = {k: deepcopy(source[k]) for k in ('block_index', 'component_id', 'face_count', 'area_m2',
                  'pixel_bounds', 'selection', 'face_index_min', 'face_index_max', 'face_indices_sha256') if k in source}
         owned = [s for s in segments if s.block_index == block['block_index']]
         points = [p for s in owned for p in s.points]
-        component_pixels = labels == block['component_id']+1
-        component_pending = int((component_pixels & (classes != 1)).sum())
         block['selection']['support'] = dict(geometry_unconfirmed_pixels=component_pending,
-            quality_source=EVIDENCE_SCHEMA, by_class={str(code):int((component_pixels & (classes==code)).sum()) for code in range(1,8)})
+            quality_source=EVIDENCE_SCHEMA, by_class=dict(zip(map(str, range(1, 8)), by_class)))
         scan = connector = 0.
         turns, detours, revisits, revisit_length = _walk_connectors(owned)
         for s in owned:
-            for a,b in zip(s.points,s.points[1:]):
-                length = float(np.linalg.norm(np.asarray(a['xyz_m'])-b['xyz_m']))
+            for b, length in zip(s.points[1:], edge_lengths(s.points)):
                 if b.get('role') == 'connector':connector += length
                 else:scan += length
         block.update(status='incomplete' if owned else 'unplannable', reason='quality_width_review_required',
@@ -494,15 +638,34 @@ def _summaries(items: list, templates: list[dict], classes: np.ndarray) -> tuple
         order_rule='retained candidate visit order; no new transitions')
 
 
+def _copy_evidence(record):
+    """Deep copy everything, fast-copying only isolated lists of exact ints."""
+    memo = {}
+    if type(record) is dict:
+        for key in ('classes_runs', 'residual_um_runs'):
+            runs = record.get(key)
+            if type(runs) is list and len(runs) >= 256 and id(runs) not in memo:
+                snapshot = runs.copy()
+                if plain_integers(snapshot):
+                    memo[id(runs)] = snapshot
+    return deepcopy(record, memo)
+
+
 def constrain(candidate: SurfaceTrajectory, mesh: Any, region: dict, record: dict, width_mm: float,
-              check: Callable = lambda: None, *, domain: dict | None = None) -> SurfaceTrajectory:
-    classes, _ = checked_evidence(record, region)
+              check: Callable = lambda: None, *, domain: dict | None = None,
+              _allowed_faces: np.ndarray | None = None) -> SurfaceTrajectory:
+    classes, residual = checked_evidence(record, region)
     segments = [s for s in candidate.ordered_items if isinstance(s, ScanSegment)]
     allowed_faces=None
     if domain is not None:
-        from femto.planning.effective_domain import validate as validate_domain
-        allowed_faces=validate_domain(domain,record,width_mm,mesh,region,check)
-    accepted, reasons, margins = edge_checks(segments, mesh, record, width_mm, check,allowed_faces=allowed_faces)
+        if _allowed_faces is not None:
+            # The caller validated this exact domain/record/width/mesh/region.
+            allowed_faces=_allowed_faces
+        else:
+            from femto.planning.effective_domain import validate as validate_domain
+            allowed_faces=validate_domain(domain,record,width_mm,mesh,region,check)
+    accepted, reasons, margins = edge_checks(segments, mesh, record, width_mm, check,allowed_faces=allowed_faces,
+                                             _evidence=(classes, residual))
     chains, rejected, offset = [], [], 0
     for segment in segments:
         current = []
@@ -543,7 +706,7 @@ def constrain(candidate: SurfaceTrajectory, mesh: Any, region: dict, record: dic
         target_completion='incomplete_or_unverified', registration_uncertainty_mm=None,
         rescan_required=pending>0, execution_ready=False, physical_accuracy_verified=False)
     planner = dict(kind='quality_constrained_surface', algorithm_version=ALGORITHM,
-        parameters=dict(candidate.planner['parameters'], effective_width_mm=float(width_mm), quality_evidence=deepcopy(record)),
+        parameters=dict(candidate.planner['parameters'], effective_width_mm=float(width_mm), quality_evidence=_copy_evidence(record)),
         candidate_algorithm=ORDERED_SELECTION_ALGORITHM, sweep_frame=candidate.planner['sweep_frame'])
     gap_report=dict(counts=stats['gap_counts'], quality_constraint=report)
     if domain is not None:
@@ -560,11 +723,12 @@ def constrain(candidate: SurfaceTrajectory, mesh: Any, region: dict, record: dic
 
 
 def validate(trajectory: SurfaceTrajectory, mesh: Any = None, region: dict | None = None,
-             check: Callable = lambda: None) -> None:
+             check: Callable = lambda: None, *, _share: _ValidationShare | None = None) -> None:
     """Validate offline records and, with geometry, recheck every retained edge."""
     from femto.planning.surface_trajectory import validate_trajectory, CONNECTED_ALGORITHM
     params = trajectory.planner['parameters']
-    classes, _ = checked_evidence(params['quality_evidence'], region)
+    shared = None if _share is None else _share.evidence(params['quality_evidence'], region)
+    classes, residual = checked_evidence(params['quality_evidence'], region) if shared is None else shared
     check()
     if (params['quality_evidence']['intent_sha256'] != trajectory.source.get('selection_intent_sha256')
             or trajectory.planner.get('candidate_algorithm') != ORDERED_SELECTION_ALGORITHM):
@@ -618,7 +782,10 @@ def validate(trajectory: SurfaceTrajectory, mesh: Any = None, region: dict | Non
     allowed_faces=None
     if domain is not None:
         from femto.planning.effective_domain import validate as validate_domain
-        allowed_faces=validate_domain(domain,params['quality_evidence'],params['effective_width_mm'],mesh,region,check)
+        allowed_faces=validate_domain(domain,params['quality_evidence'],params['effective_width_mm'],mesh,region,check,
+                                      _classes=classes)
+        if _share is not None:
+            _share.remember_allowed(domain,params['effective_width_mm'],mesh,region,allowed_faces)
         if (report.get('effective_domain_sha256')!=domain['sha256']
                 or trajectory.gap_report.get('missing_regions')!=domain['missing_regions']):
             raise ValueError('路线与有效区域、缺失处理记录不一致')
@@ -653,6 +820,8 @@ def validate(trajectory: SurfaceTrajectory, mesh: Any = None, region: dict | Non
             from femto.planning.selection_blocks import selection_face_assignment, check_projection_inside_selection, _area
             from femto.planning.surface_trajectory import face_list_sha256
             intent, support, labels, owners = selection_face_assignment(region, np.asarray(mesh.vertices), np.asarray(mesh.faces))
+            if _share is not None:
+                _share.remember_selection(region, mesh, labels.copy())
             blocks=trajectory.blocks['items']
             if sorted(b['component_id'] for b in blocks)!=list(range(len(intent['components']))):
                 raise ValueError('约束后工作块必须保留全部原选区组件')
@@ -670,7 +839,8 @@ def validate(trajectory: SurfaceTrajectory, mesh: Any = None, region: dict | Non
                     raise ValueError('约束后的工作块与原区域面或选择意图不一致')
             check_projection_inside_selection(segments, blocks, labels,
                 np.asarray(region['view_reference']['undistorted_intrinsic']), np.asarray(region['view_reference']['image_size']))
-        okay, _, _ = edge_checks(segments, mesh, params['quality_evidence'], params['effective_width_mm'],check,allowed_faces=allowed_faces)
+        okay, _, _ = edge_checks(segments, mesh, params['quality_evidence'], params['effective_width_mm'],check,allowed_faces=allowed_faces,
+                                 _evidence=(classes, residual))
         if not okay.all():raise ValueError('已保存路线违反几何质量或覆盖带边界约束')
 
 

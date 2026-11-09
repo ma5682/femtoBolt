@@ -90,7 +90,8 @@ class PlanningResolutionUITests(unittest.TestCase):
         previous_journal.path.write_text('original draft', encoding='utf-8')
         original_reference = deepcopy(self.model.view_reference)
         reduced = self.reduced_model()
-        self.page.head.fields['row_spacing_mm'].setText('7')
+        from femto.planning.treatment_head import head_parameters
+        self.page.head.set_record(head_parameters('direct_row_spacing',row_spacing_mm=7))
         self.page.dirty = False
         self.page.draft_timer.stop()
         with patch('femto.app.qt_planning_resolution.create_reduced_model', return_value=reduced) as create:
@@ -129,6 +130,17 @@ class PlanningResolutionUITests(unittest.TestCase):
         self.assertEqual(self.model.view_reference, reference)
         self.assertIn('synthetic reduction failure', self.page._error)
         self.assertTrue(self.page.reduce_model_button.isEnabled())
+
+    def test_curvature_version_button_forwards_explicit_policy(self):
+        from femto.planning.route_sampling import CURVATURE_POLICY
+        reduced=self.reduced_model()
+        reduced.view_reference['derivation']['sampling_policy']=CURVATURE_POLICY
+        with patch('femto.app.qt_planning_resolution.create_reduced_model',return_value=reduced) as create:
+            self.page.curvature_model_button.click()
+            self.wait_worker()
+        self.assertFalse(self.page._error,self.page._error)
+        self.assertEqual(create.call_args.kwargs['sampling_policy'],CURVATURE_POLICY)
+        self.assertIs(self.page.model,reduced)
 
     def test_cancelled_success_is_not_installed(self):
         entered, release = threading.Event(), threading.Event()

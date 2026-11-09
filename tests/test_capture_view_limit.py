@@ -26,7 +26,7 @@ class CaptureViewLimitTests(unittest.TestCase):
             time.sleep(.005)
         self.assertEqual(len(capture.records), count)
 
-    def exercise(self, mode):
+    def exercise(self, mode, *, region_first=False):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             camera = make_camera('wide_detail', 100)
@@ -65,7 +65,8 @@ class CaptureViewLimitTests(unittest.TestCase):
                 job.return_value.run.side_effect = rebuild
                 job.return_value.report = {'state': 'complete'}
                 events = queue.Queue()
-                capture = LocalCapture(camera, root/'data', root/'models', events)
+                region_first = region_first or mode == 'region_selection'
+                capture = LocalCapture(camera, root/'data', root/'models', events,region_first=region_first)
                 def submit(index):
                     frame = make_frame([500]*10000, index)
                     frame.depth_mm = frame.depth_mm.reshape(100, 100)
@@ -90,7 +91,15 @@ class CaptureViewLimitTests(unittest.TestCase):
                     if mode == 'cancel_before_commit':
                         capture.finish(False)
                     release_write.set()
-                    if mode in ('complete', 'cancel_during_rebuild'):
+                    if region_first and mode in ('complete', 'region_selection', 'cancel_during_rebuild'):
+                        self.wait_record(capture,6)
+                        self.assertTrue(capture.awaiting_region.wait(3))
+                        self.assertTrue(capture.closing.is_set())
+                        self.assertFalse(capture.request())
+                        job.assert_not_called()
+                        mask=np.zeros((100,100),np.uint8);mask[30:70,30:70]=1
+                        self.assertTrue(capture.select_region(mask,40))
+                    if mode in ('complete', 'region_selection', 'cancel_during_rebuild'):
                         self.assertTrue(rebuilding.wait(3))
                         self.assertTrue(capture.closing.is_set())
                         self.assertEqual(len(capture.accepted), MAX_ACCEPTED_VIEWS)
@@ -101,7 +110,7 @@ class CaptureViewLimitTests(unittest.TestCase):
                     release_rebuild.set()
                     capture.thread.join(5)
                     self.assertFalse(capture.thread.is_alive())
-                    if mode == 'complete':
+                    if mode in ('complete','region_selection'):
                         job.assert_called_once(); publish.assert_called_once()
                         self.assertEqual(capture.finish_reason, 'accepted_view_limit')
                         self.assertEqual([r['frame_id'] for r in capture.accepted], [0, 3, 5])
@@ -112,6 +121,7 @@ class CaptureViewLimitTests(unittest.TestCase):
                         manifest = json.loads((posed/'manifest.json').read_text())
                         self.assertEqual(manifest['frame_count'], 3)
                         self.assertEqual(manifest['local_capture']['capture_limit']['maximum_accepted_views'], 3)
+                        self.assertTrue(manifest['local_capture']['capture_limit']['automatically_finish'])
                         self.assertEqual(manifest['local_capture']['finish_reason'], 'accepted_view_limit')
                         report = json.loads((capture.session/'derived/local_capture_report.json').read_text())
                         self.assertEqual(report['accepted_frames'], [0, 3, 5])
@@ -130,6 +140,9 @@ class CaptureViewLimitTests(unittest.TestCase):
                         self.assertEqual(kinds.count('local_finishing'), 1)
                         self.assertLess(kinds.index('local_finishing'), kinds.index('local_processing'))
                         self.assertIn('local_finished', kinds)
+                        if mode == 'region_selection':
+                            self.assertLess(kinds.index('local_region_ready'),kinds.index('local_processing'))
+                            self.assertTrue(Path(job.call_args.kwargs['region_request']).is_file())
                     else:
                         publish.assert_not_called()
                         self.assertFalse(capture.successful_model_published)
@@ -144,6 +157,9 @@ class CaptureViewLimitTests(unittest.TestCase):
     def test_third_durable_view_auto_finishes_and_exports_exactly_three(self):
         self.exercise('complete')
 
+    def test_three_views_wait_for_painted_region_before_any_offline_mesh(self):
+        self.exercise('region_selection')
+
     def test_third_raw_write_failure_never_starts_reconstruction(self):
         self.exercise('write_failure')
 
@@ -153,14 +169,26 @@ class CaptureViewLimitTests(unittest.TestCase):
     def test_cancel_after_auto_finish_still_prevents_publication(self):
         self.exercise('cancel_during_rebuild')
 
+    def test_region_first_write_failure_does_not_enter_selection_or_publish(self):
+        self.exercise('write_failure', region_first=True)
+
+    def test_region_first_cancel_before_raw_commit_prevents_third_admission(self):
+        self.exercise('cancel_before_commit', region_first=True)
+
+    def test_region_first_auto_finish_and_reconstruction_remain_cancellable(self):
+        self.exercise('cancel_during_rebuild', region_first=True)
+
     def test_fourth_view_is_rejected_even_with_pending_request(self):
         capture = LocalCapture.__new__(LocalCapture)
-        capture.accepted = [{}, {}, {}]
-        capture.emit = mock.Mock()
-        record = {'state': 'tracking', 'T_WC': np.eye(4).tolist()}
-        self.assertFalse(capture._select(record, time.monotonic()))
-        self.assertEqual(record['selection']['reason'], 'accepted_view_limit')
-        self.assertFalse(capture.request())
+        for region_first in (False, True):
+            with self.subTest(region_first=region_first):
+                capture.region_first = region_first
+                capture.accepted = [{}, {}, {}]
+                capture.emit = mock.Mock()
+                record = {'state': 'tracking', 'T_WC': np.eye(4).tolist()}
+                self.assertFalse(capture._select(record, time.monotonic()))
+                self.assertEqual(record['selection']['reason'], 'accepted_view_limit')
+                self.assertFalse(capture.request())
 
 
 if __name__ == '__main__':

@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable
 import hashlib
 import json
 import math
+from threading import get_ident
 
 import numpy as np
 from femto.planning.fixed_width_layout import ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION
@@ -206,6 +209,10 @@ def _forbidden_orientation_keys(value: Any) -> None:
     elif isinstance(value, (list, tuple)):
         # JSON serializes tuples as lists; reject the same nested keys before
         # publication as on independent readback. Scalars have no field keys.
+        if type(value) is list and len(value) >= 256:
+            from femto.plain_copy import plain_integers
+            if plain_integers(value):
+                return
         for child in value:
             if isinstance(child, _JSON_CONTAINERS):
                 _forbidden_orientation_keys(child)
@@ -241,6 +248,9 @@ def _point_on_triangle(point: Any, vertices: np.ndarray, triangle: np.ndarray,
             and float(sum(uv)) <= 1 + barycentric_tolerance)
 
 
+_CERTIFICATE_POINT_PREDICATE = _point_on_triangle
+
+
 def face_components(faces: np.ndarray) -> np.ndarray:
     """Deterministic face connectivity labels: faces sharing an edge share a label.
 
@@ -248,6 +258,13 @@ def face_components(faces: np.ndarray) -> np.ndarray:
     same PLY always yields the same component ids. No vertex welding or
     tolerance merging: topology only."""
     faces = np.asarray(faces, dtype=np.int64)
+    # The existing integer-edge contraction preserves minimum-face labels,
+    # including duplicate/nonmanifold edges and vertex-only separation.
+    from femto.geometry.triangle_components import triangle_components
+    from types import SimpleNamespace
+    prepared = triangle_components(SimpleNamespace(triangles=faces))
+    if prepared is not None:
+        return prepared[0]
     parent = np.arange(len(faces), dtype=np.int64)
 
     def find(value: int) -> int:
@@ -462,35 +479,14 @@ def _validate_scan_points(
     # Group only syntactically ordinary candidates. All original structural
     # checks below still run in order, and uncertain geometry follows the old
     # scalar predicate. These local flags never cross validation requests.
-    interior = np.zeros(len(item.points), dtype=bool)
-    if faces is not None and _prepared_faces is not None:
-        groups = {}
-        for i, point in enumerate(item.points):
-            if type(point) is not dict:
-                continue
-            index = point.get('triangle_index')
-            xyz = point.get('xyz_m')
-            try:
-                if (type(index) is int and 0 <= index < len(faces)
-                        and type(xyz) in (list, tuple) and len(xyz) == 3
-                        and all(type(v) in (float, int) and math.isfinite(v) for v in xyz)):
-                    groups.setdefault(index, []).append(i)
-            except (TypeError, ValueError, OverflowError):
-                # Malformed inputs are rejected below in the original order.
-                pass
-        for index, ids in groups.items():
-            if len(ids) >= 8:
-                try:
-                    prepared = _prepared_faces(index)
-                    xyz = np.asarray([item.points[i]['xyz_m'] for i in ids], dtype=np.float64)
-                    interior[ids] = prepared.solver.point_inside(xyz, prepared, 1e-6)
-                except (TypeError, ValueError, IndexError, OverflowError):
-                    pass
+    plain, steps, on_face, previous_on_face = _scan_point_certificates(
+        item.points, vertices, faces, sample_step_m, _prepared_faces=_prepared_faces,
+        connected_rows=connected_rows)
     previous = None
     for point_index, point in enumerate(item.points):
         if not isinstance(point, dict) or point.get("geometry_support") != "measured_mesh":
             raise ValueError("Every trajectory point needs measured_mesh support")
-        xyz = _finite_xyz(point.get("xyz_m"))
+        xyz = list(point["xyz_m"]) if plain[point_index] else _finite_xyz(point.get("xyz_m"))
         point_row = point.get('row_index')
         row_valid = ((type(point_row) is int and point_row >= 0) if version == ORDERED_SELECTION_ALGORITHM
                      else (type(point_row) is int and point_row >= item.row_index) if connected_rows
@@ -501,7 +497,8 @@ def _validate_scan_points(
         if type(triangle_index) is not int or triangle_index < 0:
             raise ValueError("Invalid local triangle index")
         pixel = point.get("pixel")
-        if pixel is not None:
+        if pixel is not None and not (type(pixel) is list and len(pixel) == 2
+                                      and all(type(v) is float and math.isfinite(v) for v in pixel)):
             uv = np.asarray(pixel, dtype=np.float64)
             if uv.shape != (2,) or not np.isfinite(uv).all():
                 raise ValueError("Invalid display pixel")
@@ -510,20 +507,99 @@ def _validate_scan_points(
             raise ValueError("Invalid trajectory point role")
         if "revisit" in point and (not selection_mode or role != "connector" or point["revisit"] is not True):
             raise ValueError("revisit is only a v4 flag on connector samples")
-        if previous is not None and np.linalg.norm(np.asarray(xyz) - previous) > sample_step_m + 1e-9:
+        if (previous is not None and steps[point_index] != 1
+                and (steps[point_index] == 2 or np.linalg.norm(np.asarray(xyz) - previous) > sample_step_m + 1e-9)):
             raise ValueError("Adjacent scan samples exceed sample_step_mm")
         if faces is not None:
             if triangle_index >= len(faces):
                 raise ValueError("Trajectory point is not supported by its local triangle")
-            prepared = None if _prepared_faces is None else _prepared_faces(triangle_index)
-            if not interior[point_index] and not _point_on_triangle(xyz, vertices, faces[triangle_index], _prepared=prepared):
+            surely_on = on_face[point_index]
+            surely_previous = previous_on_face[point_index]
+            needs_previous = connected_rows and point.get('role') == 'connector' and previous is not None
+            prepared = (None if _prepared_faces is None or (surely_on and (surely_previous or not needs_previous))
+                        else _prepared_faces(triangle_index))
+            if not surely_on and not _point_on_triangle(xyz, vertices, faces[triangle_index], _prepared=prepared):
                 raise ValueError("Trajectory point is not supported by its local triangle")
-            if connected_rows and point.get('role') == 'connector' and previous is not None:
+            if needs_previous and not surely_previous:
                 if not _point_on_triangle(previous, vertices, faces[triangle_index], _prepared=prepared):
                     raise ValueError('Connector edge is not supported by a single triangle')
         previous = np.asarray(xyz)
         expected_route += 1
     return expected_route
+
+
+def _scan_point_certificates(points, vertices, faces, sample_step_m, *, _prepared_faces=None,
+                             connected_rows=None):
+    """Per-point shortcuts that can only confirm what the scalar checks accept.
+
+    ``plain`` marks a dict point whose xyz is a finite three-float list, so the
+    original conversion would return the same values. ``steps`` is 1 for a
+    step clearly within the limit, 2 for one clearly beyond it and 0 when the
+    scalar norm must decide. Triangle flags are surely-True certificates only.
+    """
+    count = len(points)
+    plain = np.zeros(count, bool)
+    steps = np.zeros(count, np.int8)
+    on_face = np.zeros(count, bool)
+    previous_on_face = np.zeros(count, bool)
+    rows = []
+    for index, point in enumerate(points):
+        xyz = point.get('xyz_m') if type(point) is dict else None
+        if (type(xyz) is list and len(xyz) == 3 and type(xyz[0]) is float and type(xyz[1]) is float
+                and type(xyz[2]) is float and math.isfinite(xyz[0]) and math.isfinite(xyz[1])
+                and math.isfinite(xyz[2])):
+            plain[index] = True
+            rows.append(xyz)
+        else:
+            rows.append((math.nan, math.nan, math.nan))
+    if count < 2 or not plain.any() or np.geterr() != dict(divide='warn', over='warn', under='ignore', invalid='warn'):
+        return plain, steps, on_face, previous_on_face
+    xyz = np.asarray(rows, dtype=np.float64)
+    both = plain[1:] & plain[:-1]
+    delta = xyz[1:]-xyz[:-1]
+    length = np.sqrt(np.einsum('ij,ij->i', np.where(both[:, None], delta, 0.), np.where(both[:, None], delta, 0.)))
+    limit = sample_step_m+1e-9
+    # Keep a wide relative guard: the scalar norm decides anything nearby.
+    guard = 1e-12+1e-9*limit
+    steps[1:][both & (length < limit-guard)] = 1
+    steps[1:][both & (length > limit+guard)] = 2
+    if (faces is not None and vertices is not None
+            and _point_on_triangle is _CERTIFICATE_POINT_PREDICATE):
+        from femto.planning.triangle_certificates import points_on_triangles
+        indexes = np.asarray([point.get('triangle_index') if type(point) is dict and type(point.get('triangle_index')) is int
+                              and 0 <= point.get('triangle_index') < len(faces) else -1 for point in points], dtype=np.int64)
+        usable = plain & (indexes >= 0)
+        if usable.any():
+            chosen = np.flatnonzero(usable)
+            later = chosen[chosen > 0]
+            later = later[plain[later-1]]
+            if connected_rows is False:
+                later = later[:0]
+            elif connected_rows is True:
+                # Only connectors consume this additional proof below. Keep
+                # unusual role types on the original path without invoking
+                # custom equality during this optional preflight.
+                later = later[[type(role := points[i].get('role')) is not str or role == 'connector'
+                               for i in later]]
+            same = indexes[later-1] == indexes[later]
+            different = later[~same]
+            # Current and preceding points use a single private XYZ/face
+            # snapshot. Submit the identical (previous XYZ, same face) only
+            # once; every handoff still needs the previous XYZ on its NEW face.
+            # Each invocation of the validator performs these checks anew.
+            if len(different) and len(chosen)+len(different) <= 16384:
+                result = points_on_triangles(
+                    xyz[np.r_[chosen, different-1]], vertices, faces, indexes[np.r_[chosen, different]],
+                    _prepared_faces=_prepared_faces)
+                on_face[chosen], previous_on_face[different] = result[:len(chosen)], result[len(chosen):]
+            else:
+                on_face[chosen] = points_on_triangles(xyz[chosen], vertices, faces, indexes[chosen],
+                                                      _prepared_faces=_prepared_faces)
+                if len(different):
+                    previous_on_face[different] = points_on_triangles(
+                        xyz[different-1], vertices, faces, indexes[different], _prepared_faces=_prepared_faces)
+            previous_on_face[later[same]] = on_face[later[same]-1]
+    return plain, steps, on_face, previous_on_face
 
 
 def _validate_gap_record(item: Gap, gaps: list[Gap], selection_mode: bool, block_mode: bool) -> None:
@@ -592,7 +668,7 @@ def validate_trajectory(trajectory: SurfaceTrajectory, *, mesh: Any = None,
             from femto.planning.repair_workflow import validate as validate_repair
             validate_repair(trajectory,mesh,region,check)
         reference = revision['inputs']['calibration']['view_reference']
-        if (reference.get('derivation') or {}).get('schema') == 'reduced-planning-reference-v1':
+        if (reference.get('derivation') or {}).get('schema') in ('reduced-planning-reference-v1', 'surface-patch-planning-reference-v1'):
             from femto.planning.planning_resolution import route_sample_step_mm
             if params.get('sample_step_mm') != route_sample_step_mm(
                     reference, decision=params.get('sampling_decision'), mesh=mesh):
@@ -774,12 +850,47 @@ def block_view(trajectory: SurfaceTrajectory) -> dict[str, Any] | None:
             "selection_blocks": selection}
 
 
+_exporting = ContextVar('validated_export_trajectory', default=None)
+
+
+def _export_fingerprint(trajectory):
+    return hashlib.sha256(canonical_json_bytes(trajectory.to_dict())).digest()
+
+
+def require_current_export(trajectory):
+    receipt = _exporting.get()
+    if not (receipt is not None and receipt['active'] and receipt['thread'] == get_ident()
+            and receipt['model'] is trajectory and receipt['digest'] == _export_fingerprint(trajectory)):
+        raise ValueError('路线在导出核验后发生变化')
+
+
+@contextmanager
+def exporting(trajectory: SurfaceTrajectory, *, check=lambda: None):
+    """Validate this export's content, including the mutable nested records."""
+    check()
+    before = _export_fingerprint(trajectory)
+    validate_trajectory(trajectory, check=check)
+    check()
+    if before != _export_fingerprint(trajectory):
+        raise ValueError('路线在导出核验期间发生变化')
+    receipt = dict(model=trajectory, digest=before, active=True, thread=get_ident())
+    token = _exporting.set(receipt)
+    try:
+        yield
+    finally:
+        receipt['active'] = False
+        _exporting.reset(token)
+
+
 def to_player_plan(trajectory: SurfaceTrajectory | dict[str, Any]) -> dict[str, Any]:
     if isinstance(trajectory, dict):
         model = SurfaceTrajectory.from_dict(trajectory)
     else:
         model = trajectory
-        validate_trajectory(model)
+        receipt = _exporting.get()
+        if not (receipt is not None and receipt['active'] and receipt['thread'] == get_ident()
+                and receipt['model'] is model and receipt['digest'] == _export_fingerprint(model)):
+            validate_trajectory(model)
     return _player_plan_view(model)
 
 

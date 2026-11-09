@@ -12,6 +12,7 @@ from copy import deepcopy
 from typing import Any, Callable
 
 import numpy as np
+from femto.plain_copy import clone
 
 
 def _strips(records: list[dict[str, Any]], intervals: list[tuple[float, float]],
@@ -110,7 +111,7 @@ def order_scan_records(records: list[dict[str, Any]], frame: dict[str, Any],
     def emit(indices: list[int], first_increasing: bool) -> np.ndarray:
         for offset, index in enumerate(indices):
             check()
-            record = deepcopy(records[index])
+            record = clone(records[index])
             direction = first_increasing ^ bool(offset % 2)
             if increasing[index] != direction:
                 record['points'].reverse()

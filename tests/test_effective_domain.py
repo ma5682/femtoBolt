@@ -59,6 +59,20 @@ class EffectiveDomainTests(unittest.TestCase):
         changed=self.mesh.copy();changed.vertices[0,0]+=.001
         with self.assertRaises(ValueError):domain.validate(result,record,5,changed,self.region)
 
+    def test_mesh_validation_derives_class_records_once_and_keeps_rejections(self):
+        self.missing();result,record=self.build()
+        with patch.object(domain,'missing_regions',wraps=domain.missing_regions) as missing:
+            self.assertTrue(domain.validate(result,record,5,self.mesh,self.region).any())
+            self.assertEqual(missing.call_count,1)
+        damaged=copy.deepcopy(result);damaged['missing_regions'][0]['pixel_count']+=1
+        damaged['sha256']=quality._hash(damaged)
+        with self.assertRaisesRegex(ValueError,'缺失范围不能由质量证据重现'):
+            domain.validate(damaged,record,5,self.mesh,self.region)
+        damaged=copy.deepcopy(result);damaged['eligible_area_m2']+=1e-6
+        damaged['sha256']=quality._hash(damaged)
+        with self.assertRaisesRegex(ValueError,'不能由原网格和质量证据重建'):
+            domain.validate(damaged,record,5,self.mesh,self.region)
+
     def test_missing_components_are_separate_by_reason_and_location(self):
         classes=np.zeros((8,8),np.uint8)
         classes[1,1]=7;classes[1,2]=7;classes[5,5]=7;classes[2,2]=5

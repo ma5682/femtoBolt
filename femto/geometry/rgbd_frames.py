@@ -10,6 +10,7 @@ import open3d as o3d
 
 from femto.dataset.scene_dataset_validator import validate_pose
 from femto.io_utils import load_json
+from femto.operation_diagnostics import diagnosed
 
 
 def distortion_maps(dataset: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
@@ -36,7 +37,8 @@ def distortion_maps(dataset: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, 
     )
     return map_x, map_y, new_K, width, height
 
-def prepare_rgbd(
+@diagnosed('reconstruction.rgbd_prepare')
+def prepare_rgbd_arrays(
     color_bgr: np.ndarray,
     depth_u16: np.ndarray,
     map_x: np.ndarray,
@@ -45,11 +47,13 @@ def prepare_rgbd(
     scale: float,
     depth_min_m: float,
     depth_max_m: float,
-) -> tuple[o3d.geometry.RGBDImage, o3d.camera.PinholeCameraIntrinsic, np.ndarray, np.ndarray]:
+    *, depth_filter=None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Calibrate/filter RGB-D pixels once, without constructing an Open3D image."""
     color = cv2.remap(color_bgr, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-    depth = cv2.remap(depth_u16, map_x, map_y, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
-    valid = (depth >= int(round(depth_min_m * 1000.0))) & (depth <= int(round(depth_max_m * 1000.0)))
-    depth = np.where(valid, depth, 0).astype(np.uint16)
+    depth = prepare_depth(depth_u16, map_x, map_y, depth_min_m, depth_max_m)
+    if depth_filter is not None:
+        depth = depth_filter(depth)
     height, width = depth.shape
     if scale != 1.0:
         scaled_size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
@@ -58,6 +62,27 @@ def prepare_rgbd(
     scaled_K = K.copy()
     scaled_K[0, :] *= scale
     scaled_K[1, :] *= scale
+    return color, depth, scaled_K
+
+
+def prepare_depth(depth_u16, map_x, map_y, depth_min_m, depth_max_m):
+    """Undistort measured depth and apply the inclusive millimetre range."""
+    depth = cv2.remap(depth_u16, map_x, map_y, cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)
+    valid = (depth >= int(round(depth_min_m * 1000.0))) & (depth <= int(round(depth_max_m * 1000.0)))
+    return np.where(valid, depth, 0).astype(np.uint16)
+
+
+def prepare_rgbd(
+    color_bgr: np.ndarray, depth_u16: np.ndarray, map_x: np.ndarray, map_y: np.ndarray,
+    K: np.ndarray, scale: float, depth_min_m: float, depth_max_m: float, *, depth_filter=None,
+) -> tuple[o3d.geometry.RGBDImage, o3d.camera.PinholeCameraIntrinsic, np.ndarray, np.ndarray]:
+    color, depth, scaled_K = prepare_rgbd_arrays(color_bgr, depth_u16, map_x, map_y,
+        K, scale, depth_min_m, depth_max_m, depth_filter=depth_filter)
+    return rgbd_from_prepared(color, depth, scaled_K, depth_max_m)
+
+
+def rgbd_from_prepared(color, depth, scaled_K, depth_max_m):
+    """Build an RGBD image from already calibrated pixels without filtering twice."""
     intrinsic = o3d.camera.PinholeCameraIntrinsic(
         color.shape[1], color.shape[0], scaled_K[0, 0], scaled_K[1, 1], scaled_K[0, 2], scaled_K[1, 2]
     )

@@ -4,6 +4,7 @@ This module only writes the documented 3D Gaussian PLY attribute layout.  It
 does not contain Graphdeco source code and does not train the Gaussian model.
 """
 from __future__ import annotations
+from femto.performance_detail import observed
 
 import json
 import math
@@ -93,6 +94,7 @@ def write_gaussian_ply(
         records.tofile(output)
 
 
+@observed('io.gaussian_initialization')
 def export_gaussian_initialization(
     cloud: o3d.geometry.PointCloud,
     output_dir: Path,

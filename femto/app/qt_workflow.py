@@ -6,21 +6,31 @@ from PySide6.QtGui import QPainter, QPen, QColor, QRadialGradient
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QSizePolicy
 
 
-STEPS = ('局部采集', '检查模型', '标记区域', '生成路线', '核对保存')
+STEPS = ('局部采集', '检查模型', '核对选区', '生成路线', '核对保存', '标记/重建')
+# Stable semantic IDs retain historical navigation contracts; displayed order
+# follows the new acquisition -> image selection -> local model workflow.
+STEP_ORDER = (1, 6, 2, 3, 4, 5)
+# Internal semantic destinations remain stable for saved-view navigation.
+# Only four groups are presented to the operator.
+STAGE_GROUPS = ((1,), (6,), (2, 3, 4), (5,))
+STAGE_TITLES = ('采集', '涂抹选区', '模型与路线', '保存')
+VISIBLE_STEPS = (1, 6, 2, 5)
 HINTS = (
-    '连接相机并框选扫描范围，按跟踪和停稳提示采集不同视角，完成后生成模型。',
+    '接纳一帧后即可提前完成；最多 3 个有效视角，第三帧保存后自动进入固定参考图。',
     '查看缺失与待检查范围，再核对三维模型中的目标和边界。',
     '涂抹选入工作区域，擦除排除；扫描范围不等于工作区域。',
     '核对参数并计算路线，参数或区域变化后重新计算。',
     '查看待处理项，明确核对后保存；历史修改另存新版本。',
+    '在固定参考 RGB 图上涂抹，只重建最终选中的实测表面。',
 )
 
 
 class StepButton(QPushButton):
     """Paint the current position without implying earlier quality approval."""
     def __init__(self, index, title):
-        super().__init__(f'{index:02d}  {title}')
-        self.index, self.title = index, title
+        position = next(i+1 for i, group in enumerate(STAGE_GROUPS) if index in group)
+        super().__init__(f'{position:02d}  {title}')
+        self.index, self.title = position, title
         self.setFixedHeight(54)
 
     def paintEvent(self, event):
@@ -43,7 +53,7 @@ class StepButton(QPushButton):
         painter.drawText(QRectF(x-17, cy-17, 34, 34), Qt.AlignCenter, f'{self.index:02d}')
         font.setPixelSize(14); painter.setFont(font)
         painter.drawText(QRectF(51, 0, 80, self.height()), Qt.AlignVCenter, self.title)
-        if self.index < 5 and self.width() > 147:
+        if self.index < len(STAGE_GROUPS) and self.width() > 147:
             painter.setPen(QPen(color, 1.2))
             painter.drawLine(QPointF(138, cy), QPointF(self.width()-6, cy))
         if self.hasFocus() and self.isEnabled():
@@ -71,14 +81,30 @@ class WorkflowProgress(QFrame):
         self._state = None
         for index, title in enumerate(STEPS, start=1):
             button = StepButton(index, title)
+            button.setParent(self)
             button.setObjectName('workflowPosition')
             button.setMinimumWidth(0)
             button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             button.setFocusPolicy(Qt.StrongFocus)
             button.clicked.connect(lambda checked=False, number=index: self.step_requested.emit(number))
-            layout.addWidget(button, 1)
             self.buttons.append(button)
+            button.hide()
+        self.stage_buttons = []
+        for position,number in enumerate(VISIBLE_STEPS,1):
+            button = StepButton(number, STAGE_TITLES[position-1])
+            button.setObjectName('workflowPosition')
+            button.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed)
+            button.clicked.connect(lambda checked=False, number=number:
+                self.step_requested.emit(self._destination(number)))
+            self.stage_buttons.append(button)
+            layout.addWidget(button,1)
         self.set_step(None)
+
+    def _destination(self, number):
+        if number not in VISIBLE_STEPS:
+            return number
+        group = STAGE_GROUPS[VISIBLE_STEPS.index(number)]
+        return next((step for step in reversed(group) if step in self._available), number)
 
     def set_step(self, index: int | None, note: str = '') -> None:
         self.current_step = index
@@ -104,7 +130,20 @@ class WorkflowProgress(QFrame):
             button.setCursor(Qt.PointingHandCursor if enabled else Qt.ArrowCursor)
             button.setProperty('state', 'current' if active else 'available' if enabled else 'idle')
             status = '当前步骤' if active else '可点击切换' if enabled else self._reasons.get(number, '此步骤尚不可切换')
-            button.setAccessibleName(f'第 {number} 步：{STEPS[number-1]}，{status}')
+            button.setAccessibleName(f'第 {STEP_ORDER.index(number)+1} 步：{STEPS[number-1]}，{status}')
             button.setToolTip(HINTS[number-1] + '\n' + (self._note if active and self._note else status))
+            button.style().unpolish(button)
+            button.style().polish(button)
+        for position, (number, group) in enumerate(zip(VISIBLE_STEPS, STAGE_GROUPS), 1):
+            button = self.stage_buttons[position-1]
+            active = self.current_step in group
+            target = self._destination(number)
+            enabled = not active and target in self._available
+            button.setEnabled(enabled)
+            button.setProperty('state','current' if active else 'available' if enabled else 'idle')
+            button.setCursor(Qt.PointingHandCursor if enabled else Qt.ArrowCursor)
+            status = '当前阶段' if active else '可点击切换' if enabled else self._reasons.get(target,'此阶段尚不可切换')
+            button.setAccessibleName(f'第 {position} 步：{button.title}，{status}')
+            button.setToolTip((self._note if active and self._note else HINTS[target-1])+'\n'+status)
             button.style().unpolish(button)
             button.style().polish(button)

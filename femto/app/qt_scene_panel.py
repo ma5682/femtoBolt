@@ -71,14 +71,15 @@ class ScenePanel(QWidget):
                 viewport.picked.connect(self._picked)
             if key != self._loaded_key:
                 self.viewport.set_scene(*self._scene,
-                    reset_camera=self._loaded_key is None or key[0] != self._loaded_key[0])
+                    reset_camera=self._loaded_key is None or key[:2] != self._loaded_key[:2])
                 if hasattr(self.viewport, 'set_coverage'):self.viewport.set_coverage(*self._coverage)
                 self._loaded_key = key
             self.stack.setCurrentWidget(self.viewport)
             self.retry.hide();self.reset.setEnabled(True)
-            self.stack.setToolTip('拖动平移 · 滚轮缩放 · 单击拾取坐标。修改区域请返回参考图。')
+            self.stack.setToolTip('拖动平移 · 滚轮缩放 · 单击拾取坐标。优先显示采集原色，无颜色时显示灰色；黄色为路线。修改区域请返回参考图。')
             self.notice.setText('覆盖显示为近似；未知范围请在参考图核对。' if self._coverage[0] is not None else
-                                '绿色：工作区域 · 黄色：路线')
+                                '仅显示已确认的涂抹区域 · 黄色：路线' if self._scene[1] is not None else
+                                '请先在参考图涂抹并确认区域；选区外模型不显示。')
             self.notice.show()
         except Exception as error:
             self._failed(error)

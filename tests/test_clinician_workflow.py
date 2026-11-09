@@ -87,14 +87,14 @@ class ClinicianWorkflowTests(unittest.TestCase):
             self.assertFalse(self.page.session.active)
             self.assertIn('有效深度', self.page.roi_message)
 
-    def test_fixed_footer_keeps_finish_visible_and_original_admission_rules(self):
-        self.page.session = CaptureState(active=True, count=1, state='tracking', record={
+    def test_fixed_footer_keeps_finish_visible_and_adaptive_admission_rules(self):
+        self.page.session = CaptureState(active=True, count=0, state='tracking', record={
             'state':'tracking', 'received_monotonic':time.monotonic()})
         with patch.object(self.page, 'live_frame_valid', return_value=True):
             self.page.refresh(); self.app.processEvents()
             self.assertTrue(self.page.finish_button.isVisible())
             self.assertFalse(self.page.finish_button.isEnabled())
-            self.page.session.count = 3
+            self.page.session.count = 1
             self.page.refresh(); self.app.processEvents()
             self.assertTrue(self.page.finish_button.isEnabled())
             for button in (self.page.primary, self.page.finish_button, self.page.pause_button, self.page.cancel_button):
@@ -138,8 +138,8 @@ class ClinicianWorkflowTests(unittest.TestCase):
         requested = []; self.page.planning_requested.connect(requested.append)
         with patch('femto.app.qt_capture.QMessageBox.question', return_value=16384) as question:
             self.page.primary.click()
-        question.assert_called_once()
-        self.assertIn('1 个参考图像像素缺失', question.call_args.args[2])
+        question.assert_not_called()
+        self.assertIn('1 个参考图像像素缺失', self.page.guidance.text())
         self.assertEqual(len(requested), 1)
 
     def test_unknown_scan_coverage_is_not_presented_as_pass(self):
@@ -165,7 +165,7 @@ class ClinicianWorkflowTests(unittest.TestCase):
             fixture.mark()
             page = fixture.page
             self.assertEqual(page.workflow.current_step, 4)
-            self.assertIn('05 / 06', page.step_heading.text())
+            self.assertIn('03 / 04', page.step_heading.text())
             page.go_back()
             self.assertEqual(page.workflow.current_step, 3)
             self.assertEqual([label.text() for label in page.workflow.labels],
@@ -178,40 +178,32 @@ class ClinicianWorkflowTests(unittest.TestCase):
         finally:
             fixture.page.dirty = False; fixture.doCleanups()
 
-    def test_preparation_remains_reachable_with_inspector_scrolled(self):
+    def test_full_width_preview_starts_without_details_or_range_setup(self):
         self.install_frame()
         with patch.object(self.page, 'live_frame_valid', return_value=True), patch.object(self.page, 'send') as send:
             self.page.refresh(); self.app.processEvents()
-            self.assertFalse(self.page.details_panel.isVisible())
-            self.assertFalse(self.page.count_label.isVisible())
+            self.assertFalse(hasattr(self.page, 'details_toggle'))
+            self.assertFalse(hasattr(self.page, 'inspector_dialog'))
+            self.assertTrue(self.page.count_label.isVisible())
+            self.assertEqual(self.page.count_label.text(), '0 / 3 帧')
+            self.assertFalse(any(segment.property('accepted') for segment in self.page.frame_steps))
             self.assertFalse(self.page.quality_button.isVisible())
             self.assertFalse(self.page.report_button.isVisible())
-            # A collapsed parent hides descendants without setting their explicit hidden flag.
-            self.assertTrue(self.page.details_toggle.isVisible())
+            self.assertFalse(self.page.inspector_scroll.isVisible())
             self.assertFalse(self.page.task_name.isVisible())
             self.assertFalse(hasattr(self.page,'body_records_button'))
             self.assertFalse(hasattr(self.window,'body_records_button'))
             self.assertTrue(self.page.task_name.text().strip())
-            self.assertFalse(self.page.inspector_scroll.isHidden())
-            scroll = self.page.inspector_scroll.verticalScrollBar()
-            scroll.setValue(scroll.maximum())
-            button = self.page.prepare_action
-            self.assertTrue(button.isVisible())
-            self.assertTrue(button.isEnabled())
-            origin = button.mapTo(self.window, QPoint(0, 0))
-            self.assertTrue(self.window.rect().contains(origin))
-            self.assertTrue(self.window.rect().contains(origin + QPoint(button.width()-1, button.height()-1)))
-            button.click()
-            self.assertFalse(self.page.inspector_scroll.isHidden())
-            self.assertTrue(self.page.viewport.roi_enabled)
-            self.assertFalse(self.page.primary.isVisible())
-            self.assertFalse(self.page.prepare_action.isEnabled())
-            send.assert_not_called()
-            self.page._roi_changed([.125, .125, .875, .875])
+            width = self.page.viewport.width()
+            self.assertGreater(width, self.page.width() - 50)
             self.assertTrue(self.page.primary.isVisible())
             self.assertTrue(self.page.primary.isEnabled())
+            self.assertFalse(self.page.scan_roi_button.isVisible())
+            self.assertFalse(self.page.viewport.roi_enabled)
             self.assertFalse(self.page.prepare_action.isVisible())
-            send.assert_not_called()
+            self.page.primary.click()
+            self.assertEqual(send.call_args.args[0], 'local_start')
+            self.assertEqual(self.page.viewport.width(), width)
 
     def test_preparation_reconnect_does_not_bypass_frame_or_roi_admission(self):
         self.install_frame()
@@ -228,18 +220,19 @@ class ClinicianWorkflowTests(unittest.TestCase):
         with patch.object(self.page, 'live_frame_valid', return_value=True), patch.object(self.page, 'send') as send:
             self.page.refresh()
             self.assertEqual(self.page.prepare_action.text(), '框选扫描范围')
-            self.page.prepare_action.click()
+            self.assertFalse(self.page.prepare_action.isVisible())
+            self.page.choose_scan_roi()  # Legacy range helper remains guarded.
             self.assertTrue(self.page.viewport.roi_enabled)
             self.page.views['depth'].click()
             self.assertFalse(self.page.viewport.roi_enabled)
-            self.assertTrue(self.page.prepare_action.isEnabled())
-            self.page.prepare_action.click()
+            self.assertTrue(self.page.scan_roi_button.isEnabled())
+            self.page.choose_scan_roi()
             self.assertEqual(self.page.view, 'preview')
             self.assertTrue(self.page.viewport.roi_enabled)
             send.assert_not_called()
 
-    def test_decluttering_keeps_blocking_alert_and_quality_evidence_visible(self):
-        self.page.session = CaptureState(active=True, count=3, state='tracking', record={
+    def test_decluttering_keeps_blocking_alert_and_frame_count_visible(self):
+        self.page.session = CaptureState(active=True, count=2, state='tracking', record={
             'state':'tracking', 'received_monotonic':time.monotonic()-3})
         with patch.object(self.page, 'live_frame_valid', return_value=True):
             self.page.refresh(); self.app.processEvents()
@@ -247,14 +240,14 @@ class ClinicianWorkflowTests(unittest.TestCase):
             self.assertIn('位姿更新已过期', self.page.alert.text())
             self.assertFalse(self.page.guidance.isVisible())
             self.assertTrue(self.page.count_label.isVisible())
-            self.assertTrue(self.page.quality_button.isVisible())
+            self.assertFalse(self.page.quality_button.isVisible())
             self.assertFalse(self.page.primary.isEnabled())
             self.assertFalse(self.page.finish_button.isEnabled())
             self.page.session.record['received_monotonic'] = time.monotonic()
             self.page.refresh()
             self.assertFalse(self.page.alert.isVisible())
             self.assertTrue(self.page.guidance.isVisible())
-            self.assertFalse(self.page.primary.isEnabled())  # Three accepted views reach the capture cap.
+            self.assertTrue(self.page.primary.isEnabled())  # The third valid view remains available.
             self.assertTrue(self.page.finish_button.isEnabled())
 
 

@@ -21,6 +21,34 @@ class ProcessingTests(unittest.TestCase):
         self.dataset = self.root/'input'
         write(self.dataset/'manifest.json', dict(pose=dict(source='online_rgbd_research_grade'),
             local_capture=dict(measured_only=True, session_id='one', reference_frame_id=7)))
+        from femto.io_utils import write_jsonl
+        import numpy as np
+        write_jsonl(self.dataset/'frames.jsonl',[dict(frame=i,pose=f'pose_{i}.json') for i in (7,9)])
+        for i in (7,9):write(self.dataset/f'pose_{i}.json',dict(pose_valid=True,T_WC=np.eye(4).tolist()))
+
+    def test_invalid_single_pose_is_reported_before_any_refinement(self):
+        from femto.io_utils import write_jsonl
+        write_jsonl(self.dataset/'frames.jsonl',[dict(frame=7,pose='pose_7.json')])
+        write(self.dataset/'pose_7.json',dict(pose_valid=False))
+        job=LocalProcessing(self.dataset,self.root/'invalid')
+        with mock.patch('femto.local.local_pose_refinement.refine') as refine:
+            with self.assertRaisesRegex(ValueError,'valid T_WC'):job.run()
+        refine.assert_not_called()
+        recorded=json.loads(job.path.read_text(encoding='utf-8'))
+        self.assertEqual(recorded['state'],'failed')
+        self.assertIsNone(recorded['frame_counts']['valid_poses'])
+        self.assertIsNone(recorded['frame_counts']['used_for_reconstruction'])
+
+    def test_single_pose_validation_does_not_claim_unmeasured_region_count(self):
+        from femto.io_utils import write_jsonl
+        write_jsonl(self.dataset/'frames.jsonl',[dict(frame=7,pose='pose_7.json')])
+        job=LocalProcessing(self.dataset,self.root/'single')
+        with mock.patch('femto.local.local_pose_refinement.refine') as refine:
+            selected,report=job.run()
+        refine.assert_not_called()
+        self.assertEqual(selected,self.dataset)
+        self.assertEqual(report['frame_counts']['valid_poses'],1)
+        self.assertIsNone(report['frame_counts']['used_for_reconstruction'])
 
     def test_rejected_stages_report_actual_unchanged_input_and_separate_reasons(self):
         before = (self.dataset/'manifest.json').read_bytes()

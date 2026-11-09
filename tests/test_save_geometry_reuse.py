@@ -101,6 +101,11 @@ class SaveGeometryReuseTests(unittest.TestCase):
                 self.assertEqual(session._state, 'closed')
 
     def test_complete_save_shares_worker_scope_and_independent_readers_replay(self):
+        # The UI now defers target-area calculation. This case specifically
+        # verifies sharing an already materialized target during native/ZIP
+        # save, followed by independent full replays in both readers.
+        self.page.plan = surface_workspace.generate(
+            self.page.model, self.page.region, self.page.plan['treatment_head'])
         expected = deepcopy(self.page.plan)
         expected_target = surface_workspace.target_for(self.page.model, expected, reproduce=False)
         with self.observe(), patch.object(target_surface, '_construct', wraps=target_surface._construct) as construct:

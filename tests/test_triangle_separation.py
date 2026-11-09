@@ -85,6 +85,36 @@ class TriangleSeparationTests(unittest.TestCase):
                             lambda: prepared_overlap(prepared(aa), prepared(bb)),
                             lambda: original.interior_overlap(aa, bb))
 
+    def test_axis_edges_keep_touch_overlap_and_overflow_decisions(self):
+        rng = np.random.default_rng(20261102)
+        for scale in (1e-200, 1e-12, 1., 1e12, 1e150, 1e200):
+            for dimension in (0, 1):
+                for _ in range(35):
+                    a = rng.uniform(-2, 2, (3, 2))
+                    a[1, dimension] = a[0, dimension]
+                    b = rng.uniform(-2, 2, (3, 2))
+                    # Include exact contact and one-ULP overlaps; touching
+                    # bounding boxes alone must never hide an interior overlap.
+                    b[0] = a[0]
+                    for shift in (0., np.spacing(a[0, dimension])):
+                        bb = b.copy(); bb[:, dimension] += shift
+                        aa, bb = a*scale, bb*scale
+                        with np.errstate(all='ignore'):
+                            for left, right in ((aa, bb), (bb, aa)):
+                                self.assert_same_outcome(
+                                    lambda: prepared_overlap(prepared(left), prepared(right)),
+                                    lambda: original.interior_overlap(left, right))
+
+    def test_axis_shortcut_keeps_original_non_float64_path(self):
+        for dtype in (np.float32, np.float64):
+            a = np.array([[0., 0.], [0., 1.], [1., .25]], dtype=dtype)
+            for x in (0., np.nextafter(dtype(0), dtype(1)), dtype(-1.)):
+                b = np.array([[x, .2], [x, .8], [-1., .5]], dtype=dtype)
+                pa, pb = PreparedTriangle(a.copy(), np.arange(3)), PreparedTriangle(b.copy(), np.arange(3)+3)
+                self.assertIs(prepared_overlap(pa, pb), original.interior_overlap(a, b))
+                if dtype is np.float32:
+                    self.assertIsNone(pa._axis_data)
+
     def test_source_pairs_keep_duplicate_coordinate_identity_and_winding(self):
         a = np.array([[0., -0., 1.], [1., 0., 1.], [0., 1., 1.]])
         adjacent = np.array([[1., 0., 1.], [1., 1., 1.], [-0., 1., 1.]])

@@ -11,6 +11,7 @@ from pathlib import Path
 import time
 
 from femto.io_utils import load_json_object, write_json_strict
+from femto.operation_diagnostics import diagnosed
 from femto.ui_i18n import pick
 
 SCHEMA = 'femto-local-processing-v1'
@@ -82,7 +83,8 @@ def temporal_summary(report: Any) -> dict[str, Any]:
 
 class LocalProcessing:
     """One journal per job; all I/O is called by a worker, not the UI thread."""
-    def __init__(self, dataset, output, progress=None):
+    def __init__(self, dataset, output, progress=None, *, write_html_report=True):
+        self.write_html_report = write_html_report
         self.dataset = Path(dataset).resolve()
         self.output = Path(output).resolve()
         if self.output == self.dataset or self.dataset in self.output.parents:
@@ -107,15 +109,39 @@ class LocalProcessing:
 
     def publish(self) -> None:
         write_json_strict(self.path, self.report)
-        write_html(self.output / 'processing_report.html', self.report)
+        if self.write_html_report:
+            write_html(self.output / 'processing_report.html', self.report)
         if self.progress:
             self.progress(copy.deepcopy(self.report))
 
+    @diagnosed('local.pose_and_temporal')
     def run(self) -> Any:
         from femto.local.local_pose_refinement import refine
         from femto.local.local_temporal_support import prepare
         stage = 'refinement'
         try:
+            from femto.io_utils import load_jsonl
+            frames = load_jsonl(self.dataset/'frames.jsonl')
+            from femto.geometry.rgbd_frames import load_poses
+            # Validate even the one-view fast path. Invalid saved poses must
+            # fail here instead of falling into general-purpose pose estimation.
+            raw_dataset=load_json_object(self.dataset/'manifest.json').get('source_dataset')
+            raw_count=len(load_jsonl(Path(raw_dataset)/'frames.jsonl')) if raw_dataset else None
+            self.report['frame_counts']=dict(captured=raw_count,admitted=len(frames),valid_poses=None,
+                used_for_reconstruction=None,basis='pending_pose_validation_and_region_filter')
+            if not frames:
+                raise ValueError('没有通过检查的采集帧，请重新采集')
+            load_poses(self.dataset,frames)
+            self.report['frame_counts'].update(valid_poses=len(frames),basis='validated_poses_pending_region_filter')
+            if len(frames) == 1:
+                # Admission already checked this view. There is no second
+                # view to register; do not run or claim multi-view refinement.
+                self.report['refinement'] = dict(status='not_run',reason='single_accepted_view')
+                self.report['temporal'] = dict(status='not_run',reason='single_view_raw_depth_path')
+                self.report['state'] = 'complete'
+                self.report['frame_count'] = 1
+                self.publish()
+                return self.dataset, copy.deepcopy(self.report)
             self.report['state'] = 'running'
             self.report[stage] = dict(status='running')
             self.publish()
@@ -259,6 +285,18 @@ def format_quality(report: Any, language: str='zh') -> Any:
         pick(language, '精配准：', 'Refinement: ') + state(refinement.get('status', 'not_recorded')),
         pick(language, '实际位姿来源：', 'Actual pose source: ') + (report.get('actual_pose_source') or missing),
     ]
+    counts=report.get('frame_counts',{})
+    if counts:
+        lines.append(pick(language,'采集 / 接纳 / 位姿有效 / 实际建模帧数：',
+                          'Captured / admitted / valid poses / surface input frames: ')+
+            ' / '.join(str(counts[key]) if counts.get(key) is not None else missing
+                       for key in ('captured','admitted','valid_poses','used_for_reconstruction')))
+    if report.get('reconstruction',{}).get('mesh_method')=='single_frame_pixel_adjacency':
+        lines.append(pick(language,'实际采用单帧实测表面建模，未运行 TSDF 融合。',
+                          'Surface uses one measured RGB-D view; TSDF fusion was not run.'))
+    if refinement.get('reason') == 'single_accepted_view':
+        lines.append(pick(language,'单帧使用原始实测深度构建表面；不执行多帧精配准和时序筛选。',
+                          'Single view uses raw measured depth; multi-view refinement and temporal filtering are not run.'))
     if report.get('capture_scope') == 'interrupted_prefix':
         lines.insert(0, pick(language, '中断前数据建模：仅使用最后可信时刻之前的已接纳视角；没有恢复跟踪。',
                                'Interrupted-prefix reconstruction: admitted views before the last trustworthy time; tracking was not resumed.'))

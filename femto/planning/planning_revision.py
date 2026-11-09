@@ -5,12 +5,14 @@ cache is supported. Navigation, names, notes and portable file locations are not
 calculation inputs; acquisition/reference identities and body state are.
 """
 from __future__ import annotations
+from femto.performance_detail import observed
 
 from copy import deepcopy
 import hashlib
 from typing import Any
 
 import numpy as np
+from femto.plain_copy import clone
 
 from femto.planning.surface_trajectory import canonical_json_bytes
 from femto.planning.algorithm_registry import UNIFIED_FLOOR_ROUTING, GLOBAL_FLOOR_ROUTING, REFINED_CONNECTOR_ROUTING
@@ -23,6 +25,7 @@ ALGORITHMS = dict(LEGACY_ALGORITHMS, routing='verified_shared_face_graph_lazy_v2
 AUTO_LAYOUT_ALGORITHMS = dict(ALGORITHMS, routing='verified_shared_face_graph_quarter_portals_v1',
                               layout='fixed-width-auto-layout-v1')
 RESIDUAL_LAYOUT_ALGORITHMS = dict(AUTO_LAYOUT_ALGORITHMS,layout='fixed-width-auto-layout-residual-v2')
+LOCAL_DENSE_LAYOUT_ALGORITHMS = dict(RESIDUAL_LAYOUT_ALGORITHMS,routing=ALGORITHMS['routing'])
 ORDERED_LAYOUT_ALGORITHMS = dict(RESIDUAL_LAYOUT_ALGORITHMS,routing='verified_shared_face_graph_visit_order_v1')
 PATCH_LAYOUT_ALGORITHMS = dict(ORDERED_LAYOUT_ALGORITHMS,layout='fixed-width-local-direction-patches-v1')
 STABLE_PATCH_LAYOUT_ALGORITHMS = dict(ORDERED_LAYOUT_ALGORITHMS,layout='fixed-width-local-direction-stable-v2')
@@ -69,10 +72,12 @@ DEPENDENCIES = ('image', 'depth', 'calibration', 'geometry', 'reference', 'selec
 _METADATA = {'name', 'note', 'created_at', 'updated_at', 'source_mesh', 'boundary_world_m'}
 
 
+@observed('hash.canonical_json')
 def digest(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
+@observed('hash.array')
 def array_record(value: Any, dtype: str | None = None) -> dict[str, Any]:
     array = np.ascontiguousarray(value, dtype=dtype)
     if array.dtype.hasobject:
@@ -115,7 +120,7 @@ def _target_inputs(inputs: dict) -> dict:
 def create(inputs: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(inputs, dict) or set(inputs) != set(DEPENDENCIES):
         raise ValueError('计算修订缺少完整输入依赖')
-    record = dict(schema=SCHEMA, inputs=deepcopy(inputs), target_id=digest(_target_inputs(inputs)),
+    record = dict(schema=SCHEMA, inputs=clone(inputs), target_id=digest(_target_inputs(inputs)),
                   execution_ready=False, physical_accuracy_verified=False)
     record['sha256'] = digest(record)
     return record
@@ -147,10 +152,23 @@ def capture(model: Any, region: dict | None, head: dict, *, quality: dict | None
         quality=deepcopy(quality if quality is not None else getattr(model, 'planning_quality_config', QUALITY)),
         effect_model=deepcopy(effect_model if effect_model is not None else dict(
             schema='existing-v3-width-clearance-model-v1', treatment_head=head, coverage_certificate=None)),
-        algorithms=deepcopy((ORDERED_LAYOUT_ALGORITHMS if head.get('mode')=='fixed_width_auto' else ALGORITHMS)
+        algorithms=deepcopy(default_algorithms(model,region,head)
                             if algorithms is None else algorithms),
         numerics=deepcopy(NUMERICS if numerics is None else numerics))
     return create(inputs)
+
+
+def default_algorithms(model,region,head):
+    if head.get('mode')!='fixed_width_auto':
+        return ALGORITHMS
+    # Keep the full measured mesh, width and sampling. Region-first requests
+    # use the existing bounded midpoint-portal graph at every mesh size. A
+    # face-count threshold missed costly medium selections. Saved revisions
+    # still select their recorded routing/layout through capture_for().
+    local=getattr(model.store,'local_context',None) or {}
+    if local.get('reconstruction_scope'):
+        return LOCAL_DENSE_LAYOUT_ALGORITHMS
+    return ORDERED_LAYOUT_ALGORITHMS
 
 
 def changed(saved: dict, current: dict) -> list[str]:
@@ -165,6 +183,8 @@ def require_current(model: Any, region: dict, head: dict, revision: dict) -> Non
 
 
 def supported_target_algorithms(algorithms: dict) -> bool:
+    if algorithms==LOCAL_DENSE_LAYOUT_ALGORITHMS:
+        return True
     if not isinstance(algorithms, dict) or algorithms.get('target') not in TARGET_ALGORITHMS:return False
     if algorithms.get('route') == 'source-anchored-surface-v1':
         from femto.planning.source_anchored_adjustment import checked_algorithms as anchored_algorithms

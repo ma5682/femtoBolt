@@ -49,6 +49,34 @@ class WorkflowReviewTests(unittest.TestCase):
     def metadata(self,path):
         with zipfile.ZipFile(path) as archive:return json.loads(archive.read('project.json'))
 
+    def test_model_layer_keeps_visible_return_to_saved_selection(self):
+        f=self.fixture();f.mark(split=True)
+        review=ReviewPage();review.show();self.addCleanup(review.close)
+        review.install_model(f.page.model,f.page.source)
+        self.assertIsNotNone(review.region);self.assertIsNone(review.plan)
+        review.layers.setCurrentIndex(0);self.app.processEvents()
+        # All three model/selection/route states share one active workflow
+        # stage. Its disabled stage button cannot replace this local control.
+        self.assertTrue(review.layers.isVisible())
+        self.assertTrue(review.fit.isVisible())
+        review.layers.setCurrentIndex(1)
+        self.assertTrue(review.canvas.show_regions)
+        self.assertFalse(review.canvas.editable)
+
+    def test_geometry_overlay_from_3d_opens_reference_without_changing_selection(self):
+        from test_qt_scene_panel import FakeViewport
+        f=self.fixture();f.mark(split=True)
+        review=ReviewPage();review.show();self.addCleanup(review.close)
+        review.install_model(f.page.model,f.page.source)
+        before=review.canvas.work.copy()
+        with patch('femto.app.qt_scene_panel.create_viewport',side_effect=FakeViewport):
+            review.scene_panel.mode.setCurrentIndex(1)
+            self.assertTrue(review.scene_panel.is_3d)
+            review.quality_toggle.click()
+        self.assertFalse(review.scene_panel.is_3d)
+        self.assertTrue(review.canvas.support)
+        np.testing.assert_array_equal(review.canvas.work,before)
+
     def test_header_tracks_pending_record_and_restores_committed_source_on_failure(self):
         f=self.fixture()
         window=WorkstationWindow(connect_camera=False)
@@ -159,8 +187,20 @@ class WorkflowReviewTests(unittest.TestCase):
         wrong=copy(f.model);wrong.view_reference=dict(f.model.view_reference,wrong_source=True)
         with patch('femto.annotation.fixed_rgb_geometry.FixedRGBModel',return_value=wrong):
             self.assertIsNone(verified_capture_source(portable))
+        self.assertEqual(portable.capture_source_verification['status'],'mismatch')
+        self.assertIn('不一致',portable.capture_source_verification['message'])
         with patch('femto.annotation.fixed_rgb_geometry.FixedRGBModel',return_value=f.model):
             self.assertEqual(verified_capture_source(portable),root)
+        self.assertEqual(portable.capture_source_verification['status'],'verified')
+        self.assertEqual(portable.capture_source_verification['issues'],[])
+
+    def test_source_verification_does_not_hide_cancellation_or_invent_a_capture(self):
+        from femto.annotation.fixed_rgb_geometry import GeometryTaskCancelled
+        f=self.fixture()
+        self.assertIsNone(verified_capture_source(f.model))
+        self.assertEqual(f.model.capture_source_verification['status'],'not_recorded')
+        cancelled=threading.Event();cancelled.set()
+        with self.assertRaises(GeometryTaskCancelled):verified_capture_source(f.model,cancelled)
 
     def test_task_sidecar_is_bound_to_its_capture(self):
         with TemporaryDirectory() as folder:

@@ -24,13 +24,13 @@ from femto.dataset.local_reference import calibration_identity, reference_proven
 from femto.tracking.local_stability_feedback import CandidateStability
 from femto.tracking.local_frame_selection import ViewSelector, SELECTION_POLICY
 from femto.tracking.local_frame_selection import LOCAL_RADIUS_M, LOCAL_ROTATION_DEG, local_workspace
-from femto.capture.local_capture_policy import MAX_ACCEPTED_VIEWS, capture_limit_policy
+from femto.capture.local_capture_policy import capture_limit_policy, view_limit_reached
 
 TRACKER_OPTIONS = dict(feature_seed=False, keyframe_anchor=False, relocalization=False,
                        relocalization_window_s=15., relocalization_confirmations=2)
 
 class LocalCapture:
-    def __init__(self, camera, datasets, outputs, events, *, session_id=None, shutdown_event=None, cancel_event=None, tracker_options=None, initial_frame=None, scan_roi=None):
+    def __init__(self, camera, datasets, outputs, events, *, session_id=None, shutdown_event=None, cancel_event=None, tracker_options=None, initial_frame=None, scan_roi=None, region_first=False):
         self.tracker_options=dict(TRACKER_OPTIONS)
         if tracker_options:
             if set(tracker_options)-set(TRACKER_OPTIONS):raise ValueError('Unknown tracker option')
@@ -85,6 +85,10 @@ class LocalCapture:
         self.records, self.accepted = [], []
         self.preview_worker = None
         self.processing_job = None
+        self.region_first = bool(region_first)
+        self.region_commands = queue.Queue(maxsize=1)
+        self.awaiting_region = threading.Event()
+        self.acquisition_complete = False
         from femto.capture.local_checkpoint import CaptureCheckpoints
         self.checkpoints = CaptureCheckpoints(self)
         self.thread = threading.Thread(target=self._run, name='FemtoLocalCapture', daemon=False)
@@ -118,7 +122,7 @@ class LocalCapture:
             self.dropped += 1
 
     def request(self) -> None:
-        if len(self.accepted) >= MAX_ACCEPTED_VIEWS:
+        if view_limit_reached(len(self.accepted),region_first=getattr(self,'region_first',False)):
             self.emit('notice', key='accepted_view_limit')
             return False
         checkpoints=getattr(self,'checkpoints',None)
@@ -154,7 +158,36 @@ class LocalCapture:
 
     def check_current(self):
         """Request a frozen stage model without ending the capture session."""
+        if getattr(self,'region_first',False):
+            return False  # No full-scene checkpoint mesh before region selection.
         return self.checkpoints.request()
+
+    def select_region(self, mask, margin_mm):
+        """Copy UI intent; only the acquisition worker writes its derived request."""
+        with self.lock:
+            if not self.awaiting_region.is_set() or self._cancelled():
+                return False
+            self.region_commands.put_nowait((np.array(mask,copy=True),float(margin_mm)))
+            self.awaiting_region.clear()
+            return True
+
+    def restart_region(self):
+        """Rebuild this completed capture into a new output; keep old models."""
+        if self.thread.is_alive() or not self.region_first or not self.acquisition_complete:
+            return False
+        if self.shutdown_event is not None and self.shutdown_event.is_set():
+            return False
+        self.processing_cancel.clear()
+        self.successful_model_published = False
+        self.processing_job = None
+        def run():
+            try:
+                self._region_workflow(self.session/'derived/local_posed')
+            except Exception as error:
+                self.emit('cancelled' if self._cancelled() else 'error',error=str(error))
+        self.thread = threading.Thread(target=run,name='FemtoRegionRebuild',daemon=False)
+        self.thread.start()
+        return True
 
     def cancel_check(self):
         self.checkpoints.cancel_stage()
@@ -190,7 +223,7 @@ class LocalCapture:
             self.closing.set()
 
     def _select(self, record, received, prepared=None):
-        if len(self.accepted) >= MAX_ACCEPTED_VIEWS:
+        if view_limit_reached(len(self.accepted),region_first=getattr(self,'region_first',False)):
             record['selection'] = dict(state='quality_insufficient', reason='accepted_view_limit')
             return False
         record['selection'] = dict(state='quality_insufficient', reason=record.get('rejection_reason', 'untrusted_pose'))
@@ -377,7 +410,7 @@ class LocalCapture:
                 if selected:
                     self.preview_worker.submit(record)
                 self.emit('pose', record=record, accepted=len(self.accepted))
-                if selected and len(self.accepted) >= MAX_ACCEPTED_VIEWS:
+                if selected and view_limit_reached(len(self.accepted),region_first=self.region_first):
                     # The matching RGB-D write and tracking journal are durable.
                     # Stop before consuming another queued frame; the normal
                     # final-pose, reconstruction and publication gates still run.
@@ -409,28 +442,15 @@ class LocalCapture:
                 raise ValueError('final_pose_invalid')
             if self.finished_at is not None and self.finished_at-self.records[-1]['received_monotonic'] > tracker.max_gap_s:
                 raise ValueError('final_pose_invalid')
-            if len(self.accepted) < 3:
-                raise ValueError('need_three_views')
+            minimum = capture_limit_policy(region_first=self.region_first)['minimum_accepted_views']
+            if len(self.accepted) < minimum:
+                raise ValueError('need_valid_view' if self.region_first else 'need_three_views')
             posed = self._export_poses()
-            self.emit('processing')
-            from femto.pipeline.local_offline import LocalOfflineJob, publish_result
-            self.processing_job = LocalOfflineJob(posed,
-                self.session/'derived'/('processing_'+uuid.uuid4().hex[:8]),
-                self.outputs, self.session_id, self._cancelled,
-                progress=lambda quality: self.emit('processing', quality=quality))
-            result, summary = self.processing_job.run()
-            from femto.capture.final_assessment import assess_final
-            completion = assess_final(self, result)
-            # Short commit is serialized with finish(False). Once committed, a
-            # late cancellation cannot turn a completed publication into failure.
-            with self.lock:
-                if self._cancelled():
-                    from femto.pipeline.local_comparison import StageStopped
-                    raise StageStopped('cancelled', 'Cancelled before publication', self.processing_job.stats)
-                publish_result(result, self.outputs, self.session_id, cancelled=self._cancelled)
-                self.successful_model_published = True
-            self.emit('finished', result=str(result), summary=summary, quality=self.processing_job.report,
-                      acquisition_completion=completion)
+            self.acquisition_complete = True
+            if self.region_first:
+                self._region_workflow(posed)
+            else:
+                self._reconstruct_posed(posed)
         except Exception as error:
             self._handle_run_failure(error,tracker,raw_writer,finalized,report_written,finalize_scan)
         finally:
@@ -441,6 +461,64 @@ class LocalCapture:
             if self.preview_worker is not None:
                 self.preview_worker.close()
                 self.preview_worker.thread.join(timeout=5.)
+
+    def _region_workflow(self, posed):
+        from femto.geometry.local_region import load_reference, save_request
+        from femto.pipeline.local_comparison import StageStopped
+        reference = load_reference(posed)
+        write_json(self.session/'derived'/'region_pending.json', dict(
+            schema='femto-region-pending-v1', session_id=self.session_id,
+            dataset=str(posed), reference=reference.binding, state='awaiting_selection'))
+        error = ''
+        while not self._cancelled():
+            self.awaiting_region.set()
+            self.emit('region_ready', reference=reference, error=error)
+            while not self._cancelled():
+                try:
+                    mask, margin = self.region_commands.get(timeout=.1)
+                    break
+                except queue.Empty:
+                    continue
+            else:
+                break
+            try:
+                request = save_request(reference, mask,
+                    self.session/'derived'/('region_'+uuid.uuid4().hex[:8]),margin)
+                self._reconstruct_posed(posed,region_request=request)
+                write_json(self.session/'derived'/'region_pending.json',dict(
+                    schema='femto-region-pending-v1',session_id=self.session_id,
+                    dataset=str(posed),state='complete',request=str(request)))
+                return
+            except Exception as failure:
+                if self._cancelled() or self.successful_model_published:
+                    raise
+                if self.processing_job is not None:
+                    self.processing_job.terminal('failed',str(failure))
+                self.processing_job = None
+                error = '局部重建未完成，可调整选区或保留带后重试：'+str(failure)
+        self.awaiting_region.clear()
+        raise StageStopped('cancelled','Region reconstruction cancelled',{})
+
+    def _reconstruct_posed(self, posed, *, region_request=None):
+        self.emit('processing')
+        from femto.pipeline.local_offline import LocalOfflineJob, publish_result
+        self.processing_job = LocalOfflineJob(posed,
+            self.session/'derived'/('processing_'+uuid.uuid4().hex[:8]),
+            self.outputs, self.session_id, self._cancelled,
+            progress=lambda quality: self.emit('processing', quality=quality), region_request=region_request)
+        result, summary = self.processing_job.run()
+        from femto.capture.final_assessment import assess_final
+        completion = assess_final(self, result)
+        # Short commit is serialized with finish(False). Once committed, a
+        # late cancellation cannot turn a completed publication into failure.
+        with self.lock:
+            if self._cancelled():
+                from femto.pipeline.local_comparison import StageStopped
+                raise StageStopped('cancelled', 'Cancelled before publication', self.processing_job.stats)
+            publish_result(result, self.outputs, self.session_id, cancelled=self._cancelled)
+            self.successful_model_published = True
+        self.emit('finished', result=str(result), summary=summary, quality=self.processing_job.report,
+                  acquisition_completion=completion)
 
     def _handle_run_failure(self,error,tracker,raw_writer,finalized,report_written,finalize_scan):
         # A frame write may be in flight if pose preprocessing itself threw.
@@ -502,7 +580,7 @@ class LocalCapture:
             local_workspace_radius_m=LOCAL_RADIUS_M,
             local_workspace_rotation_deg=LOCAL_ROTATION_DEG,
             selection_policy=SELECTION_POLICY,
-            capture_limit=capture_limit_policy(), finish_reason=getattr(self, 'finish_reason', None),
+            capture_limit=capture_limit_policy(region_first=getattr(self,'region_first',False)), finish_reason=getattr(self, 'finish_reason', None),
             latency_ms=latencies, reference_provenance=self.reference_provenance,
             calibration=self.calibration, duration_s=elapsed,
             processed_fps=len(self.records)/elapsed if elapsed > 0 else None,
@@ -591,7 +669,7 @@ class LocalCapture:
                 measured_only=True, local_workspace_radius_m=LOCAL_RADIUS_M,
                 local_workspace_rotation_deg=LOCAL_ROTATION_DEG,
                 selection_policy=SELECTION_POLICY,
-                capture_limit=capture_limit_policy(), finish_reason=getattr(self, 'finish_reason', None),
+                capture_limit=capture_limit_policy(region_first=getattr(self,'region_first',False)), finish_reason=getattr(self, 'finish_reason', None),
                 tracking_algorithm='local-evidence-tracker-v2',
                 tracking_options=dict(getattr(self, 'tracker_options', TRACKER_OPTIONS)),
                 tracking_report=str(self.session/'derived'/'local_capture_report.json')))

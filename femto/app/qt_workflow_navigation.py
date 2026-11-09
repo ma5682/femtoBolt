@@ -25,6 +25,8 @@ class WorkflowNavigation(QObject):
             return '采集或建模进行中，请完成或取消后再切换。'
         if window.capture.review_task.busy or window.planning.busy or window.review.busy:
             return '读取、计算或保存进行中，请完成或取消后再切换。'
+        if window.planning.loading_source is not None:
+            return '模型准备未完成，请重试或返回原页面。'
         return ''
 
     def _capture_root(self, page):
@@ -54,9 +56,10 @@ class WorkflowNavigation(QObject):
         if page.model is None:
             return set()
         if page is self.window.planning:
-            steps = {3}
+            steps = {4} if page.fixed_selection else {3}
             if page.region and not page.selection_dirty:
                 steps.add(4)
+                if page.fixed_selection:steps.discard(3)
             if page.usable():
                 steps.add(5)
             return steps
@@ -65,13 +68,14 @@ class WorkflowNavigation(QObject):
     def destinations(self, page):
         blocked = self._blocked_reason()
         if blocked:
-            return set(), {index: blocked for index in range(1, 6)}
+            return set(), {index: blocked for index in range(1, 7)}
         reasons = {
             1: '局部采集须由开始采集按钮启动；已结束的采集只能回看记录。',
             2: '请先完成采集并成功读取模型。',
-            3: '请先检查当前模型，再确认进入工作区域规划。',
+            3: '请先检查当前模型，再进入路线规划。',
             4: '请先完成工作区域的几何检查。',
             5: '请先生成与当前区域和参数一致的有效路线。',
+            6: '至少一帧通过检查后可提前完成，第三帧保存后自动进入选区；修改重建范围需重新建模。',
         }
         if page is self.window.capture:
             available = {1}
@@ -85,10 +89,15 @@ class WorkflowNavigation(QObject):
                     # A failed or cancelled preview read must not strand the
                     # already loaded draft; its model was never replaced.
                     available = ({1, 2} if ready else set()) | self._local_destinations(origin)
+            if page.can_rebuild_region():available.add(6)
             return available, reasons
         available = self._local_destinations(page)
         if self._capture_root(page) is not None:
             available |= {1, 2}
+            capture=self.window.capture
+            if (capture.can_rebuild_region()
+                    and Path(capture.session.result).resolve()==self._capture_root(page)):
+                available.add(6)
         else:
             reasons[2] = '此规划的关联采集未能核验；可在当前页面切换三维模型检查。'
         return available, reasons
@@ -109,7 +118,15 @@ class WorkflowNavigation(QObject):
         if step not in available:
             self.refresh(page)
             return False
+        if step == 6 and page is not window.capture:
+            if page is window.planning and not page.can_leave():
+                return False
+            if not window.show_capture():
+                return False
+            return window.capture.rebuild_region()
         if page is window.capture:
+            if step == 6:
+                return page.rebuild_region()
             origin = self._return_page()
             # Step 02 belongs to the historical viewer when capture is only
             # a detour from that viewer. Keep its loaded model and view state.
@@ -130,6 +147,7 @@ class WorkflowNavigation(QObject):
 
     def _show_local(self, page, step):
         if page is self.window.planning:
+            if step==3 and page.fixed_selection:step=4
             page.set_stage(step - 3)
             return page._stage == step - 3
         return page.show_workflow_step(step)

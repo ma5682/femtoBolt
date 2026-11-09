@@ -15,26 +15,58 @@ from femto.io_utils import imread_unicode, write_json, write_json_strict, write_
 from femto.geometry.rgbd_frames import distortion_maps, prepare_rgbd, load_poses
 from femto.dataset.scene_dataset_validator import validate_pose
 from femto.tracking.moving_quality import rotation_deg,cycle_consistency
+from femto.operation_diagnostics import diagnosed
+
+
+class MetricIndex:
+    """Per-operation float64 batch index; legacy tie ordering stays authoritative."""
+    def __init__(self, target, legacy=None):
+        self.target, self.legacy = target, legacy
+        points = np.asarray(target.points)
+        self.count = len(points)
+        self.index = None
+        if self.count and np.isfinite(points).all():
+            self.index = o3d.core.nns.NearestNeighborSearch(o3d.core.Tensor(points))
+            self.index.knn_index()
+
+    def query(self, points):
+        if not self.count or not len(points):
+            return np.empty(0, np.int64), np.empty(0), np.empty(0, np.int64)
+        if self.index is None or not np.isfinite(points).all():
+            uncertain = np.arange(len(points))
+            ids = np.full(len(points), -1, np.int64); squared = np.full(len(points), np.inf)
+        else:
+            neighbors, distances = self.index.knn_search(o3d.core.Tensor(points), min(2, self.count))
+            ids = neighbors.numpy()[:, 0].copy(); squared = distances.numpy()[:, 0].copy()
+            # A different equal-distance point can change the color gate. Use
+            # the original tree for ties and numerically indistinguishable pairs.
+            uncertain = (np.flatnonzero(distances.numpy()[:, 1]-squared <=
+                         32*np.finfo(float).eps*np.maximum(1., squared))
+                         if self.count > 1 else np.empty(0, np.int64))
+        if len(uncertain):
+            if self.legacy is None:self.legacy = o3d.geometry.KDTreeFlann(self.target)
+            for i in uncertain:
+                count, old_ids, old_d = self.legacy.search_knn_vector_3d(points[i], 1)
+                if count:ids[i], squared[i] = old_ids[0], old_d[0]
+        valid = np.flatnonzero(ids >= 0)
+        return ids[valid], squared[valid], valid
 
 
 def metrics(source: o3d.geometry.PointCloud,target: o3d.geometry.PointCloud,transform: np.ndarray,
             *, _target_tree=None) -> dict[str, float | None]:
-    moved=copy.deepcopy(source).transform(transform)
-    tree=o3d.geometry.KDTreeFlann(target) if _target_tree is None else _target_tree
-    points=np.asarray(moved.points);target_colors=np.asarray(target.colors)
-    colors=np.asarray(moved.colors);dist=[];pairs=[]
-    has_colors=len(colors)==len(points) and len(target_colors)==len(target.points)
-    for i,p in enumerate(points):
-        count,ids,d=tree.search_knn_vector_3d(p,1)
-        if count:
-            dist.append(np.sqrt(d[0]))
-            if d[0] <= .015**2 and has_colors:
-                pairs.append((i,ids[0]))
-    if pairs:
-        indices=np.asarray(pairs,dtype=np.int64)
-        errors=np.mean(np.abs(colors[indices[:,0]]-target_colors[indices[:,1]]),axis=1)
-    else:errors=np.empty(0,dtype=np.float64)
-    d=np.asarray(dist)
+    xyz = np.asarray(source.points)
+    # Match Eigen's scalar expression order, including homogeneous division,
+    # without copying colors/normals or allocating a second PointCloud.
+    moved = xyz[:, 0, None]*transform[:3, 0]+xyz[:, 1, None]*transform[:3, 1]+xyz[:, 2, None]*transform[:3, 2]+transform[:3, 3]
+    moved /= (xyz[:, 0]*transform[3, 0]+xyz[:, 1]*transform[3, 1]+xyz[:, 2]*transform[3, 2]+transform[3, 3])[:, None]
+    tree = _target_tree if isinstance(_target_tree, MetricIndex) else MetricIndex(target, _target_tree)
+    nearest, squared, rows = tree.query(moved)
+    colors, target_colors = np.asarray(source.colors), np.asarray(target.colors)
+    has_colors = len(colors)==len(xyz) and len(target_colors)==len(target.points)
+    pairs = squared <= .015**2
+    errors = (np.mean(np.abs(colors[rows[pairs]]-target_colors[nearest[pairs]]),axis=1)
+              if has_colors else np.empty(0,dtype=np.float64))
+    d=np.sqrt(squared)
     return dict(median_m=float(np.median(d)) if len(d) else None,
                 p90_m=float(np.percentile(d,90)) if len(d) else None,
                 overlap=float(np.mean(d<=.015)) if len(d) else 0,
@@ -97,6 +129,7 @@ def approve(initial: np.ndarray,candidate: np.ndarray,reverse: np.ndarray,before
     return sorted(set(reasons))
 
 
+@diagnosed('local.pose_refinement')
 def refine(dataset: str | Path,output: str | Path) -> tuple[Path, dict[str, Any]]:
     dataset,output=Path(dataset).resolve(),Path(output).resolve()
     if output==dataset or dataset in output.parents:raise ValueError('Output must be outside source dataset')
@@ -141,9 +174,9 @@ def refine(dataset: str | Path,output: str | Path) -> tuple[Path, dict[str, Any]
                         prepared=clouds[0].voxel_down_sample(voxel)
                         prepared.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=voxel*3,max_nn=40))
                         prepared_scales[voxel]=prepared
-                    reference_tree=o3d.geometry.KDTreeFlann(checks[0])
+                    reference_tree=MetricIndex(checks[0])
                     reference_scales=prepared_scales
-                current_tree=o3d.geometry.KDTreeFlann(checks[i])
+                current_tree=MetricIndex(checks[i])
                 # One view is the forward source and reverse target. Reuse its
                 # identical voxel samples only within this bidirectional pair;
                 # reverse target normals are still estimated by solve as before.

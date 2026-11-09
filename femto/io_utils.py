@@ -22,6 +22,7 @@ Conventions (see CLAUDE.md, "Windows / 中文路径注意事项"):
   against either of the former per-module helpers keep working.
 """
 from __future__ import annotations
+from femto.performance_detail import observed
 
 import functools
 import hashlib
@@ -53,6 +54,7 @@ __all__ = [
 ]
 
 
+@observed('hash.file')
 def sha256_file(path: str | Path, check: Callable[[], None] | None = None) -> str:
     """Hash every byte with an adaptive buffer <=1 MiB and cooperative checks."""
     if check is None:
@@ -83,6 +85,7 @@ class JsonSizeLimitError(ValueError):
     """The encoded JSON would exceed the caller's byte limit."""
 
 
+@observed('io.json_serialization_write')
 def _write_json_checked(target, value, *, indent, allow_nan, ensure_ascii,
                         durable, temporary_prefix, check, max_bytes):
     """Stream bounded UTF-8 chunks into a unique, unpublished temporary file."""
@@ -109,8 +112,17 @@ def _write_json_checked(target, value, *, indent, allow_nan, ensure_ascii,
                 pending.extend(raw); pieces.clear(); characters = 0
                 if len(pending) >= 65536:
                     check(); stream.write(pending); pending.clear()
+            # Compact JSON must also check cancellation and size while walking
+            # the document, before a full encoded string has been allocated.
             for index, piece in enumerate(encoder.iterencode(value)):
                 if index % 1024 == 0:check()
+                if len(piece) <= 16384:
+                    # The encoder emits mostly short punctuation/number
+                    # tokens. Keep their bytes and check cadence unchanged,
+                    # without a range iterator and slice for each token.
+                    pieces.append(piece); characters += len(piece)
+                    if characters >= 16384:flush_pieces()
+                    continue
                 for start in range(0, len(piece), 16384):
                     chunk = piece[start:start+16384]
                     pieces.append(chunk); characters += len(chunk)

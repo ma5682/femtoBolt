@@ -74,7 +74,9 @@ def encode_runs(array: Any) -> list[int]:
     if len(starts) > MAX_RUNS:
         raise ValueError('Selection mask is too fragmented to record')
     runs = np.c_[flat[starts].astype(np.int64), (ends - starts).astype(np.int64)].reshape(-1)
-    return [int(v) for v in runs]
+    # runs is a contiguous int64 ndarray. NumPy emits the same built-in ints
+    # directly, avoiding one Python iteration/conversion per encoded value.
+    return runs.tolist()
 
 
 def decode_runs(runs: Any, image_size: Any, *, values: Any) -> np.ndarray:

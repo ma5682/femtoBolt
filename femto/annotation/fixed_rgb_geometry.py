@@ -11,6 +11,7 @@ import numpy as np
 import open3d as o3d
 from femto.io_utils import imread_unicode
 from femto.annotation.scene_annotations import AnnotationStore, region_boundary
+from femto.operation_diagnostics import diagnosed
 from femto.geometry.rgbd_frames import distortion_maps
 from femto.reports.scene_scale_validation import read_geometry_safe, resolve_reconstruction
 
@@ -228,6 +229,7 @@ class FixedProjection:
                              &(~measured | (np.abs(z-raw)<=.01)))
         return valid
 
+    @diagnosed('selection.centroid_rays')
     def region(self,polygon: Any,*,check: Any=None,mask: Any=None) -> Any:
         """Selected whole triangles: visible centroid inside the polygon, or inside `mask` when given.
 
@@ -263,6 +265,7 @@ class FixedProjection:
         if hasattr(self,'image_valid'):valid &= self.image_valid[pix[:,1],pix[:,0]]
         return ids[valid].tolist()
 
+    @diagnosed('selection.pixel_support')
     def region_support(self,polygon: Any,*,check: Any=None,mask: Any=None) -> dict[str, Any]:
         """Count integer reference-image pixels. This is not a surface area."""
         check = _check_function(check)
@@ -292,6 +295,7 @@ class FixedProjection:
                     reference_depth_missing_supported_pixels=missing_depth,
                     support_ratio=supported/requested if requested else None)
 
+    @diagnosed('selection.boundary_display')
     def visible_boundary(self,boundary: Any,*,check: Any=None) -> Any:
         """Clip display-only boundary lines at occlusion; stored W0 edges stay intact.
 
@@ -463,8 +467,7 @@ class FixedRGBModel:
         ids=self.projection.region(polygon,check=budget.check,mask=mask)
         if not ids:return None
         support=self.projection.region_support(polygon,check=budget.check,mask=mask)
-        overlay=self.projection.visible_boundary(region_boundary(self.store.mesh,ids),check=budget.check)
-        cache=self._current_cache();self._check_overlay_budget(cache,overlay)
+        cache=self._current_cache()
         budget.check()
         record=dict(triangle_indices=ids,name=name,note=note,
             screen_polygon=polygon,view_reference=self.view_reference,
@@ -473,7 +476,13 @@ class FixedRGBModel:
             selection_rule='visible_triangle_centroid_in_fixed_reference_polygon')
         if selection is not None:
             record.update(selection_rule=SELECTION_RULE,selection_intent=intent,selection_support=support_record)
-        item=self.store.add_region(record,replace_existing=replace_existing)
+        overlay=None
+        def prepare_display(item):
+            nonlocal overlay
+            overlay=self.projection.visible_boundary(item['boundary_world_m'],check=budget.check)
+            self._check_overlay_budget(cache,overlay)
+            budget.check()
+        item=self.store.add_region(record,replace_existing=replace_existing,before_commit=prepare_display)
         cache[('region',item['annotation_id'])]=overlay;self._overlay_cache=cache
         return item
 

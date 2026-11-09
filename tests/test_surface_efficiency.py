@@ -7,7 +7,7 @@ import numpy as np
 import open3d as o3d
 
 from femto.geometry.pixel_clip import EPS, area2, project, pixel_planes, _orient_sign
-from femto.geometry.pixel_clip_batch import clip_triangles_planes, project_clipped_polygons
+from femto.geometry.pixel_clip_batch import MAX_BATCH, clip_triangles_planes, project_clipped_polygons
 from femto.geometry.triangle_separation import PreparedTriangle
 from femto.planning import boundary_clearance as boundary
 from femto.planning.region_coverage import point_segment_distance
@@ -19,7 +19,7 @@ class SurfaceEfficiencyTests(unittest.TestCase):
         rng = np.random.default_rng(502810)
         k = np.array([[1.7, 0., .2], [0., 1.3, -.4], [0., 0., 1.]])
         for scale in (1e-150, 1e-12, 1., 1e12, 1e150):
-            for count in (0, 1, 7, 8, 31, 64):
+            for count in (0, 1, 7, 8, 31, 64, 127, 256):
                 triangles = rng.uniform(-2, 2, (count, 3, 3))*scale
                 triangles[:, :, 2] = rng.uniform(.5, 2, (count, 3))*scale
                 clipped = clip_triangles_planes(triangles, pixel_planes(k, 0, 0))
@@ -38,7 +38,7 @@ class SurfaceEfficiencyTests(unittest.TestCase):
                         self.assertEqual(actual[index][2], area2(uv))
                         self.assertEqual(actual[index][3], error)
                         self.assertEqual(actual[index][4], bool(np.isfinite(xyz).all() and np.isfinite(uv).all()))
-        with self.assertRaises(ValueError):project_clipped_polygons([(np.eye(3), False)]*65, np.ones((65, 3, 3)), k)
+        with self.assertRaises(ValueError):project_clipped_polygons([(np.eye(3), False)]*(MAX_BATCH+1), np.ones((MAX_BATCH+1, 3, 3)), k)
 
     def test_projection_preserves_degenerate_and_signed_zero_polygons(self):
         triangles = np.array([[[-0., 0., 1.], [1., -0., 1.], [-0., 1., 1.]]]*8)

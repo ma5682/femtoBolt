@@ -1,5 +1,6 @@
 """Atomic JSON/CSV export and reproducible reload for SurfaceTrajectory."""
 from __future__ import annotations
+from femto.performance_detail import observed
 
 from pathlib import Path
 from typing import Any, Callable
@@ -14,7 +15,8 @@ from femto.checksum_batch import sha256_files
 
 from femto.planning.planning_io import publish, staging_directory
 from femto.planning.fixed_width_layout import ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION
-from femto.planning.surface_trajectory import Gap, ScanSegment, SurfaceTrajectory, canonical_json_bytes, validate_trajectory
+from femto.planning.surface_trajectory import (Gap, ScanSegment, SurfaceTrajectory, canonical_json_bytes,
+                                               exporting, require_current_export, validate_trajectory)
 from femto.operation_diagnostics import diagnosed
 from femto.planning.nominal_revisit_metrics import operation as metric_operation
 
@@ -32,6 +34,7 @@ def _write_csv(path: Path, rows: list[list[Any]]) -> None:
         writer.writerows(rows)
 
 
+@observed('save.native_core_files')
 def _write_core(folder: Path, trajectory: SurfaceTrajectory, check: Callable[[], None]) -> None:
     payload = trajectory.to_dict()
     (folder / "trajectory.json").write_bytes(canonical_json_bytes(payload))
@@ -144,60 +147,61 @@ def export_trajectory(trajectory: SurfaceTrajectory, parent: str | Path, *,
         trajectory = prepare_export_trajectory(trajectory)
         if augment is None:
             augment = write_visual_outputs
-    validate_trajectory(trajectory)
-    if trajectory.planner['algorithm_version'] in ('coverage-refined-surface-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-refined-surface-v1') and coverage_certificate is None:
-        raise ValueError('补充路线必须随完整覆盖证据一起导出')
-    target = None
-    if trajectory.planning_context is not None:
-        from femto.planning import target_surface
-        context = trajectory.planning_context
-        params = trajectory.planner['parameters']
-        progress('重建并核验原目标')
-        target = target_surface.read(Path(trajectory.source['region_manifest']).parent,
-            context['target'], context['revision'], evidence=params['quality_evidence'],
-            domain=params['effective_domain'], check=check)
-    if coverage_certificate is not None and target is None:raise ValueError('覆盖导出缺少原目标台账')
-    parent = Path(parent).resolve()
-    parent.mkdir(parents=True, exist_ok=True)
-    final = parent / ("trajectory_" + uuid.uuid4().hex[:12])
-    with staging_directory(parent, ".trajectory_staging_") as staging:
-        check()
-        progress('写入三维路线与报告')
-        _write_core(staging, trajectory, check)
-        if augment is not None:
-            augment(staging, trajectory, check)
-        if target is not None:
-            progress('写入并回读原目标资产')
-            target_surface.write(staging, target, check)
-            target_surface.read(staging, context['target'], context['revision'], evidence=params['quality_evidence'],
-                                domain=params['effective_domain'], check=check, reproduce=False)
-        if coverage_certificate is not None:
-            from femto.planning import coverage_workflow
-            progress('复算并核验模型覆盖证据')
-            coverage_workflow.write(staging, coverage_certificate, trajectory, target, check)
-            (staging/'model_coverage_report.txt').write_text(
-                coverage_workflow.summary_text(coverage_certificate.metadata)+'\n'
-                +'原目标面积保留，未定位面积未知；名义模型核验不代表物理作用覆盖。\n', encoding='utf-8')
-        check()
-        write_files_manifest(staging, trajectory,
-            coverage_metadata=None if coverage_certificate is None else coverage_certificate.metadata, check=check)
-        check()
+    with exporting(trajectory, check=check):
+        if trajectory.planner['algorithm_version'] in ('coverage-refined-surface-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-refined-surface-v1') and coverage_certificate is None:
+            raise ValueError('补充路线必须随完整覆盖证据一起导出')
+        target = None
+        if trajectory.planning_context is not None:
+            from femto.planning import target_surface
+            context = trajectory.planning_context
+            params = trajectory.planner['parameters']
+            progress('重建并核验原目标')
+            target = target_surface.read(Path(trajectory.source['region_manifest']).parent,
+                context['target'], context['revision'], evidence=params['quality_evidence'],
+                domain=params['effective_domain'], check=check)
+        if coverage_certificate is not None and target is None:raise ValueError('覆盖导出缺少原目标台账')
+        parent = Path(parent).resolve()
+        parent.mkdir(parents=True, exist_ok=True)
+        final = parent / ("trajectory_" + uuid.uuid4().hex[:12])
+        with staging_directory(parent, ".trajectory_staging_") as staging:
+            check()
+            progress('写入三维路线与报告')
+            _write_core(staging, trajectory, check)
+            if augment is not None:
+                augment(staging, trajectory, check)
+            if target is not None:
+                progress('写入并回读原目标资产')
+                target_surface.write(staging, target, check)
+                target_surface.read(staging, context['target'], context['revision'], evidence=params['quality_evidence'],
+                                    domain=params['effective_domain'], check=check, reproduce=False)
+            if coverage_certificate is not None:
+                from femto.planning import coverage_workflow
+                progress('复算并核验模型覆盖证据')
+                coverage_workflow.write(staging, coverage_certificate, trajectory, target, check)
+                (staging/'model_coverage_report.txt').write_text(
+                    coverage_workflow.summary_text(coverage_certificate.metadata)+'\n'
+                    +'原目标面积保留，未定位面积未知；名义模型核验不代表物理作用覆盖。\n', encoding='utf-8')
+            check()
+            write_files_manifest(staging, trajectory,
+                coverage_metadata=None if coverage_certificate is None else coverage_certificate.metadata, check=check)
+            check()
 
-        def finish() -> Path:
-            if trajectory.planner['algorithm_version'] in ('nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
-                from femto.planning.variable_footprint import require_current
-                require_current(trajectory.planner['parameters']['variable_footprint'])
-            if final.exists():
-                raise FileExistsError(final)
-            os.replace(staging, final)
-            return final
+            def finish() -> Path:
+                require_current_export(trajectory)
+                if trajectory.planner['algorithm_version'] in ('nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
+                    from femto.planning.variable_footprint import require_current
+                    require_current(trajectory.planner['parameters']['variable_footprint'])
+                if final.exists():
+                    raise FileExistsError(final)
+                os.replace(staging, final)
+                return final
 
-        progress('发布三维路线包')
-        result = publish(finish, check, commit)
-        if verified_sink is not None and coverage_certificate is not None and trajectory.planner['algorithm_version'] in ('coverage-refined-surface-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
-            from femto.planning.refinement_archive import issue_verified_assets
-            verified_sink(issue_verified_assets(trajectory, target, coverage_certificate))
-        return result
+            progress('发布三维路线包')
+            result = publish(finish, check, commit)
+            if verified_sink is not None and coverage_certificate is not None and trajectory.planner['algorithm_version'] in ('coverage-refined-surface-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
+                from femto.planning.refinement_archive import issue_verified_assets
+                verified_sink(issue_verified_assets(trajectory, target, coverage_certificate))
+            return result
 
 
 def export_blocked(parent: str | Path, source: str | Path, error: Exception,

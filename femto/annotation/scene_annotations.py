@@ -14,6 +14,7 @@ import trimesh
 from femto.geometry.fusion import write_point_cloud_safe
 import cv2
 from femto.io_utils import write_json_strict, sha256_file
+from femto.operation_diagnostics import diagnosed
 
 STATUS = 'not_physically_validated'
 
@@ -103,11 +104,13 @@ def region_mesh(mesh: Any, ids: Any) -> Any:
     return extracted(mesh, ids, build)
 
 
+@diagnosed('selection.boundary')
 def region_boundary(mesh: Any, ids: Any) -> Any:
     """Boundary segments of selected triangles, including holes; never bridge gaps."""
     triangles = np.asarray(mesh.triangles)[ids]
     edges = np.concatenate((triangles[:, [0, 1]], triangles[:, [1, 2]], triangles[:, [2, 0]]))
-    unique, counts = np.unique(np.sort(edges, axis=1), axis=0, return_counts=True)
+    from femto.geometry.mesh_edges import unique_edge_rows
+    unique, counts = unique_edge_rows(np.sort(edges, axis=1))
     return np.asarray(mesh.vertices)[unique[counts == 1]].tolist()
 
 
@@ -169,8 +172,11 @@ class AnnotationStore:
                     or context.get('unit', 'metre') != 'metre'):
                 raise ValueError('Model coordinate frame / unit mismatch')
             self.local_context = {key: context.get(key) for key in ('session_id', 'reference_frame_id', 'coordinate_frame', 'unit')}
-            self.local_context['geometry_source'] = 'raw_depth_supported_tsdf'
+            self.local_context['geometry_source'] = ('raw_depth_supported_pixel_adjacency'
+                if context.get('mesh_method') == 'single_frame_pixel_adjacency' else 'raw_depth_supported_tsdf')
             self.local_context['support'] = context.get('support')
+            if context.get('reconstruction_scope') is not None:
+                self.local_context['reconstruction_scope'] = context['reconstruction_scope']
             if 'reference_provenance' in context:
                 self.local_context['reference_provenance'] = context['reference_provenance']
             if context.get('capture_scope') == 'interrupted_prefix':
@@ -300,13 +306,15 @@ class AnnotationStore:
         self._commit(self.points + [point], self.regions, focus)
         return point
 
+    @diagnosed('selection.normalize_record')
     def normalized_region(self, region: Any) -> dict[Any, Any]:
         if not isinstance(region, dict):
             raise ValueError('Invalid surface region')
         validate_exclusions(region.get('exclusion_polygons',[]))
         ids = region.get('triangle_indices')
+        triangle_count = len(self.mesh.triangles)
         if (not isinstance(ids, list) or not ids
-                or any(type(i) is not int or not 0 <= i < len(self.mesh.triangles) for i in ids)
+                or any(type(i) is not int or not 0 <= i < triangle_count for i in ids)
                 or len(set(ids)) != len(ids)):
             raise ValueError('Invalid triangle indices')
         if (region.get('coordinate_frame', 'world_rdf') != 'world_rdf'
@@ -334,8 +342,12 @@ class AnnotationStore:
                     source_mesh=self.source, coordinate_frame='world_rdf', unit='metre',
                     scale_validation=STATUS)
 
-    def add_region(self, region: Any, *, replace_existing: bool=False) -> Any:
+    def add_region(self, region: Any, *, replace_existing: bool=False, before_commit=None) -> Any:
         region = self.normalized_region(dict(region, **_new_item_metadata()))
+        # Display preparation can fail/cancel. Complete it before committing,
+        # using this freshly validated boundary instead of grouping edges twice.
+        if before_commit is not None:
+            before_commit(region)
         focus = ('region', self.regions[-1]['annotation_id']) if self.regions else None
         self._commit(self.points, [region] if replace_existing else self.regions + [region], focus)
         return region

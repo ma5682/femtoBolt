@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, QTimer, Signal, QSize
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea,
-    QSizePolicy, QSlider, QTabWidget, QVBoxLayout, QWidget, QFileDialog)
+    QSizePolicy, QSlider, QStackedWidget, QTabWidget, QVBoxLayout, QWidget, QFileDialog)
 
 from femto.app.qt_common import TaskRunner, show_text, open_path, breakable_text
 from femto.app.qt_icons import line_icon
@@ -96,7 +96,6 @@ class HeadForm(QWidget):
         self.mode.setCurrentIndex(2)
         self.mode.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.mode.setMinimumContentsLength(12)
-        layout.addWidget(self.mode)
         self.layout_choice=QComboBox()
         self.layout_choice.addItem('常规表面排布',None)
         from femto.planning.fixed_width_layout import OPTIMIZED_PATCH_VERSION,FOLDBACK_PATCH_VERSION,FLOOR_PATCH_VERSION,ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION
@@ -122,7 +121,6 @@ class HeadForm(QWidget):
         self.layout_choice.addItem('局部方向与折返识别（试验）',FOLDBACK_PATCH_VERSION)
         self.layout_choice.setAccessibleName('表面路线排布方式')
         self.layout_choice.setToolTip('试验选项可按局部表面和选区边界估计调整扫描行，连接优化受计算预算限制。结果仍需单独核验覆盖。')
-        layout.addWidget(self.layout_choice)
         form=QFormLayout();form.setHorizontalSpacing(10);form.setVerticalSpacing(10)
         self.form=form
         form.setRowWrapPolicy(QFormLayout.WrapLongRows)
@@ -140,13 +138,16 @@ class HeadForm(QWidget):
         self.fields['overlap_percent'].setToolTip('仅在按有效作用宽度计算行距时使用。')
         self.spacing=QLabel();self.spacing.setObjectName('routeMetric');layout.addWidget(self.spacing)
         self.extra_button=QPushButton('高级设置');self.extra_button.setCheckable(True)
-        self.extra_button.setToolTip('治疗深度、外壳直径与避让余量仅记录，不参与当前路线计算。')
+        self.extra_button.setToolTip('行距模式与试验算法；治疗深度、外壳直径与避让余量仅记录。')
         self.extra_button.setObjectName('disclosureButton')
         layout.addWidget(self.extra_button)
         self.extra=QWidget();extra_form=QFormLayout(self.extra);extra_form.setContentsMargins(0,0,0,0)
         extra_form.setHorizontalSpacing(10);extra_form.setVerticalSpacing(10)
         extra_form.setRowWrapPolicy(QFormLayout.WrapLongRows)
         extra_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        extra_form.addRow('行距模式',self.mode)
+        extra_form.addRow('试验排布',self.layout_choice)
+        self.extra_form = extra_form
         for key,label in (('treatment_depth_mm','治疗深度 / mm'),('head_diameter_mm','外壳直径 / mm'),('safety_margin_mm','外壳避让余量 / mm')):
             edit=QLineEdit(str(PLACEHOLDER_DEFAULTS[key]));edit.setMinimumWidth(92);edit.setMaximumWidth(132)
             edit.setAlignment(Qt.AlignRight);edit.setAccessibleName(label)
@@ -208,7 +209,7 @@ class HeadForm(QWidget):
 
     def _refresh(self):
         automatic=self.mode.currentData()!='direct_row_spacing'
-        self.layout_choice.setVisible(self.mode.currentData()=='fixed_width_auto')
+        self.extra_form.setRowVisible(self.layout_choice,self.mode.currentData()=='fixed_width_auto')
         self.form.setRowVisible(self.fields['row_spacing_mm'],not automatic)
         self.form.setRowVisible(self.fields['overlap_percent'],automatic)
         self.fields['row_spacing_mm'].setEnabled(not automatic)
@@ -258,6 +259,9 @@ class PlanningPage(QWidget):
     review_requested = Signal(str)
     new_capture_requested = Signal()
     history_requested = Signal()
+    load_return_requested = Signal()
+    load_started = Signal()
+    _preparation_preview_ready = Signal(object, object, object)
 
     def __init__(self,parent=None):
         super().__init__(parent)
@@ -268,11 +272,18 @@ class PlanningPage(QWidget):
         self._new_source_coarse=True
         self._stage=0;self._error='';self._report=''
         self._save_warning=''
+        self._loading_request=None
+        self._loading_prepared=None
+        self._loading_preview_token=None
+        self._return_after_load=False
         self.runner=TaskRunner(self)
         self.runner.progress.connect(self._status)
         self.runner.finished.connect(self.refresh)
         self.runner.cancel_requested.connect(self._cancellation_requested)
         self._build()
+        self._preparation_preview_ready.connect(self._show_preparation_preview, Qt.QueuedConnection)
+        self.loaded.connect(self._complete_preparation)
+        self.runner.finished.connect(self._preparation_finished)
         self.parameters_button.toggled.connect(self.refresh)
         self.route_details_toggle.toggled.connect(self.refresh)
         self.canvas.timer.timeout.connect(self._refresh_playback)
@@ -291,12 +302,24 @@ class PlanningPage(QWidget):
     @property
     def current_source(self):return self.source
 
+    @property
+    def loading_source(self):
+        return self._loading_request['path'] if self._loading_request is not None else None
+
+    @property
+    def fixed_selection(self):
+        """Region-first captures edit their reconstruction mask in step 02."""
+        return bool(self.model is not None and
+                    (self.model.store.local_context or {}).get('reconstruction_scope'))
+
     def _build(self) -> None:
         from femto.app.qt_workflow import WorkflowProgress
         layout=QVBoxLayout(self);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         self.workflow=WorkflowProgress();layout.addWidget(self.workflow)
         self._build_planning_header(layout)
-        body=QHBoxLayout();body.setContentsMargins(16,0,0,8);body.setSpacing(12)
+        self.body_stack=QStackedWidget()
+        self.planning_body=QWidget()
+        body=QHBoxLayout(self.planning_body);body.setContentsMargins(16,0,0,8);body.setSpacing(12)
         self.canvas=PlanningCanvas();self.canvas.changed.connect(self._selection_changed)
         self.scene_panel=ScenePanel(self.canvas);body.addWidget(self.scene_panel,1)
         self.scene_panel.mode.setToolTip('参考图可编辑区域；三维检查铺满工作区，拖动平移、滚轮缩放。切回参考图恢复操作面板。')
@@ -327,7 +350,14 @@ class PlanningPage(QWidget):
         self._build_review_controls()
         self._build_planning_evidence(panel_layout, region_layout)
         self.inspector_scroll=scroll
-        scroll.setWidget(panel);body.addWidget(scroll);layout.addLayout(body,1)
+        scroll.setWidget(panel);body.addWidget(scroll)
+        from femto.app.qt_planning_loading import PlanningPreparation
+        self.preparation=PlanningPreparation()
+        self.preparation.cancel_requested.connect(self._return_from_preparation)
+        self.preparation.retry_requested.connect(self._retry_preparation)
+        self.body_stack.addWidget(self.planning_body)
+        self.body_stack.addWidget(self.preparation)
+        layout.addWidget(self.body_stack,1)
         self._build_planning_actions(layout)
         for button,icon in ((self.undo_button,'undo'),(self.redo_button,'redo'),
                 (self.clear_button,'trash'),(self.fit_button,'refresh'),
@@ -359,7 +389,7 @@ class PlanningPage(QWidget):
         self.source_details=QWidget();source_layout=QVBoxLayout(self.source_details)
         source_layout.setContentsMargins(0,0,0,0);source_layout.setSpacing(6)
         source_layout.addWidget(self.source_label);source_layout.addWidget(self.subtitle)
-        self.step_heading=QLabel('04 / 06  ·  标记工作区域');self.step_heading.setProperty('role','secondary')
+        self.step_heading=QLabel('03 / 04  ·  模型与路线');self.step_heading.setProperty('role','secondary')
         source_layout.addWidget(self.step_heading)
         source_actions=QHBoxLayout();source_layout.addLayout(source_actions)
         self.open_button=QPushButton('打开区域方案');self.open_button.clicked.connect(self.choose_source);source_actions.addWidget(self.open_button)
@@ -384,7 +414,7 @@ class PlanningPage(QWidget):
         self.planning_mode=QComboBox();self.planning_mode.addItems(('粗分区规划（快速）','标准规划参考'))
         self.planning_mode.setStyleSheet('QComboBox { min-height: 34px; padding: 0 8px; font-size: 13px; }')
         self.planning_mode.setAccessibleName('规划参考模式')
-        self.planning_mode.setToolTip('新模型默认采用8像素参考格与3 mm路线采样；完整模型保留。标准模式按原图逐像素处理。已有方案和草稿保持原模式。')
+        self.planning_mode.setToolTip('粗分区参考采用8像素格，沿线按选区大小自动取点；完整模型保留。标准模式按原图逐像素处理。已有方案和草稿保持原模式。')
         self.planning_mode.currentIndexChanged.connect(self._planning_mode_changed)
         resolution_row.addWidget(self.planning_mode,1)
         resolution_row.addWidget(self.reduce_model_button)
@@ -392,7 +422,17 @@ class PlanningPage(QWidget):
         self.new_coarse_button.setProperty('regionControl',True)
         self.new_coarse_button.setToolTip('保留当前方案与草稿，创建独立粗分区参考；需要重新选区和生成路线。')
         self.new_coarse_button.clicked.connect(self.create_coarse_planning_version)
-        resolution_row.addWidget(self.new_coarse_button);region_layout.addLayout(resolution_row)
+        resolution_row.addWidget(self.new_coarse_button)
+        self.resolution_toggle=QPushButton('高级规划设置');self.resolution_toggle.setCheckable(True)
+        region_layout.addWidget(self.resolution_toggle)
+        self.resolution_options=QWidget();resolution_options=QVBoxLayout(self.resolution_options)
+        resolution_options.setContentsMargins(0,0,0,0);resolution_options.addLayout(resolution_row)
+        self.resolution_options.hide();self.resolution_toggle.toggled.connect(self.resolution_options.setVisible)
+        region_layout.addWidget(self.resolution_options)
+        self.curvature_model_button=QPushButton('新建自适应取点版本（试验）')
+        self.curvature_model_button.setToolTip('保留当前方案与草稿，新建独立参考后重新选区。平缓段取点较疏，弯折与行端加密；行距仍由治疗头参数决定。')
+        self.curvature_model_button.clicked.connect(self.create_curvature_planning_version)
+        resolution_options.addWidget(self.curvature_model_button)
         self.tools=QFrame();self.tools.setObjectName('regionToolCard')
         tool_layout=QVBoxLayout(self.tools);tool_layout.setContentsMargins(8,4,8,4);tool_layout.setSpacing(4)
         row=QHBoxLayout();self.paint_group=QButtonGroup(self)
@@ -541,10 +581,12 @@ class PlanningPage(QWidget):
 
     def _build_planning_actions(self, layout: QVBoxLayout) -> None:
         footer=QFrame();self.action_dock=footer;footer.setObjectName('actionDock');foot=QHBoxLayout(footer);foot.setContentsMargins(20,8,20,8);foot.setSpacing(10)
-        self.status_label=QLabel('请加载三维模型');self.status_label.setWordWrap(True);foot.addWidget(self.status_label,1)
+        status_area=QWidget();status_area.setObjectName('planningStatusArea')
+        status_layout=QVBoxLayout(status_area);status_layout.setContentsMargins(0,0,0,0)
+        self.status_label=QLabel('请加载三维模型');self.status_label.setWordWrap(True)
+        status_layout.addWidget(self.status_label);foot.addWidget(status_area,1)
         self.status_label.setObjectName('actionNotice');self.status_label.setMinimumWidth(0)
         self.status_label.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred)
-        details=QPushButton('详情 / 帮助');details.clicked.connect(self.show_details);foot.addWidget(details)
         self.cancel_button=QPushButton('取消任务');self.cancel_button.clicked.connect(self.runner.cancel);foot.addWidget(self.cancel_button)
         self.previous=QPushButton('上一步');self.previous.clicked.connect(self.go_back);foot.addWidget(self.previous)
         self.primary=QPushButton('下一步：蛇形路线规划');self.primary.setProperty('role','primary');self.primary.setMinimumHeight(52);self.primary.setMinimumWidth(260)
@@ -554,6 +596,10 @@ class PlanningPage(QWidget):
         self.primary.clicked.connect(self.primary_action);foot.addWidget(self.primary);layout.addWidget(footer)
 
     def _status(self,text):
+        if self.loading_source is not None:
+            from femto.app.qt_planning_loading import STAGE_MESSAGES, STAGES
+            self.preparation.progress(str(text))
+            if text in STAGE_MESSAGES:text=STAGES[STAGE_MESSAGES.index(text)]+'…'
         self._failure_details=''
         self.status_label.setToolTip('')
         self.status_label.setText(str(text));self.status_changed.emit(str(text))
@@ -561,6 +607,26 @@ class PlanningPage(QWidget):
     def _failure(self,error, *, diagnostics=None):
         from femto.annotation.fixed_rgb_geometry import GeometryTaskCancelled
         from femto.app.qt_common import TaskResultDiscarded
+        if self.loading_source is not None:
+            self._error=str(error)
+            from femto.dataset.prepared_review import close_prepared
+            close_prepared(self._loading_prepared)
+            self._loading_prepared=None
+            if self.runner._cancel.is_set():
+                self._return_after_load=True
+                self.preparation.cancelling()
+                self._status('正在返回，采集数据与选区保留。')
+            else:
+                self.preparation.failed(error)
+                self._status('模型准备未完成，可重试或返回。')
+                from femto.app.qt_failure_details import failure_text
+                self._failure_details=failure_text(error,diagnostics,
+                    retained_current='本次采集、已保存的选区及此前已载入的模型和参数。',
+                    next_steps=('点击“重试”重新读取当前来源。','点击“返回”检查采集或原项目。'),
+                    current_task=diagnostics is not None)
+                self.status_label.setToolTip(self._failure_details)
+            self.refresh()
+            return
         self._error='' if isinstance(error,GeometryTaskCancelled) else str(error)
         self._status(str(error) if isinstance(error,TaskResultDiscarded) else
                      '任务已取消，当前区域与参数保留。' if not self._error else '操作失败：'+self._error)
@@ -580,8 +646,63 @@ class PlanningPage(QWidget):
 
     def _cancellation_requested(self):
         if self.runner.cancelling:
+            if self.loading_source is not None:
+                self._return_after_load=True
+                self.preparation.cancelling()
+                self._status('正在取消模型准备，结束后返回原页面。')
+                self.refresh()
+                return
             self._status('正在取消任务，请等待当前处理结束；保存结果以结束后的提示为准。')
             self.refresh()
+
+    def _return_from_preparation(self):
+        if self.busy:
+            self.runner.cancel()
+        else:
+            self._dismiss_preparation()
+            self._status('已返回，原有采集、选区与参数保留。')
+            self.load_return_requested.emit()
+
+    def _retry_preparation(self):
+        if self._loading_request is not None and not self.busy:
+            self.load_source(**self._loading_request)
+
+    def _preparation_finished(self):
+        if self.loading_source is not None and self._return_after_load:
+            self._dismiss_preparation()
+            self._status('准备已取消，原有采集、选区与参数保留。')
+            self.load_return_requested.emit()
+
+    def _complete_preparation(self, source):
+        if self.loading_source is not None and Path(source).resolve()==self.loading_source:
+            self._dismiss_preparation()
+
+    def _show_preparation_preview(self, token, snapshot, assessment):
+        if (token is not self._loading_preview_token or self.loading_source is None
+                or not self.busy or self.runner._cancel.is_set()
+                or self.preparation.state != 'running'):
+            return
+        if self._task_revision() != self._loading_preview_revision:return
+        self.preparation.show_model(snapshot, assessment)
+
+    def _dismiss_preparation(self):
+        from femto.dataset.prepared_review import close_prepared
+        close_prepared(self._loading_prepared)
+        self._loading_prepared=None
+        self._loading_preview_token=None
+        self._loading_request=None
+        self._return_after_load=False
+        self._error=''
+        self.preparation.stop()
+        self.body_stack.setCurrentWidget(self.planning_body)
+        self.planning_body.setEnabled(True)
+        self.source_toggle.setEnabled(True)
+        self.title.setText(('工作区域规划','三维蛇形路线规划','核对并保存规划')[self._stage])
+        if self.model is not None:
+            self._refresh_source_label()
+            if self.quality.result is None:self.quality.request()
+        else:self.task_context_label.setText('尚未加载采集数据')
+        self.refresh()
 
     def _run(self,job,done):
         if self.busy:return False
@@ -610,43 +731,99 @@ class PlanningPage(QWidget):
         path,_=QFileDialog.getOpenFileName(self,'打开区域工程或历史路线','','区域工程 / 路线 (*.zip *.json)')
         if path:self.load_source(path)
 
-    def load_source(self,path, *, force=False,restore_draft=True,new_version=False,expected_revision=None):
-        if self.busy:return False
+    def load_source(self,path, *, force=False,restore_draft=True,new_version=False,expected_revision=None,review_model=False,
+                    preview=None,loading_context='',prepared=None):
+        from femto.dataset.prepared_review import close_prepared
+        if self.busy:
+            close_prepared(prepared);return False
         path=Path(path).resolve()
         if not force and self.model is not None and path==self.source:
+            close_prepared(prepared)
             self._status('已保留当前区域、参数与规划。');return True
-        if self.dirty:
+        if self.dirty and self.loading_source is None:
             self.checkpoint()
             answer=QMessageBox.question(self,'切换规划项目','将确认当前草稿写入成功后打开另一个项目。是否继续？',QMessageBox.Yes|QMessageBox.No,QMessageBox.No)
-            if answer!=QMessageBox.Yes:return False
+            if answer!=QMessageBox.Yes:
+                close_prepared(prepared);return False
         from femto.planning.planning_drafts import read
         from femto.app.qt_planning_resolution import journal_for,prepare_new_source
+        from femto.app.qt_planning_io import needs_model_confirmation
         previous_journal=self.journal if self.dirty else None
         coarse_requested=self._new_source_coarse
+        preview_token=object()
+        from femto.app.qt_planning_loading import STAGE_MESSAGES
         def job(cancel,progress):
+            progress(STAGE_MESSAGES[0])
             if previous_journal:
                 from femto.annotation.fixed_rgb_geometry import GeometryBudget
                 progress('正在确认当前草稿已保存…')
                 previous_journal.wait_saved(GeometryBudget(cancel).check)
-            model=load_source(path,cancel,progress)
+            options={'require_confirmed':False} if review_model else {}
+            if prepared is not None:options['prepared']=prepared
+            try:model=load_source(path,cancel,progress,**options)
+            finally:close_prepared(prepared)
+            from femto.geometry.local_region import model_selection
+            selected = model_selection(model) if not model.store.regions else None
+            if review_model and (selected is None or getattr(model,'capture_source',None) is None
+                                 or getattr(model,'acquisition_completion',None) is None):
+                raise ValueError('当前结果缺少可核验的局部重建选区或最终模型记录。')
+            if selected is not None:
+                # Keep the original painted intent, including missing pixels.
+                # An existing selection must not be silently resampled/coarsened.
+                model.pre_reconstruction_selection = selected
             if expected_revision is not None and getattr(model,'revision_id',None)!=expected_revision:
                 raise ValueError('保存记录已变更，请重新读取并核对版本后再修改。')
             from femto.annotation.fixed_rgb_geometry import GeometryBudget
-            model=prepare_new_source(model,path,enabled=coarse_requested,restore_draft=restore_draft,
+            pending=needs_model_confirmation(model)
+            # Fresh, source-bound local captures share the TSDF planning
+            # profile even if a previous imported model used standard mode.
+            local_scope=(model.store.local_context or {}).get('reconstruction_scope') or {}
+            prepare_surface=coarse_requested or bool(selected is not None and local_scope.get('input_provenance'))
+            model.route_prepare_required=bool(pending and prepare_surface)
+            progress(STAGE_MESSAGES[1])
+            model=prepare_new_source(model,path,enabled=prepare_surface and not pending,restore_draft=restore_draft,
                 check=GeometryBudget(cancel).check,progress=progress)
+            selected=getattr(model,'pre_reconstruction_selection',selected)
             journal=journal_for(path,model);draft=None;warning=''
             if restore_draft and journal.path.is_file():
                 try:draft=read(journal.path,model)
                 except Exception as error:warning='草稿未恢复：'+str(error)
             region=model.store.regions[0] if model.store.regions else None
-            work,forbidden=masks_from_region(region,model.rgb.shape[:2]) if region else (np.zeros(model.rgb.shape[:2],np.uint8),np.zeros(model.rgb.shape[:2],np.uint8))
+            work,forbidden=masks_from_region(region,model.rgb.shape[:2]) if region else (
+                getattr(model,'pre_reconstruction_selection',np.zeros(model.rgb.shape[:2],np.uint8)),
+                getattr(model,'pre_reconstruction_forbidden',np.zeros(model.rgb.shape[:2],np.uint8)))
+            progress(STAGE_MESSAGES[2])
             assessment=assess_selection(model,work,forbidden,cancel)
+            if selected is not None and not draft and assessment['status']=='checked' and assessment['supported']:
+                # Owned display arrays cross the Qt signal; the mutable model
+                # and its annotations remain private until the final commit.
+                from femto.viewer.vtk_scene import scene_snapshot
+                from femto.operation_diagnostics import record_operation
+                GeometryBudget(cancel).check()
+                try:
+                    with record_operation('load.model_preview'):
+                        snapshot=scene_snapshot(model)
+                except (ValueError, RuntimeError, MemoryError):
+                    snapshot=None
+                GeometryBudget(cancel).check()
+                if snapshot is not None:
+                    self._preparation_preview_ready.emit(preview_token,snapshot,
+                        {key:assessment[key] for key in ('ratio','selected','supported','pending')})
+                # Reuse the exact pre-reconstruction intent; extraction runs in
+                # the load worker instead of requiring a second selection click.
+                model,region=extract_region(model,work,forbidden,'工作区域 01','',cancel)
+                model.pre_reconstruction_selection=selected
             return model,journal,draft,warning,assessment
         def done(result):
             if self.runner._cancel.is_set():
                 self._status('读取已取消，当前记录保留。'); self.quality.request();return
             model,journal,draft,warning,assessment=result
-            self.install_model(model,path,journal,assessment=assessment)
+            self.install_model(model,path,journal,assessment=assessment,notify=False)
+            if (getattr(model,'pre_reconstruction_selection',None) is not None
+                    and self.region is not None and not draft):
+                self.dirty=True;self.set_stage(1);self.canvas.fit_selection()
+                self._status('请在此核对模型与缺口，设置作用宽度后点击“生成路线”，确认使用当前模型。'
+                             if needs_model_confirmation(model) else '原选区已保留并完成几何检查。核对作用宽度后点击“生成路线”。')
             if new_version:
                 self.dirty=True;self.archive=None
                 self._status('正在编辑新版本；原保存文件保留，修改后请保存到新版本。')
@@ -654,8 +831,25 @@ class PlanningPage(QWidget):
             if draft and QMessageBox.question(self,'恢复标记草稿','发现与当前来源匹配的草稿，是否恢复区域和参数？\n恢复后需要重新计算路线。',QMessageBox.Yes|QMessageBox.No,QMessageBox.Yes)==QMessageBox.Yes:
                 self.restore_draft(draft)
             if warning:self._status(warning)
+            # Publish only after the destination stage and restored draft are
+            # ready, so the shell never exposes an intermediate selection page.
+            self.loaded.emit(str(self.source))
         self.quality.invalidate('正在切换来源，原检查结论已清除。')
-        return self._run(job,done)
+        first_attempt=self.loading_source is None
+        self._loading_prepared=prepared
+        self._loading_preview_token=preview_token
+        self._loading_preview_revision=self._task_revision()
+        self._loading_request=dict(path=path,force=force,restore_draft=restore_draft,new_version=new_version,
+            expected_revision=expected_revision,review_model=review_model,preview=preview,loading_context=loading_context)
+        self._return_after_load=False
+        self.preparation.start(preview)
+        self.source_toggle.setChecked(False)
+        self.body_stack.setCurrentWidget(self.preparation)
+        if first_attempt:self.load_started.emit()
+        self._status('正在准备模型，请稍候。')
+        started=self._run(job,done)
+        if not started:self._dismiss_preparation()
+        return started
 
     def create_reduced_planning_model(self):
         from femto.app.qt_planning_resolution import start_creation
@@ -666,6 +860,13 @@ class PlanningPage(QWidget):
     def create_coarse_planning_version(self):
         from femto.app.qt_planning_resolution import start_creation
         try:return start_creation(self,new_version=True)
+        except (ValueError,OSError) as error:
+            self._failure(error);return False
+
+    def create_curvature_planning_version(self):
+        from femto.app.qt_planning_resolution import start_creation,can_create
+        from femto.planning.route_sampling import CURVATURE_POLICY
+        try:return start_creation(self,new_version=not can_create(self),sampling_policy=CURVATURE_POLICY)
         except (ValueError,OSError) as error:
             self._failure(error);return False
 
@@ -700,10 +901,20 @@ class PlanningPage(QWidget):
         from femto.app.qt_planning_resolution import derivation, REDUCED_NOTICE
         if derivation(self.model):self.source_label.setText(self.source_label.text()+'\n'+REDUCED_NOTICE)
         self.task_context_label.setText(task.get('name') or '未关联任务')
+        verification=getattr(self.model,'capture_source_verification',None)
+        if verification:
+            self.source_label.setText(self.source_label.text()+'\n'+verification['message'])
+            for issue in verification['issues']:
+                self.source_label.setText(self.source_label.text()+f"\n{issue['reason']}：{issue['source']}")
+            if verification['status'] not in ('verified','not_recorded'):
+                self.task_context_label.setText(self.task_context_label.text()+' · '+verification['message'])
 
-    def install_model(self,model,source,journal=None,*,assessment=None):
+    def install_model(self,model,source,journal=None,*,assessment=None,notify=True):
         self._input_generation+=1
-        head=head_parameters('fixed_width_auto')
+        # Keep the operator's valid configuration across new captures within
+        # this workstation session; saved plans below always restore their own.
+        try:head=self.head.record()
+        except ValueError:head=head_parameters('fixed_width_auto')
         saved_plan=getattr(model,'saved_plan',None)
         request=getattr(model,'planning_parameters',None)
         from femto.planning.fixed_width_layout import OPTIMIZED_PATCH_VERSION,FOLDBACK_PATCH_VERSION,FLOOR_PATCH_VERSION,ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION
@@ -731,6 +942,10 @@ class PlanningPage(QWidget):
         self._save_warning=''
         self.dirty=False;self.selection_dirty=False
         self.canvas.set_model(model,*(masks_from_region(self.region,model.rgb.shape[:2]) if self.region else (None,None)))
+        if self.region is None and getattr(model,'pre_reconstruction_selection',None) is not None:
+            self.canvas.set_model(model,model.pre_reconstruction_selection)
+            self.selection_dirty = True
+            self.dirty = True
         if assessment is None:self.quality.request()
         else:
             self.quality.invalidate();self.quality.install(assessment)
@@ -756,15 +971,17 @@ class PlanningPage(QWidget):
         self.canvas.set_plan(self.plan)
         self.reviewed.setChecked(False)
         self._installing=False
-        # A reopened plan must start with source and region review, including
-        # when it already contains a valid saved route.
+        # Imported projects retain region review. Region-first captures already
+        # selected their reconstruction mask and enter route planning directly.
         self.set_stage(0)
+        if self.fixed_selection and self.region and not self.selection_dirty:
+            self.scene_panel.mode.setCurrentIndex(1)
         QTimer.singleShot(0,lambda:self.inspector_scroll.verticalScrollBar().setValue(0))
-        self._status(getattr(model,'plan_warning',None) or ('请先核对历史区域及其三维支持，再进入路线。' if self.region else '请涂抹工作区域；不需要的部分可擦除或留空。'))
+        self._status(getattr(model,'plan_warning',None) or ('已载入选区模型，核对路线参数后生成路线；修改选区请返回第 02 步并重新建模。' if self.fixed_selection else '请先核对历史区域及其三维支持，再进入路线。' if self.region else '请涂抹工作区域；不需要的部分可擦除或留空。'))
         if (getattr(model,'task_context',None) or {}).get('gap_followup'):
             self._status('此结果关联之前的缺口处理请求。请核对新模型并重新选区、生成路线、核验覆盖；关联记录不代表旧缺口已解决。')
         self.refresh()
-        self.loaded.emit(str(self.source))
+        if notify:self.loaded.emit(str(self.source))
 
     def _paint_mode(self,index):
         self.scene_panel.show_reference()
@@ -879,6 +1096,8 @@ class PlanningPage(QWidget):
         self.reduce_model_button.setVisible(self.model is not None and not derivation(self.model) and blank)
         self.new_coarse_button.setEnabled(self.model is not None and not self.busy and not derivation(self.model))
         self.new_coarse_button.setVisible(self.model is not None and not derivation(self.model) and not blank)
+        self.curvature_model_button.setVisible(self.model is not None and not derivation(self.model))
+        self.curvature_model_button.setEnabled(self.model is not None and not self.busy and not derivation(self.model))
         self.scene_panel.set_scene(self.model,
             self.region if not self.selection_dirty else None,
             self.plan if self._stage>0 and self.usable() else None)
@@ -888,18 +1107,24 @@ class PlanningPage(QWidget):
         self.quality.rescan.setToolTip('建立独立采集，旧模型、选区和路线保留。' if rescan_context(self.model) else '缺少可核验的任务信息；请新建采集。')
         self.legacy_exclusion_notice.setVisible(loaded and bool(self.canvas.forbidden.any()))
         reference=not self.scene_panel.is_3d
-        self.canvas.editable=loaded and not busy and self._stage==0 and reference
+        self.canvas.editable=loaded and not busy and self._stage==0 and reference and not self.fixed_selection
         inspection=not reference and self.scene_panel.stack.currentWidget() is self.scene_panel.viewport
-        self.inspector_scroll.setVisible(not inspection)
-        self.action_dock.setVisible(not inspection or busy or bool(self._error))
-        self.previous.setVisible(not inspection)
-        self.primary.setVisible(not inspection)
+        self.inspector_scroll.setVisible(not inspection or self._stage>0 or self.fixed_selection)
+        self.action_dock.setVisible(True)
+        self.previous.setVisible(True)
+        self.primary.setVisible(True)
         self.scene_panel.notice.setVisible(not reference and not inspection)
-        self.more_region.setVisible(self._stage==0 and reference)
-        for control in (self.tools,self.undo_button,self.redo_button,self.support):
-            control.setVisible(reference)
+        self.more_region.setVisible(self._stage==0 and reference and not self.fixed_selection)
+        for control in (self.tools,self.undo_button,self.redo_button,self.support,self.clear_button,self.resolution_toggle):
+            control.setVisible(reference and not self.fixed_selection)
+        if self.fixed_selection:self.resolution_options.hide()
+        self.scene_panel.mode.setItemText(0,'参考图核对' if self.fixed_selection else '参考图与标记')
+        self.scene_panel.mode.setToolTip('查看已选区域模型或原参考图；修改选区请返回第 02 步并重新建模。'
+                                       if self.fixed_selection else '参考图可编辑区域；三维视图检查模型与路线。')
+        if self.fixed_selection:
+            self.scene_panel.stack.setToolTip('拖动平移 · 滚轮缩放；修改选区请返回第 02 步并重新建模。')
         has_selection = self.canvas.work is not None and bool(self.canvas.work.any())
-        self.support_hint.setVisible(reference and self._stage==0 and self.support.isChecked()
+        self.support_hint.setVisible(reference and self._stage==0 and not self.fixed_selection and self.support.isChecked()
                                      and has_selection and self.canvas._quality_image is None)
         self.support_hint.setText('请先涂抹工作区域；色层仅显示选区内的检查结果，不对整张照片着色。'
             if self.canvas.work is None or not self.canvas.work.any() else
@@ -919,7 +1144,9 @@ class PlanningPage(QWidget):
         self.cancel_button.setEnabled(busy and not self.runner.cancelling)
         self.cancel_button.setText('正在取消…' if self.runner.cancelling else '取消任务')
         self.previous.setEnabled(not busy)
-        for index in range(3):self.tabs.setTabEnabled(index,not busy and (index==0 or bool(self.region) and not self.selection_dirty and (index==1 or self.usable())))
+        for index in range(3):self.tabs.setTabEnabled(index,not busy and (
+            index==0 and not self.fixed_selection or index==1 and self.fixed_selection
+            or bool(self.region) and not self.selection_dirty and (index==1 or index==2 and self.usable())))
         usable=self.usable()
         self.coverage.setVisible(self._stage>0 and loaded and bool(self.plan))
         self.coverage.set_context(self.model,self.plan,ready=usable and self._stage>0,busy=busy)
@@ -1066,11 +1293,14 @@ class PlanningPage(QWidget):
         try:self.head.record();head_valid=True
         except ValueError:head_valid=False
         if self._stage==0:
-            text='下一步：蛇形路线规划';ready=loaded and bool(self.canvas.work.any()) if loaded else False
+            text='检查选区并继续';ready=loaded and bool(self.canvas.work.any()) if loaded else False
             if loaded and self.canvas.forbidden.any() and not self.canvas.work.any():
                 self.region_summary.setText('尚无工作区域 · 请先涂抹选入\n历史禁区仍保留，不会自动选择整幅画面。')
         elif self._stage==1:
-            text='下一步：核对并保存' if usable else '计算三维蛇形路线';ready=bool(self.region) and not self.selection_dirty and head_valid
+            if self.fixed_selection and (self.selection_dirty or not self.region):
+                text='检查模型并继续';ready=has_selection
+            else:
+                text='下一步：核对并保存' if usable else '生成路线';ready=bool(self.region) and not self.selection_dirty and head_valid
         else:
             findings=self.current_findings() if usable else []
             text='规划方案已保存' if self.archive and not self.dirty else '保存待复核研发草稿' if findings else '保存研发规划预览'
@@ -1081,17 +1311,48 @@ class PlanningPage(QWidget):
         self.workflow.set_step(self._stage+3 if loaded else None,
             '方案已保存；再次修改会使当前结果需要重新核对。' if completed else
             '当前步骤处理中，请等待完成或取消。' if busy else self.subtitle.text())
+        self.status_label.setVisible(self.loading_source is None)
+        self.source_toggle.setVisible(self.loading_source is None)
+        if self.loading_source is not None:
+            # The old model stays intact for cancellation, but none of its
+            # controls, evidence or rendered surface belongs to this load.
+            self.planning_body.setEnabled(False)
+            self.canvas.editable=False
+            self.undo_shortcut.setEnabled(False);self.redo_shortcut.setEnabled(False)
+            self.source_toggle.setEnabled(False)
+            self.title.setText('模型准备')
+            self.task_context_label.setText(self._loading_request['loading_context'] or self.loading_source.name)
+            self.primary.setText('生成路线');self.primary.setEnabled(False)
+            self.primary.setToolTip('模型准备完成后可生成路线')
+            self.previous.hide();self.cancel_button.hide()
+            self.workflow.set_step(4,'正在准备模型；完成后自动显示。')
 
     def _stage_selected(self,index):
-        if index==self._stage:return
-        if self.busy or index>0 and (not self.region or self.selection_dirty) or index==2 and not self.usable():
-            self.tabs.setCurrentIndex(self._stage);return
+        if index==0 and self.fixed_selection:
+            index=1
+        if index==self._stage:
+            previous=self.tabs.blockSignals(True)
+            try:self.tabs.setCurrentIndex(index)
+            finally:self.tabs.blockSignals(previous)
+            return
+        if (self.busy or index>0 and (not self.region or self.selection_dirty) and not (index==1 and self.fixed_selection)
+                or index==2 and not self.usable()):
+            # A fixed selection redirects tab 0 to tab 1. During a background
+            # conversion, rolling back to stage 0 must not emit that redirect
+            # again (it otherwise recursively bounces between the two tabs).
+            previous=self.tabs.blockSignals(True)
+            try:self.tabs.setCurrentIndex(self._stage)
+            finally:self.tabs.blockSignals(previous)
+            return
+        previous=self.tabs.blockSignals(True)
+        try:self.tabs.setCurrentIndex(index)
+        finally:self.tabs.blockSignals(previous)
         self._stage=index;self.title.setText(('工作区域规划','三维蛇形路线规划','核对并保存规划')[index])
         if index==1:self.head.extra_button.setChecked(False)
         self.tabs.updateGeometry()
         self.inspector_scroll.verticalScrollBar().setValue(0)
         self.subtitle.setText(('扫描范围决定采集哪里；现在涂抹选择需要规划的工作区域，擦除排除。','核对下方路线参数，再点击底部“计算三维蛇形路线”；生成后可播放检查。','逐项核对区域、断点与覆盖提示，确认后保存本次规划方案。')[index])
-        self.step_heading.setText(('04 / 06  ·  标记工作区域','05 / 06  ·  核对参数并生成路线','06 / 06  ·  核对并保存')[index])
+        self.step_heading.setText(('03 / 04  ·  检查选区','03 / 04  ·  模型与路线','04 / 04  ·  核对并保存')[index])
         self.canvas.show_plan=index>0
         self.canvas.support=self.support.isChecked() and index==0
         self.canvas.update()
@@ -1099,6 +1360,7 @@ class PlanningPage(QWidget):
         QTimer.singleShot(0,lambda:self.inspector_scroll.verticalScrollBar().setValue(0))
 
     def set_stage(self,index):
+        if index==0 and self.fixed_selection:index=1
         self.refresh()
         self.tabs.setCurrentIndex(index)
         self._stage_selected(index)
@@ -1130,7 +1392,9 @@ class PlanningPage(QWidget):
         lines.append(f"<span style='color:#bca3eb'>●</span> 当前选区 {quality['pending']} 像素待检查" if quality and quality['status']=='checked'
                      else '当前选区几何支持尚未核验')
         target=(self.plan.get('planning_context') or {}).get('target')
-        lines.append(f"<span style='color:#f2b84b'>●</span> 未定位 {target['summary']['unlocated_pixel_count']} 像素 · 面积未知"
+        from femto.planning.target_surface import is_deferred
+        lines.append('目标面积按需计算' if is_deferred(target) else
+                     f"<span style='color:#f2b84b'>●</span> 未定位 {target['summary']['unlocated_pixel_count']} 像素 · 面积未知"
                      if target else '原目标台账：旧记录未核验')
         internal=(sum(not gap.get('inter_block',False) for gap in self.plan['chain_breaks'])
                   if 'chain_breaks' in self.plan else '未知')
@@ -1144,13 +1408,15 @@ class PlanningPage(QWidget):
         if self.busy:return
         if self._stage==0:self.commit_region()
         elif self._stage==1:
-            if self.usable():self.set_stage(2)
+            if self.fixed_selection and (self.selection_dirty or not self.region):self.commit_region()
+            elif self.usable():self.set_stage(2)
             else:self.generate()
         elif self.reviewed.isChecked():self.save_plan()
 
     def go_back(self):
         if self.busy:return
-        if self._stage:self.set_stage(self._stage-1)
+        if self.fixed_selection and self._stage<=1:self.return_capture()
+        elif self._stage:self.set_stage(self._stage-1)
         else:self.return_capture()
 
     def return_capture(self):
@@ -1199,6 +1465,9 @@ class PlanningPage(QWidget):
         except ValueError as error:self._failure(error);return
         from femto.annotation.fixed_rgb_geometry import GeometryBudget
         model=clone_model(self.model,freeze_inputs=True);region=deepcopy(self.region)
+        from femto.app.qt_planning_io import needs_model_confirmation,prepare_route_model
+        prepare_model=needs_model_confirmation(model) or getattr(model,'route_prepare_required',False)
+        source=self.source
         # Keep a previously accepted route visible while a recomputation runs. A
         # failed request must not erase the last reviewable result; parameter and
         # region edits already invalidate it before this method is reached.
@@ -1207,28 +1476,40 @@ class PlanningPage(QWidget):
         def done(result):
             if self.runner._cancel.is_set():
                 self._status('路线计算已取消，上一条结果保留。');return
-            plan,assessment=result
+            plan,assessment,candidate,candidate_region=result
+            if prepare_model:
+                from femto.app.qt_planning_resolution import journal_for
+                self.install_model(candidate,source,journal_for(source,candidate),assessment=assessment,notify=False)
+                self.head.set_layout_algorithm(layout_algorithm)
+                self.dirty=True
             self.quality.invalidate();self.quality.install(assessment)
             self.plan=plan;self.canvas.set_plan(plan);self.set_stage(1);self.checkpoint()
             self.parameters_button.setChecked(False)
             self._status('路线已生成；请播放检查，再核对保存。')
         work,forbidden=self.canvas.work.copy(),self.canvas.forbidden.copy()
         def job(cancel,progress):
+            candidate,candidate_region=(prepare_route_model(model,region,work,forbidden,source,cancel,progress)
+                                        if prepare_model else (model,region))
+            return calculate(candidate,candidate_region,cancel,progress)
+        def calculate(model,region,cancel,progress):
             assessment=assess_selection(model,work,forbidden,cancel)
             if assessment['status']!='checked':require_geometry(assessment)
             from femto.geometry.region_reuse import operation
             with operation():
                 if layout_algorithm is None:
-                    plan=surface_workspace.generate(model,region,head,GeometryBudget(cancel).check,progress)
+                    plan=surface_workspace.generate_checked(model,region,head,GeometryBudget(cancel).check,progress,
+                                                    validation_check_factory=lambda:GeometryBudget(cancel).check,
+                                                    defer_target=True)
                 else:
                     from femto.planning.continuous_quality import IMPROVED_ROUTING,SUPPORT_ROUTING,BALANCED_ROUTING,SEAM_ROUTING,SEAM_BALANCED_ROUTING,PRESERVED_DETOUR_ROUTING,SHORT_DETOUR_ROUTING,JOINT_REORDER_ROUTING,BRIDGE_REORDER_ROUTING,RELOCATION_ROUTING,DEEP_RELOCATION_ROUTING,FLOOR_DETOUR_ROUTING,UNIFIED_FLOOR_ROUTING,GLOBAL_FLOOR_ROUTING,REFINED_CONNECTOR_ROUTING
                     from femto.planning.fixed_width_layout import OPTIMIZED_PATCH_VERSION,FOLDBACK_PATCH_VERSION,FLOOR_PATCH_VERSION,ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION
-                    plan=surface_workspace.generate(model,region,head,GeometryBudget(cancel).check,progress,
+                    plan=surface_workspace.generate_checked(model,region,head,GeometryBudget(cancel).check,progress,
+                                                    validation_check_factory=lambda:GeometryBudget(cancel).check,
+                                                    defer_target=True,
                                                     layout_algorithm=COORDINATED_FLOOR_PATCH_VERSION if layout_algorithm in (GLOBAL_FLOOR_ROUTING,REFINED_CONNECTOR_ROUTING) else layout_algorithm if layout_algorithm in (ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION) else FLOOR_PATCH_VERSION if layout_algorithm in (FLOOR_DETOUR_ROUTING,UNIFIED_FLOOR_ROUTING,GLOBAL_FLOOR_ROUTING,REFINED_CONNECTOR_ROUTING) else FOLDBACK_PATCH_VERSION if layout_algorithm==FOLDBACK_PATCH_VERSION else OPTIMIZED_PATCH_VERSION,
                                                     **({'routing_algorithm':UNIFIED_FLOOR_ROUTING} if layout_algorithm in (ADAPTIVE_FLOOR_PATCH_VERSION,COORDINATED_FLOOR_PATCH_VERSION) else {'routing_algorithm':SEAM_BALANCED_ROUTING} if layout_algorithm==FOLDBACK_PATCH_VERSION else
                                                        {'routing_algorithm':layout_algorithm} if layout_algorithm in (IMPROVED_ROUTING,SUPPORT_ROUTING,BALANCED_ROUTING,SEAM_ROUTING,SEAM_BALANCED_ROUTING,PRESERVED_DETOUR_ROUTING,SHORT_DETOUR_ROUTING,JOINT_REORDER_ROUTING,BRIDGE_REORDER_ROUTING,RELOCATION_ROUTING,DEEP_RELOCATION_ROUTING,FLOOR_DETOUR_ROUTING,UNIFIED_FLOOR_ROUTING,GLOBAL_FLOOR_ROUTING,REFINED_CONNECTOR_ROUTING) else {}))
-                planning_state.validate(plan,model.mesh,region,check=GeometryBudget(cancel).check)
-            return plan,assessment
+            return plan,assessment,model,region
         self._run(job,done)
 
     def show_report(self):
@@ -1247,12 +1528,14 @@ class PlanningPage(QWidget):
         expected=digest(self.plan)
         def job(cancel,progress):
             check=GeometryBudget(cancel).check
+            from femto.planning.target_preparation import prepare
+            prepared=prepare(model,region,plan,check,progress)
             # Both native and portable saves replay this proof within the
             # existing 120 s operation limit. Reserve time for both replays
             # and input validation; unprocessed targets remain explicit.
-            certificate,ledger=coverage_workflow.calculate(model,region,plan,check,progress,
+            certificate,ledger=coverage_workflow.calculate(model,region,prepared,check,progress,
                                                           budget=CoverageBudget(seconds=30))
-            result=coverage_workflow.attach(model,region,plan,certificate,ledger,check=check)
+            result=coverage_workflow.attach(model,region,prepared,certificate,ledger,check=check)
             check()
             return result,certificate,ledger,model.coverage_display
         def done(result):
@@ -1531,18 +1814,23 @@ class PlanningPage(QWidget):
             from contextlib import nullcontext
             from femto.geometry.region_reuse import operation as geometry_operation
             from femto.planning.save_validation import SaveValidationSession
+            from femto.operation_diagnostics import record_operation
             check=GeometryBudget(cancel).check
             progress('1/4 检查当前选区')
-            require_geometry(assess_selection(model,work,forbidden,cancel))
+            with record_operation('save.selection_assessment'):
+                require_geometry(assess_selection(model,work,forbidden,cancel))
             verified=[]
             extra={'verified_sink':verified.append} if plan.get('coverage_evidence') is not None and plan['surface_trajectory']['planner']['algorithm_version'] in ('coverage-refined-surface-v1', 'constructed-coverage-refined-surface-v1', 'nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1') else {}
             # Own geometry preparation in this worker for both save formats.
             # The validation session and every file/input recheck stay intact.
             with geometry_operation(), (SaveValidationSession() if plan.get('planning_context') else nullcontext()) as session:
                 session_args={'target_session':session} if session is not None else {}
-                folder=surface_workspace.export(model,region,plan,check,lambda text:progress('2/4 '+text),**extra,**session_args)
-                try:save_project(model,region,folder/'planning.region.zip',plan,check,progress=lambda text:progress('3/4 '+text),catalog_root=OUTPUTS_ROOT/'saved_projects',allow_replace=False,
-                                 **({'verified_assets':verified[0]} if verified else {}),**session_args)
+                with record_operation('save.route_and_native'):
+                    folder=surface_workspace.export(model,region,plan,check,lambda text:progress('2/4 '+text),**extra,**session_args)
+                try:
+                    with record_operation('save.portable_project'):
+                        save_project(model,region,folder/'planning.region.zip',plan,check,progress=lambda text:progress('3/4 '+text),catalog_root=OUTPUTS_ROOT/'saved_projects',allow_replace=False,
+                                     **({'verified_assets':verified[0]} if verified else {}),**session_args)
                 except Exception as error:
                     raise RuntimeError(f'三维路线已保存到 {folder}；可编辑工程保存未完成：{error}。当前方案仍保留，可重新保存。') from error
             progress('4/4 文件已保存，更新工作台记录')
@@ -1676,7 +1964,14 @@ class PlanningPage(QWidget):
         self._status('草稿已恢复，区域与参数已保留；请重新核对并生成路线。');self.refresh()
 
     def show_details(self):
-        text=(getattr(self,'_failure_details','') or self.status_label.text().replace('\u200b',''))+'\n\n左键涂抹；右键平移；滚轮缩放。笔刷尺寸为屏幕像素。\n只规划涂抹选入的工作区域；擦除或留空部分不参与规划。历史禁区保留并扣除，不自动选择整幅画面。\n检查色层：绿为网格与参考深度一致，紫为证据待检查，橙为缺失或冲突。比例是像素比例，不代表表面积或治疗覆盖。\n深度、外壳直径和避让余量只记录，当前规划不使用。'
+        if self.loading_source is not None:
+            text=(getattr(self,'_failure_details','') or self.preparation.last_progress)
+            show_text(self,'模型准备详情',text+'\n\n当前来源：'+str(self.loading_source)
+                      +'\n\n准备完成后自动显示模型。取消或失败不会替换此前已加载的模型与选区。')
+            return
+        interaction=('本页沿用重建前选区，仅查看模型和规划路线；修改选区请返回第 02 步并重新建模。'
+                     if self.fixed_selection else '左键涂抹；右键平移；滚轮缩放。笔刷尺寸为屏幕像素。')
+        text=(getattr(self,'_failure_details','') or self.status_label.text().replace('\u200b',''))+'\n\n'+interaction+'\n只规划涂抹选入的工作区域；擦除或留空部分不参与规划。历史禁区保留并扣除，不自动选择整幅画面。\n检查色层：绿为网格与参考深度一致，紫为证据待检查，橙为缺失或冲突。比例是像素比例，不代表表面积或治疗覆盖。\n深度、外壳直径和避让余量只记录，当前规划不使用。'
         if self.source:text+='\n\n来源：'+str(self.source)
         if self.archive:text+='\n\n已保存位置：'+str(self.archive)
         if self.journal and self.journal.error:text+='\n草稿保存失败：'+self.journal.error
@@ -1688,6 +1983,7 @@ class PlanningPage(QWidget):
         self.canvas.finish_stroke();self.canvas.timer.stop();self.checkpoint();return True
 
     def shutdown(self):
+        self.preparation.stop()
         self.draft_timer.stop();self.canvas.timer.stop()
         if not self.quality.shutdown():return False
         if not self.runner.shutdown(200):return False

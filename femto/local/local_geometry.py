@@ -5,21 +5,32 @@ import open3d as o3d
 from femto.io_utils import imread_unicode
 from femto.geometry.rgbd_frames import prepare_rgbd
 from femto.geometry.reconstruction_reuse import depth_jump_mask
+from femto.performance_detail import observed
 
 
-def filter_small_components(mesh):
+@observed('reconstruction.components')
+def filter_small_components(mesh, *, component_reuse=None):
     """Reapply the existing component rule after later geometry filters."""
+    if component_reuse is not None:component_reuse.clear()
     before=len(mesh.triangles)
     if not before:return dict(triangles_before=0,triangles_after=0,removed_triangles=0,removed_components=0,threshold=0)
-    labels,counts,_=mesh.cluster_connected_triangles();counts=np.asarray(counts);labels=np.asarray(labels)
+    from femto.geometry.triangle_components import triangle_components
+    components = triangle_components(mesh)
+    if components is None:
+        labels,counts,_=mesh.cluster_connected_triangles()
+    else:
+        labels,counts=components
+    counts=np.asarray(counts);labels=np.asarray(labels)
     threshold=max(30,int(counts.max()*.002)) if len(counts) else 30
     keep=counts>=threshold
     mesh.remove_triangles_by_mask(~keep[labels]);mesh.remove_unreferenced_vertices();mesh.compute_vertex_normals()
+    if component_reuse is not None:component_reuse._remember_filtered(mesh,counts[keep])
     return dict(triangles_before=before,triangles_after=int(len(mesh.triangles)),
         removed_triangles=int(before-len(mesh.triangles)),removed_components=int((~keep).sum()),threshold=int(threshold),
         rule='component_triangles >= max(30, 0.2% of largest component)')
 
 
+@observed('reconstruction.observed_support')
 def retain_observed_triangles(mesh, dataset, frames, poses, maps, minimum, maximum, tolerance=.01,
                               prepared_depths=None, reconstruction_reuse=None):
     """All corners and centroid must be supported by one source view.

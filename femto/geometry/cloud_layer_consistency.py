@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 import open3d as o3d
+from femto.performance_detail import observed, count as observe_count
 
 
 _RADIUS = .01
@@ -33,12 +34,13 @@ _CANDIDATE_RADIUS = max(
     float(np.nextafter(np.float32(_RADIUS), np.float32(np.inf))))
 
 
-def count_second_sheet_points(cloud) -> int:
+def count_second_sheet_points(cloud, *, check=lambda:None) -> int:
     """Count points with an original-radius neighbor over 4 mm along its normal.
 
-    Float64 native queries are bounded by 512 x 64 neighbors. Full candidate
-    rows fall back to the unbounded *single-point* legacy query, so dense clouds
-    cannot silently lose neighbors or allocate an all-pairs neighbor table.
+    Sparse Float64 witness queries are bounded by 512 x 64 neighbors. Dense
+    unresolved queries use complete native batches capped by a conservative
+    cell preflight. Oversized or ambiguous queries keep the original one-point
+    fallback; no final decision truncates the complete neighborhood.
     Only candidate discovery and non-boundary predicates are batched; the final
     count, strict thresholds, and all input points/normals remain unchanged.
     """
@@ -46,12 +48,15 @@ def count_second_sheet_points(cloud) -> int:
     normals = np.asarray(cloud.normals)
     tree = None
 
+    @observed('cloud.legacy_radius_queries')
     def legacy(indices):
         nonlocal tree
+        observe_count('cloud.classifications', legacy_queries=len(indices))
         if tree is None:
             tree = o3d.geometry.KDTreeFlann(cloud)
         count_second = 0
-        for index in indices:
+        for ordinal,index in enumerate(indices):
+            if ordinal % 128 == 0:check()
             point = points[index]
             count, ids, _ = tree.search_radius_vector_3d(point, _RADIUS)
             if count > 1 and np.any(
@@ -68,6 +73,11 @@ def count_second_sheet_points(cloud) -> int:
             or np.abs(points).max(initial=0.0) > 2.0 ** 20):
         return legacy(range(len(points)))
 
+    if len(points)>=10000:
+        from femto.geometry.cloud_layer_batches import count_dense
+        complete=count_dense(points,normals,legacy,check=check)
+        if complete is not None:return complete
+
     try:
         tensor = o3d.core.Tensor(points, dtype=o3d.core.Dtype.Float64)
         search = o3d.core.nns.NearestNeighborSearch(
@@ -80,6 +90,7 @@ def count_second_sheet_points(cloud) -> int:
 
     second = 0
     for start in range(0, len(points), _BATCH_SIZE):
+        check()
         end = min(start + _BATCH_SIZE, len(points))
         try:
             indices, _, counts = search.hybrid_search(

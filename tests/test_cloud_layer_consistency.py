@@ -33,6 +33,37 @@ class CloudLayerConsistencyTest(unittest.TestCase):
     def same(self, value):
         self.assertEqual(count_second_sheet_points(value), original_count(value))
 
+    def test_dense_complete_batches_keep_original_radius_and_height_predicates(self):
+        y,x=np.mgrid[:80,:80]
+        base=np.c_[x.ravel()*.001,y.ravel()*.001,np.zeros(x.size)]
+        for height in (.003,np.nextafter(.004,0),.004,np.nextafter(.004,np.inf),.005):
+            with self.subTest(height=height):
+                points=np.r_[base,base+[0,0,height]]
+                self.same(cloud(points,np.tile([0.,0.,1.],(len(points),1))))
+
+    def test_dense_cell_bound_never_hides_a_witness_at_cell_boundaries(self):
+        from femto.geometry.cloud_layer_batches import negative_bounds
+        rng=np.random.default_rng(771)
+        points=np.r_[rng.uniform(-.04,.04,(1000,3)),[[0.,0.,0.],[.02,.02,.02],[-.02,-.02,-.02]]]
+        normals=rng.normal(size=points.shape)
+        negative=negative_bounds(points,normals)
+        for i in np.flatnonzero(negative):
+            delta=points-points[i];near=np.linalg.norm(delta,axis=1)<.01
+            self.assertFalse(np.any(np.abs(delta[near]@normals[i])>.004))
+
+    def test_dense_bounds_and_observed_witnesses_match_at_large_origins(self):
+        from femto.geometry.cloud_layer_batches import count_dense
+        rng=np.random.default_rng(719)
+        points=rng.uniform(-.025,.025,(300,3));normals=rng.normal(size=points.shape)
+        for origin in (np.zeros(3),np.array([1e6,-1e6,1e6])):
+            value=cloud(points+origin,normals);p=np.asarray(value.points);n=np.asarray(value.normals)
+            tree=o3d.geometry.KDTreeFlann(value)
+            def legacy(indices):
+                return sum(np.any(np.abs((p[np.asarray(tree.search_radius_vector_3d(p[i],.01)[1])]-p[i])@n[i])>.004) for i in indices)
+            self.assertEqual(count_dense(p,n,legacy),original_count(value))
+            with patch('femto.geometry.cloud_layer_batches.o3d.core.nns.NearestNeighborSearch',side_effect=RuntimeError('unavailable')):
+                self.assertEqual(count_dense(p,n,legacy),original_count(value))
+
     def test_random_clouds_nonunit_normals_and_batch_boundary(self):
         rng = np.random.default_rng(20261026)
         for size in (1, 2, 17, 63, 65, 511, 512, 513, 1503):

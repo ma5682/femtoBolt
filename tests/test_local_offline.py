@@ -232,6 +232,10 @@ class OfflineTests(unittest.TestCase):
     def test_processing_exception_keeps_original_error_when_journal_fails(self):
         from femto.local.local_processing import LocalProcessing
         dataset, _, _, _ = result_fixture(self.root)
+        from femto.io_utils import write_jsonl
+        import numpy as np
+        write_jsonl(dataset/'frames.jsonl',[dict(frame=0,pose='pose.json')])
+        write(dataset/'pose.json',dict(pose_valid=True,T_WC=np.eye(4).tolist()))
         job = LocalProcessing(dataset, self.root / 'processing')
         with mock.patch.object(job, 'publish', side_effect=OSError('journal failure')):
             with self.assertRaisesRegex(OSError, 'journal failure'):

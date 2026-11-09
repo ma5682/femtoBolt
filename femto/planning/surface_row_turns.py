@@ -41,8 +41,9 @@ class BoundaryTurns:
         for ordinal,index in enumerate(selected):
             if ordinal%1024==0:check()
             face=faces[index]
-            for a,b in zip(face,np.roll(face,-1)):
-                edges[tuple(sorted((int(a),int(b))))].append(int(index))
+            a, b, c = face.tolist()
+            for left, right in ((a, b), (b, c), (c, a)):
+                edges[tuple(sorted((left, right)))].append(int(index))
         self.edges=[(a,b,ids[0]) for (a,b),ids in sorted(edges.items()) if len(ids)==1]
         degrees=Counter(v for a,b,_ in self.edges for v in (a,b))
         self.ambiguous={v for v,count in degrees.items() if count!=2}
@@ -234,11 +235,53 @@ def edge_pixels_allowed(p, q, k, size, allowed):
     p=np.asarray(p,float);q=np.asarray(q,float)
     ends=[_project(v,k,size) for v in (p,q)]
     if any(v is None for v in ends):return False
+    return projected_edge_pixels_allowed(ends[0],ends[1],allowed)
+
+
+def projected_edge_pixels_allowed(start,end,allowed):
+    """edge_pixels_allowed for endpoints already projected inside the image."""
     if allowed is None:return True
     height,width=allowed.shape
-    for u,v in segment_pixels(ends[0],ends[1]):
+    for u,v in segment_pixels(start,end):
         if not (0<=u<width and 0<=v<height and allowed[v,u]):return False
     return True
+
+
+class _LazyEdgeStates(dict):
+    """One router's fixed edge predicates, evaluated only when search needs them."""
+    def __init__(self, router, keys):
+        from copy import copy, deepcopy
+        frozen = copy(router)
+        for name in ('vertices', 'k', 'size', 'allowed'):
+            value = getattr(router, name)
+            if value is not None:
+                value = np.array(value, copy=True)
+                value.setflags(write=False)
+            setattr(frozen, name, value)
+        frozen.polygons = deepcopy(router.polygons)
+        frozen._polygon_source = frozen.polygons
+        frozen._polygon_index = PreparedPolygonIndex(frozen.polygons)
+        self.router, self.keys_allowed = frozen, frozenset(keys)
+        # Supercover's near-corner tie can overrun an endpoint extremely close
+        # to a pixel boundary. Retain eager checks there (including old errors).
+        # The 1e-3 px guard is only a fallback threshold, never an admission rule.
+        from femto.planning.mesh_slice_planner import _project
+        safe = {}
+        for ordinal, vertex in enumerate(sorted({v for edge in self.keys_allowed for v in edge})):
+            if ordinal % 256 == 0:
+                router.check()
+            uv = _project(frozen.vertices[vertex], frozen.k, frozen.size)
+            safe[vertex] = uv is None or all(abs((value+.5)-round(value+.5)) > 1e-3 for value in uv)
+        self.eager_keys = {edge for edge in self.keys_allowed if not all(safe[v] for v in edge)}
+
+    def __missing__(self, key):
+        if key not in self.keys_allowed:
+            raise KeyError(key)
+        self.router.check()
+        a, b = key
+        state = self.router._state(self.router.vertices[a], self.router.vertices[b])
+        self[key] = state
+        return state
 
 
 class SurfaceLinks:
@@ -267,18 +310,35 @@ class SurfaceLinks:
         for ordinal,index in enumerate(self.face_ids):
             if ordinal%1024==0:check()
             face=self.faces[index]
-            for a,b in zip(face,np.roll(face,-1)):
-                key=tuple(sorted((int(a),int(b))))
+            a, b, c = face.tolist()
+            for left, right in ((a, b), (b, c), (c, a)):
+                key=tuple(sorted((left, right)))
                 if key not in edges or index<edges[key]:edges[key]=index
         self.edges=[(a,b,face) for (a,b),face in sorted(edges.items())]
-        # Forbidden / image / selection checks depend only on the edge, so they are evaluated once.
-        self.edge_state={}
+        # Ordinary image extents bound every possible supercover walk below
+        # its historical hard limit. Keep eager validation otherwise, so an
+        # unused oversized edge cannot hide the old budget failure.
+        lazy = (type(self)._state is SurfaceLinks._state
+                and self.size.shape == (2,) and np.isfinite(self.size).all()
+                and (self.size > 0).all() and (self.size <= 8192).all()
+                and (self.allowed is None or (type(self.allowed) is np.ndarray
+                     and self.allowed.ndim == 2 and self.allowed.dtype == np.dtype(bool)))
+                and np.geterr() == dict(divide='warn', over='warn', under='ignore', invalid='warn'))
+        self.edge_state = {}
+        if lazy:
+            try:
+                self.edge_state = _LazyEdgeStates(self, ((a,b) for a,b,_ in self.edges))
+            except MemoryError:
+                lazy = False
         for index,(a,b,face) in enumerate(self.edges):
             if index%256==0:check()
-            self.edge_state[(a,b)]=self._state(self.vertices[a],self.vertices[b])
+            if not lazy or (a,b) in self.edge_state.eager_keys:
+                self.edge_state[(a,b)] = self._state(self.vertices[a],self.vertices[b])
         self.adjacency=defaultdict(list)
-        for a,b,face in self.edges:
-            length=float(np.linalg.norm(self.vertices[b]-self.vertices[a]))
+        from femto.small_vectors import row_norms
+        ends=np.asarray([(a,b) for a,b,_ in self.edges],dtype=np.int64).reshape(-1,2)
+        lengths=row_norms(self.vertices[ends[:,1]]-self.vertices[ends[:,0]]).tolist()
+        for (a,b,face),length in zip(self.edges,lengths):
             self.adjacency[a].append((b,length,face));self.adjacency[b].append((a,length,face))
         for node in self.adjacency:self.adjacency[node].sort()
 
