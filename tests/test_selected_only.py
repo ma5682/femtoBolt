@@ -123,5 +123,6 @@ class SelectedOnlyDisplayTests(TestCase):
         model,_,_=self.scene();actor=mock.Mock()
         view=SimpleNamespace(_check_thread=lambda:None,renderer=mock.Mock(),picker=mock.Mock(),
             _actors=[],_actor=mock.Mock(return_value=actor),_render=lambda:None)
+        view.set_snapshot=lambda scene, **options: VTKViewport.set_snapshot(view,scene,**options)
         VTKViewport.set_scene(view,model,dict(triangle_indices=[2]),reset_camera=False)
         self.assertEqual(view._actor.call_args_list[0].kwargs['ids'].tolist(),[2])

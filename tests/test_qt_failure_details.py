@@ -121,9 +121,14 @@ class FailurePresentationTests(unittest.TestCase):
         page = CapturePage(connect_camera=False)
         try:
             state = CaptureState(state='failed', failure={'error': 'specific failure'}, source=Path('raw-source'))
-            title, message = page._capture_message(state, True, False, '需要确认部位', False)
-            self.assertIn('specific failure', message)
-            self.assertIn('下一步', message)
+            page.roi_message = '需要确认部位'
+            for stale in (False, True):
+                with self.subTest(stale=stale):
+                    title, message = page._capture_message(state, live=True, fresh=False, stale=stale)
+                    self.assertIn('specific failure', message)
+                    self.assertIn('下一步', message)
+                    self.assertNotIn(page.roi_message, message)
+                    self.assertEqual('相机画面已过期' in message, stale)
         finally:page.shutdown(); page.close()
 
     def test_next_planning_status_clears_previous_error_tooltip(self):

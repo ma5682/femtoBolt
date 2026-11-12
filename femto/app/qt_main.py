@@ -24,6 +24,8 @@ from femto.app.qt_common import breakable_text
 from femto.app.qt_execution import ExecutionPage
 from femto.app.qt_icons import line_icon
 
+CLOSING_AFTER_SAVE = '三维路线已保存，正在写入可编辑工程；写完后自动关闭。'
+
 
 def apply_theme(app):
     app.setStyle('Fusion')
@@ -49,6 +51,7 @@ class WorkstationWindow(QMainWindow):
         self._pending_sources = {}
         self._planning_load_origin = None
         self._close_pending = False
+        self._close_saving = None
         self._close_timer = QTimer(self)
         self._close_timer.setInterval(250)
         self._close_timer.timeout.connect(self.close)
@@ -312,6 +315,9 @@ class WorkstationWindow(QMainWindow):
         self.project_badge.setToolTip(str(source) if source else '尚无已加载的数据来源')
         self.subtitle.setText(breakable_text(f"任务：{name or '未命名'}"))
         self.subtitle.setToolTip(str(source) if source else '请填写任务名称；不会自动识别或绑定病例。')
+        if self._close_saving is not None:
+            # Write progress keeps arriving; the locked window must keep saying why.
+            self.subtitle.setText(CLOSING_AFTER_SAVE)
         if hasattr(self, 'workflow_navigation'):
             self.workflow_navigation.refresh()
 
@@ -477,6 +483,30 @@ class WorkstationWindow(QMainWindow):
         self._sync_context()
 
     def closeEvent(self, event):
+        saving = self.planning.finishing_save
+        if saving is not None and not self._close_pending and not (
+                self.review.busy or not self.capture.can_leave() or not self.execution.can_leave()):
+            # The route package is already published. Finish its editable
+            # project instead of cancelling it; the retry timer closes afterwards.
+            event.ignore()
+            self._close_pending=True;self._close_saving=saving
+            self.setEnabled(False)
+            self.subtitle.setText(CLOSING_AFTER_SAVE)
+            self._close_timer.start()
+            return
+        if self._close_saving is not None:
+            if self.planning.busy:
+                event.ignore();return
+            saved=self.planning.archive==self._close_saving and not self.planning.dirty
+            self._close_saving=None
+            if not saved:
+                # A failed project write must be read before the window goes away.
+                event.ignore()
+                self._close_timer.stop();self._close_pending=False
+                self.setEnabled(True);self._sync_context()
+                QMessageBox.warning(self,'可编辑工程未保存',
+                    '三维路线已保存，但可编辑工程保存未完成，窗口保持打开。请在规划页查看原因后重新保存。')
+                return
         if self.review.busy or not self.planning.can_leave() or not self.capture.can_leave() or not self.execution.can_leave():
             event.ignore()
             if not self._close_pending:

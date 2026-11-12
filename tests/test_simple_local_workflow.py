@@ -21,8 +21,13 @@ class SimpleLocalWorkflowTests(TestCase):
         editor.install(reference);editor.show();self.app.processEvents()
         self.assertFalse(editor.margin.isVisible())
         self.assertFalse(editor.advanced_toggle.isVisible())
+        # Complete a real edit transaction so action availability and undo
+        # history are updated just as they are after a mouse stroke.
+        editor.canvas._before=(editor.canvas.work.copy(),editor.canvas.forbidden.copy())
         editor.canvas.work[20:40,30:50]=1
+        editor.canvas.finish_stroke()
         before=editor.canvas.work.copy()
+        self.assertTrue(editor.clear.isEnabled())
         next(b for b in editor.findChildren(QPushButton) if b.text()=='清空').click()
         self.assertFalse(editor.canvas.work.any())
         next(b for b in editor.findChildren(QPushButton) if b.text()=='撤销').click()

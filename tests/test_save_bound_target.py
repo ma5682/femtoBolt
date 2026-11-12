@@ -25,6 +25,9 @@ class BoundSaveTargetTests(unittest.TestCase):
         self.region = case.region(True)
         self.model.store.regions = [self.region]
         self.plan = surface_workspace.generate(self.model, self.region, case.head, defer_target=True)
+        # Generation writes the target asset; this fixture exercises a model
+        # retaining that verified object, including mutation after entry checks.
+        self.model.target_ledger = surface_workspace.target_for(self.model, self.plan)
         self.root = Path(case.temp.name)
         self.path = self.root/'bound.region.zip'
 

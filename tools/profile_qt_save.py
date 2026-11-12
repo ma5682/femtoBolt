@@ -12,6 +12,7 @@ from pathlib import Path
 import sys
 import traceback
 import gc
+import time
 import tracemalloc
 from unittest.mock import patch
 
@@ -44,7 +45,9 @@ def main(argv=None):
     metadata = dict(schema='qt-save-profile-v1', status='running', project=str(project),
                     project_sha256=file_digest(project), code_sha256=code,
                     probe_sha256=file_digest(Path(__file__)),
-                    scope='Actual PlanningPage.save_plan through runner completion; offscreen reference view, not full desktop rendering')
+                    scope='Actual PlanningPage.save_plan through runner completion; offscreen reference view, not full desktop rendering',
+                    release_scope='route_release_seconds: save_plan() call to the UI-thread notice that the route package is published '
+                                  'while its editable project is still being written; absent when the backend releases only at completion')
     write_json_strict(output/'manifest.json', metadata)
     from PySide6.QtCore import QEventLoop, QTimer
     from PySide6.QtWidgets import QApplication
@@ -98,19 +101,27 @@ def main(argv=None):
             def timeout():
                 expired.append(True)
                 page.runner.cancel()
+            def released(_text):
+                # Backends that release only at completion never report this state.
+                if 'route_release_seconds' not in metadata and getattr(page, 'finishing_save', None) is not None:
+                    metadata['route_release_seconds'] = time.perf_counter()-started
             watchdog.timeout.connect(timeout)
             page.runner.finished.connect(loop.quit)
+            page.status_changed.connect(released)
             try:
                 # This watchdog requests cancellation only; it does not extend
                 # the worker's original GeometryBudget or fabricate success.
                 watchdog.start(180000)
+                started = time.perf_counter()
                 page.save_plan()
                 if not page.busy:
                     raise RuntimeError('UI save did not start: '+page.status_label.text())
                 loop.exec()
+                metadata['complete_seconds'] = time.perf_counter()-started
             finally:
                 watchdog.stop()
                 page.runner.finished.disconnect(loop.quit)
+                page.status_changed.disconnect(released)
             if expired or page._error:
                 raise RuntimeError('UI save failed: '+page.status_label.text())
             if (len(saved_callbacks) != 1 or page.archive is None

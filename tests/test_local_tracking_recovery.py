@@ -251,19 +251,28 @@ class CaptureFailureTests(unittest.TestCase):
     def test_sdk_read_error_is_forwarded_to_the_active_local_session(self):
         import femto.app.femto_control_app as control
         from test_temporal_gui import TemporalGuiTests
-        app = TemporalGuiTests().bare_app()
-        camera = make_camera('wide_detail', 10)
-        camera.start.return_value = camera
-        camera.read.side_effect = [make_frame([500]*10, 1), RuntimeError('USB read fixture failure')]
-        app.command_queue.put(('local_start', None))
-        local = mock.Mock()
-        local.thread.is_alive.return_value = True
-        with mock.patch.object(control, 'OrbbecAlignedCamera', return_value=camera) as factory, \
-                mock.patch('femto.capture.local_capture.LocalCapture', return_value=local):
-            app._camera_worker()
-        factory.assert_called_once()
-        local.abort.assert_called_once_with('camera_error', 'USB read fixture failure')
-        self.assertTrue(any(kind=='camera_error' for kind, _ in app.event_queue.queue))
+        for completed in (False, True):
+            with self.subTest(acquisition_complete=completed):
+                app = TemporalGuiTests().bare_app()
+                camera = make_camera('wide_detail', 10)
+                camera.start.return_value = camera
+                camera.read.side_effect = [make_frame([500]*10, 1), RuntimeError('USB read fixture failure')]
+                app.command_queue.put(('local_start', None))
+                # Mock's implicit attributes are truthy, unlike an active
+                # capture's explicit acquisition_complete=False state.
+                local = mock.Mock(acquisition_complete=completed)
+                local.thread.is_alive.return_value = True
+                with mock.patch.object(control, 'OrbbecAlignedCamera', return_value=camera) as factory, \
+                        mock.patch('femto.capture.local_capture.LocalCapture', return_value=local):
+                    app._camera_worker()
+                factory.assert_called_once()
+                if completed:
+                    local.abort.assert_not_called()
+                    local.finish.assert_not_called()
+                else:
+                    local.abort.assert_called_once_with('camera_error', 'USB read fixture failure')
+                    local.finish.assert_called_once_with(False)
+                self.assertTrue(any(kind=='camera_error' for kind, _ in app.event_queue.queue))
 
     @mock.patch('femto.capture.scan_session.save_scan_frame', side_effect=OSError('raw storage fixture failure'))
     @mock.patch('femto.capture.local_capture.PairEstimator')

@@ -71,7 +71,8 @@ class InteractionTests(unittest.TestCase):
                 page.primary_action()
             send.assert_called_once()
             self.assertEqual(send.call_args.args,('local_start',))
-            self.assertEqual(set(send.call_args.kwargs),{'initial_frame','scan_roi'})
+            self.assertEqual(set(send.call_args.kwargs),{'initial_frame','scan_roi','region_first'})
+            self.assertIs(send.call_args.kwargs['region_first'],True)
             self.assertEqual(send.call_args.kwargs['scan_roi'],expected_roi)
             sent_frame=send.call_args.kwargs['initial_frame']
             self.assertIsNot(sent_frame,initial)
@@ -189,8 +190,52 @@ class InteractionTests(unittest.TestCase):
             self.assertIn('保存失败',page.draft_label.text())
             self.assertFalse(page.retry_draft_button.isHidden())
         self.assertIs(page.model,model);self.assertEqual(page.source,source)
+        # The preparation failure page owns navigation until the user returns.
+        self.assertTrue(page.preparation.cancel.isVisible())
+        page.preparation.cancel.click()
+        self.assertIsNone(page.loading_source)
+        self.assertTrue(page.retry_draft_button.isVisible())
+        self.assertTrue(page.retry_draft_button.isEnabled())
         page.retry_draft_button.click();f.journal.wait();page._refresh_draft_status()
         self.assertEqual(page.draft_label.text(),'草稿已保存')
+
+    def test_preparation_retry_resaves_failed_draft_before_switching_source(self):
+        from femto.app.qt_planning_io import clone_model
+        from femto.planning.planning_drafts import Journal, read
+        f=self.planning();f.mark()
+        page=f.page;model=page.model;source=page.source
+        page.draft_timer.stop();page.checkpoint();f.journal.wait()
+        page._new_source_coarse=False
+        target=Path(f.temp.name)/'another'
+        replacement=clone_model(model,freeze_inputs=True)
+        next_journal=Journal(target,Path(f.temp.name)/'next-drafts')
+        loaded=[];page.loaded.connect(loaded.append)
+        with patch.object(QMessageBox,'question',return_value=QMessageBox.Yes) as question, \
+             patch('femto.app.qt_planning.load_source',return_value=replacement) as load, \
+             patch('femto.app.qt_planning_resolution.journal_for',return_value=next_journal):
+            with patch('femto.planning.planning_drafts.tempfile.NamedTemporaryFile',side_effect=OSError('disk full')):
+                self.assertTrue(page.load_source(target,restore_draft=False))
+                self.wait(lambda:not page.busy)
+                self.assertEqual(f.journal.status(),'error');load.assert_not_called()
+                self.assertIs(page.model,model);self.assertEqual(page.source,source)
+                sequence=f.journal.sequence
+                self.assertTrue(page.preparation.retry.isVisible())
+                page.preparation.retry.click();self.wait(lambda:not page.busy)
+                self.assertGreater(f.journal.sequence,sequence)
+                self.assertEqual(f.journal.status(),'error');load.assert_not_called()
+                self.assertEqual(loaded,[])
+            # Once storage is available, retry the visible action. The old
+            # draft must reach disk before the destination can be installed.
+            page.preparation.retry.click();self.wait(lambda:not page.busy)
+            self.assertFalse(page._error,page.status_label.text())
+            self.assertEqual(f.journal.status(),'saved')
+            self.assertEqual(read(f.journal.path,model)['regions'],model.store.regions)
+            load.assert_called_once()
+            question.assert_called_once()
+        self.assertIsNone(page.loading_source)
+        self.assertEqual(page.source,target.resolve())
+        self.assertIs(page.journal,next_journal)
+        self.assertEqual(loaded,[str(target.resolve())])
 
     def test_history_diagnostic_buttons_work_for_non_openable_record(self):
         with TemporaryDirectory() as folder:

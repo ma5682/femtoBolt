@@ -13,6 +13,7 @@ def numeric_viewport():
     view = SimpleNamespace(renderer=vtkRenderer(), picker=vtkCellPicker(), _actors=[],
                            _check_thread=lambda: None, _render=lambda: None)
     view._actor = MethodType(VTKViewport._actor, view)
+    view.set_snapshot = MethodType(VTKViewport.set_snapshot, view)
     return view
 
 

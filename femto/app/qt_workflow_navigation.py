@@ -3,6 +3,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject
 
+FINISHING_SAVE = '三维路线已保存，可编辑工程正在写入；写完后才能切换。'
+
 
 class WorkflowNavigation(QObject):
     def __init__(self, window):
@@ -23,10 +25,13 @@ class WorkflowNavigation(QObject):
             return '模拟任务进行中，请结束模拟后再切换项目。'
         if state.active or state.finishing:
             return '采集或建模进行中，请完成或取消后再切换。'
-        if window.capture.review_task.busy or window.planning.busy or window.review.busy:
+        if (window.capture.review_task.busy or window.review.busy
+                or window.planning.busy and window.planning.finishing_save is None):
             return '读取、计算或保存进行中，请完成或取消后再切换。'
         if window.planning.loading_source is not None:
             return '模型准备未完成，请重试或返回原页面。'
+        if window.planning.finishing_save is not None:
+            return FINISHING_SAVE
         return ''
 
     def _capture_root(self, page):
@@ -60,7 +65,7 @@ class WorkflowNavigation(QObject):
             if page.region and not page.selection_dirty:
                 steps.add(4)
                 if page.fixed_selection:steps.discard(3)
-            if page.usable():
+            if page.viewable():
                 steps.add(5)
             return steps
         return {2} | ({3} if page.region else set()) | ({4, 5} if page.plan else set())
@@ -68,7 +73,11 @@ class WorkflowNavigation(QObject):
     def destinations(self, page):
         blocked = self._blocked_reason()
         if blocked:
-            return set(), {index: blocked for index in range(1, 7)}
+            # Writing the editable project locks leaving the planning page,
+            # not that page's own read-only stages.
+            local = (self._local_destinations(page)
+                     if blocked == FINISHING_SAVE and page is self.window.planning else set())
+            return local, {index: blocked for index in range(1, 7)}
         reasons = {
             1: '局部采集须由开始采集按钮启动；已结束的采集只能回看记录。',
             2: '请先完成采集并成功读取模型。',

@@ -192,25 +192,35 @@ class PlanningInstallationTests(unittest.TestCase):
 
 
 class PlanningReviewLayoutTests(unittest.TestCase):
-    def test_complete_target_summary_remains_readable_before_review(self):
+    def test_deferred_and_computed_target_summaries_remain_readable_before_review(self):
         import test_route_layout as route_layout_fixture
         from PySide6.QtCore import QPoint
         fixture = route_layout_fixture.RouteLayoutTests()
         fixture.setUpClass(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         fixture.generate(); page = fixture.page
-        for width, height in ((1600, 940), (1120, 740)):
-            fixture.window.resize(width, height)
-            page.set_stage(2); fixture.settle()
-            self.assertIn('已定位面积', page.save_summary.text())
-            self.assertGreaterEqual(page.save_summary.height(),
-                                    page.save_summary.heightForWidth(page.save_summary.width()))
-            page.inspector_scroll.ensureWidgetVisible(page.reviewed)
-            fixture.settle()
-            viewport = page.inspector_scroll.viewport()
-            point = page.reviewed.mapTo(viewport, QPoint(0, 0))
-            self.assertTrue(viewport.rect().contains(point))
-            self.assertTrue(viewport.rect().contains(point+QPoint(page.reviewed.width()-1, page.reviewed.height()-1)))
-            self.assertFalse(page.reviewed.isChecked())
+        for computed in (False, True):
+            if computed:
+                page.verify_coverage(); fixture.wait_task()
+            for width, height in ((1600, 940), (1120, 740)):
+                with self.subTest(computed=computed, width=width, height=height):
+                    fixture.window.resize(width, height)
+                    page.set_stage(2); fixture.settle()
+                    if computed:
+                        self.assertRegex(page.save_summary.text(), r'原目标几何：已定位 \d+(?:\.\d+)? mm²')
+                        self.assertIn('个像素含未定位范围', page.save_summary.text())
+                        self.assertNotIn('目标面积与覆盖尚未计算', page.save_summary.text())
+                    else:
+                        self.assertIn('目标面积与覆盖尚未计算', page.save_summary.text())
+                        self.assertNotIn('已定位面积', page.save_summary.text())
+                    self.assertGreaterEqual(page.save_summary.height(),
+                                            page.save_summary.heightForWidth(page.save_summary.width()))
+                    page.inspector_scroll.ensureWidgetVisible(page.reviewed)
+                    fixture.settle()
+                    viewport = page.inspector_scroll.viewport()
+                    point = page.reviewed.mapTo(viewport, QPoint(0, 0))
+                    self.assertTrue(viewport.rect().contains(point))
+                    self.assertTrue(viewport.rect().contains(point+QPoint(page.reviewed.width()-1, page.reviewed.height()-1)))
+                    self.assertFalse(page.reviewed.isChecked())
 
 
 if __name__ == '__main__':unittest.main()

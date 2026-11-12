@@ -262,6 +262,7 @@ class PlanningPage(QWidget):
     load_return_requested = Signal()
     load_started = Signal()
     _preparation_preview_ready = Signal(object, object, object)
+    _native_route_saved = Signal(object, object)
 
     def __init__(self,parent=None):
         super().__init__(parent)
@@ -276,12 +277,16 @@ class PlanningPage(QWidget):
         self._loading_prepared=None
         self._loading_preview_token=None
         self._return_after_load=False
+        self._save_token=None
+        self._finishing_save=None
         self.runner=TaskRunner(self)
-        self.runner.progress.connect(self._status)
+        self.runner.progress.connect(self._task_progress)
+        self.runner.finished.connect(self._save_stage_finished)
         self.runner.finished.connect(self.refresh)
         self.runner.cancel_requested.connect(self._cancellation_requested)
         self._build()
         self._preparation_preview_ready.connect(self._show_preparation_preview, Qt.QueuedConnection)
+        self._native_route_saved.connect(self._native_route_published, Qt.QueuedConnection)
         self.loaded.connect(self._complete_preparation)
         self.runner.finished.connect(self._preparation_finished)
         self.parameters_button.toggled.connect(self.refresh)
@@ -298,6 +303,16 @@ class PlanningPage(QWidget):
 
     @property
     def busy(self):return self.runner.busy
+
+    @property
+    def finishing_save(self):
+        """Published route folder while the same worker still writes its editable project.
+
+        The page remains busy for inputs, tasks, leaving and closing. Only
+        read-only viewing of the saved route is released; `archive` and
+        `dirty` move after the project. A cancel request ends this state.
+        """
+        return self._finishing_save if self.busy and not self.runner.cancelling else None
 
     @property
     def current_source(self):return self.source
@@ -330,7 +345,7 @@ class PlanningPage(QWidget):
         scroll.setFrameShape(QFrame.NoFrame);scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setMinimumWidth(320);scroll.setMaximumWidth(360)
         panel=QWidget();panel.setObjectName('inspectorPanel')
-        panel_layout=QVBoxLayout(panel);panel_layout.setContentsMargins(12,10,12,10);panel_layout.setSpacing(8)
+        panel_layout=QVBoxLayout(panel);panel_layout.setContentsMargins(12,8,12,8);panel_layout.setSpacing(8)
         self.stage_panel_heading=QLabel('选区工具');self.stage_panel_heading.setObjectName('regionQualityHeading')
         panel_layout.addWidget(self.stage_panel_heading)
         self.tabs=_StageTabs();self.tabs.setObjectName('workflowTabs')
@@ -655,6 +670,19 @@ class PlanningPage(QWidget):
             self._status('正在取消任务，请等待当前处理结束；保存结果以结束后的提示为准。')
             self.refresh()
 
+    def _task_progress(self,text):
+        self._status('三维路线已保存 · '+str(text) if self.finishing_save is not None else text)
+
+    def _native_route_published(self,token,folder):
+        """Worker notice: the route package is on disk and its editable project is being written."""
+        if self._save_token is None or token is not self._save_token or not self.busy or self.runner._cancel.is_set():return
+        self._finishing_save=Path(folder).resolve()
+        self._status('三维路线已保存，正在写入可编辑工程…')
+        self.refresh()
+
+    def _save_stage_finished(self):
+        self._save_token=None;self._finishing_save=None
+
     def _return_from_preparation(self):
         if self.busy:
             self.runner.cancel()
@@ -740,8 +768,11 @@ class PlanningPage(QWidget):
         if not force and self.model is not None and path==self.source:
             close_prepared(prepared)
             self._status('已保留当前区域、参数与规划。');return True
-        if self.dirty and self.loading_source is None:
+        if self.dirty:
+            # A preparation retry must retry the previous draft write too;
+            # waiting on its old error cannot recover when storage is available.
             self.checkpoint()
+        if self.dirty and self.loading_source is None:
             answer=QMessageBox.question(self,'切换规划项目','将确认当前草稿写入成功后打开另一个项目。是否继续？',QMessageBox.Yes|QMessageBox.No,QMessageBox.No)
             if answer!=QMessageBox.Yes:
                 close_prepared(prepared);return False
@@ -992,7 +1023,9 @@ class PlanningPage(QWidget):
         self.refresh()
         if is_3d and self.selection_dirty and not self.busy and self.canvas.work.any():
             self.commit_region(advance=False)
-        elif self._stage == 0:
+        elif self._stage == 0 and self.finishing_save is None:
+            # While the editable project is written, the read-only first stage
+            # keeps the writing notice instead of the paint hint.
             self._status('固定朝向三维检查：拖动平移，滚轮缩放；修改区域请返回参考图。' if is_3d else
                          '请在参考图上涂抹或擦除；右键平移，滚轮缩放。')
 
@@ -1060,7 +1093,13 @@ class PlanningPage(QWidget):
                else OPTIMIZED_PATCH_VERSION if layout.get('request',{}).get('version')==OPTIMIZED_PATCH_VERSION else None)
         return saved==self.head.layout_algorithm()
 
-    def usable(self):
+    def usable(self):return self._plan_current(self.busy)
+
+    def viewable(self):
+        """Display and in-page navigation only; every task keeps the stricter usable()."""
+        return self._plan_current(False) if self.finishing_save is not None else self.usable()
+
+    def _plan_current(self,busy):
         try:request=self.request()
         except ValueError:return False
         revision=None
@@ -1069,7 +1108,7 @@ class PlanningPage(QWidget):
             from femto.planning.planning_revision import capture_for
             try:revision=capture_for(self.model,self.region,request['values']['treatment_head'],self.plan['planning_context']['revision'])
             except (ValueError,TypeError,AttributeError):return False
-        return planning_state.state(self.region,self.plan,busy=self.busy,draft=self.selection_dirty,
+        return planning_state.state(self.region,self.plan,busy=busy,draft=self.selection_dirty,
             request=request,geometry_digest=self.model.store.digest if self.model else None,
             computation_revision=revision)['can_use']
 
@@ -1100,8 +1139,9 @@ class PlanningPage(QWidget):
         self.curvature_model_button.setEnabled(self.model is not None and not self.busy and not derivation(self.model))
         self.scene_panel.set_scene(self.model,
             self.region if not self.selection_dirty else None,
-            self.plan if self._stage>0 and self.usable() else None)
+            self.plan if self._stage>0 and self.viewable() else None)
         loaded=self.model is not None;busy=self.busy
+        finishing=self.finishing_save is not None
         self.quality.rescan.setEnabled(bool(loaded and not busy and rescan_context(self.model)))
         self.quality.rescan.setVisible(bool(loaded and rescan_context(self.model)))
         self.quality.rescan.setToolTip('建立独立采集，旧模型、选区和路线保留。' if rescan_context(self.model) else '缺少可核验的任务信息；请新建采集。')
@@ -1143,11 +1183,15 @@ class PlanningPage(QWidget):
         self.cancel_button.setVisible(busy)
         self.cancel_button.setEnabled(busy and not self.runner.cancelling)
         self.cancel_button.setText('正在取消…' if self.runner.cancelling else '取消任务')
-        self.previous.setEnabled(not busy)
-        for index in range(3):self.tabs.setTabEnabled(index,not busy and (
+        self.cancel_button.setToolTip('停止写入可编辑工程；已保存的三维路线文件保留，当前方案不记为已保存。' if finishing else '')
+        # While the editable project of a published route is written, only this
+        # page's read-only stages are released; inputs and tasks stay locked.
+        self.previous.setEnabled(not busy or finishing and self._stage>(1 if self.fixed_selection else 0))
+        for index in range(3):self.tabs.setTabEnabled(index,(not busy or finishing) and (
             index==0 and not self.fixed_selection or index==1 and self.fixed_selection
-            or bool(self.region) and not self.selection_dirty and (index==1 or index==2 and self.usable())))
+            or bool(self.region) and not self.selection_dirty and (index==1 or index==2 and self.viewable())))
         usable=self.usable()
+        viewable=usable or finishing and self.viewable()
         self.coverage.setVisible(self._stage>0 and loaded and bool(self.plan))
         self.coverage.set_context(self.model,self.plan,ready=usable and self._stage>0,busy=busy)
         if not usable and (self.plan or {}).get('surface_trajectory', {}).get('planner', {}).get('algorithm_version') in ('nominal-variable-width-surface-v1', 'nominal-variable-width-refined-surface-v1'):
@@ -1157,7 +1201,7 @@ class PlanningPage(QWidget):
             else:
                 self.coverage.variable.setEnabled(current and not busy)
                 self.coverage.variable_restore.setEnabled(current and not busy)
-        self.play_button.setEnabled(usable);self.report_button.setEnabled(usable);self.save_report_button.setEnabled(usable);self.recalculate.setEnabled(bool(self.region) and not busy and not self.selection_dirty)
+        self.play_button.setEnabled(viewable);self.report_button.setEnabled(usable);self.save_report_button.setEnabled(usable);self.recalculate.setEnabled(bool(self.region) and not busy and not self.selection_dirty)
         if self.canvas._coverage_image is not None:self.play_button.setEnabled(False)
         self.folder_button.setEnabled(bool(self.archive) and not busy)
         self.save_as_button.setEnabled(bool(self.region) and not busy and not self.selection_dirty)
@@ -1177,7 +1221,7 @@ class PlanningPage(QWidget):
             intent=self.region.get('selection_intent',{});support=self.region.get('selection_support',{})
             self.region_summary.setText(f"工作块  {len(intent.get('components',[]))} 个\n实测网格  {len(self.region['triangle_indices'])} 面\n几何待确认像素  {support.get('geometry_unconfirmed_pixel_count','未知')}")
         else:self.region_summary.setText('尚未标记工作区域\n在当前记录的参考图上涂抹选入，擦除排除；可选多个分离区域或在区域内部留空。\n按住左键标记；滚轮缩放，右键平移。' if loaded else '未加载数据：请打开区域方案，或返回采集页采集并检查模型。')
-        if usable:
+        if viewable:
             stats=self.plan.get('surface_trajectory',{}).get('statistics',{})
             self.route_summary.setText(f"{stats.get('block_count','未知')} 个工作块 · {stats.get('segment_count','未知')} 条连续路线")
             findings=self.current_findings()
@@ -1189,22 +1233,25 @@ class PlanningPage(QWidget):
                 +f"工作块  {stats.get('block_count','未知')} 个\n"
                 +(f'待处理 {len(findings)} 项：\n{items}' if findings else '当前几何检查未发现待处理项')
                 +'\n保存包含路线、参数、检查报告及可编辑工程；不代表临床治疗可用。'))
+            if finishing:
+                self.save_summary.setText(breakable_text('三维路线已保存\n'+self.finishing_save.name
+                    +'\n可编辑工程正在后台写入。写完前可查看路线，不能修改或切换项目；关闭窗口会等待写完。'))
         else:
             self.route_summary.setText('正在处理，请稍候…' if busy else '旧路线待更新' if self.plan else '尚未生成路线')
             self.route_stats.clear()
             self.warning.setText('参数已修改，显示的旧路线仅供参考；请重新计算后再保存。' if self.plan and not busy else '')
             self.save_summary.setText('请等待当前处理完成后再核对保存。' if busy else '当前参数尚无可保存的路线，请返回路线页重新计算。')
         route_stage=self._stage==1
-        self.route_attention.setVisible(route_stage and usable and loaded and not busy and not (self.plan and not usable)
+        self.route_attention.setVisible(route_stage and viewable and loaded and (not busy or finishing) and not (self.plan and not viewable)
                                         and not (self.plan or {}).get('coverage_evidence'))
-        attention=self._route_attention_text() if usable else self.quality.summary.text()
+        attention=self._route_attention_text() if viewable else self.quality.summary.text()
         # Keep only the actionable state on the route page; detailed findings
         # remain available to the existing review/save gates and hover help.
         self.route_attention.setText('<br>'.join(attention.split('<br>')[:2])
-            + ('<br>当前选区几何支持尚未核验' if usable and self.quality.result is None else ''))
-        self.route_attention.setToolTip('\n'.join(self.current_findings()) if usable else '')
+            + ('<br>当前选区几何支持尚未核验' if viewable and self.quality.result is None else ''))
+        self.route_attention.setToolTip('\n'.join(self.current_findings()) if viewable else '')
         self.route_details_toggle.hide()
-        self.warning.setVisible(bool(self.warning.text()) and (not route_stage or not usable or bool(self._error)))
+        self.warning.setVisible(bool(self.warning.text()) and (not route_stage or not viewable or bool(self._error)))
         self.warning_scroll.setVisible(not self.warning.isHidden())
         self.warning_scroll.setFixedHeight(180 if route_stage else 240)
         self.route_stats.hide()
@@ -1283,11 +1330,11 @@ class PlanningPage(QWidget):
         self.head.setVisible(not self.plan or self.parameters_button.isChecked())
         self.parameter_summary.setVisible(bool(self.plan) and not self.parameters_button.isChecked())
         self.parameters_button.setVisible(route_stage and bool(self.plan))
-        self.route_summary.setVisible(busy or bool(self.plan) and not usable)
+        self.route_summary.setVisible(busy and not finishing or bool(self.plan) and not viewable)
         self.stage_panel_heading.setText(('选区工具','路线参数','保存核对')[self._stage])
-        self.play_button.setVisible(route_stage and usable)
-        self.route_legend.setVisible(route_stage and usable and reference)
-        self.band_toggle.setVisible(route_stage and usable and reference and
+        self.play_button.setVisible(route_stage and viewable)
+        self.route_legend.setVisible(route_stage and viewable and reference)
+        self.band_toggle.setVisible(route_stage and viewable and reference and
                                     self.plan.get('treatment_head',{}).get('mode')=='fixed_width_auto')
         self._refresh_playback()
         try:self.head.record();head_valid=True
@@ -1300,16 +1347,21 @@ class PlanningPage(QWidget):
             if self.fixed_selection and (self.selection_dirty or not self.region):
                 text='检查模型并继续';ready=has_selection
             else:
-                text='下一步：核对并保存' if usable else '生成路线';ready=bool(self.region) and not self.selection_dirty and head_valid
+                text='下一步：核对并保存' if viewable else '生成路线';ready=bool(self.region) and not self.selection_dirty and head_valid
         else:
             findings=self.current_findings() if usable else []
             text='规划方案已保存' if self.archive and not self.dirty else '保存待复核研发草稿' if findings else '保存研发规划预览'
+            if finishing:text='正在写入可编辑工程…'
             ready=usable and self.reviewed.isChecked() and self.quality.result is not None and (self.dirty or not self.archive)
-        self.primary.setText(text);self.primary.setEnabled(bool(ready and not busy))
+        # Returning to the save page is the only primary action that starts no task.
+        enabled=bool(ready and (not busy or finishing and self._stage==1 and viewable))
+        self.primary.setText(text);self.primary.setEnabled(enabled)
         self.title.setToolTip(self.subtitle.text())
-        self.primary.setToolTip('请等待当前任务结束' if busy else '请完成标记、有效参数和当前步骤核对' if not ready else '')
+        self.primary.setToolTip('' if enabled else '三维路线已保存；可编辑工程写完后可继续操作' if finishing else
+            '请等待当前任务结束' if busy else '请完成标记、有效参数和当前步骤核对')
         self.workflow.set_step(self._stage+3 if loaded else None,
             '方案已保存；再次修改会使当前结果需要重新核对。' if completed else
+            '三维路线已保存；可编辑工程正在后台写入，写完前不能修改或切换项目。' if finishing else
             '当前步骤处理中，请等待完成或取消。' if busy else self.subtitle.text())
         self.status_label.setVisible(self.loading_source is None)
         self.source_toggle.setVisible(self.loading_source is None)
@@ -1335,8 +1387,9 @@ class PlanningPage(QWidget):
             try:self.tabs.setCurrentIndex(index)
             finally:self.tabs.blockSignals(previous)
             return
-        if (self.busy or index>0 and (not self.region or self.selection_dirty) and not (index==1 and self.fixed_selection)
-                or index==2 and not self.usable()):
+        if (self.busy and self.finishing_save is None
+                or index>0 and (not self.region or self.selection_dirty) and not (index==1 and self.fixed_selection)
+                or index==2 and not self.viewable()):
             # A fixed selection redirects tab 0 to tab 1. During a background
             # conversion, rolling back to stage 0 must not emit that redirect
             # again (it otherwise recursively bounces between the two tabs).
@@ -1366,13 +1419,13 @@ class PlanningPage(QWidget):
         self._stage_selected(index)
 
     def _play_reference(self):
-        if not self.usable():return
+        if not self.viewable():return
         self.scene_panel.show_reference()
         self.canvas.play()
         self.refresh()
 
     def _refresh_playback(self):
-        self.play_button.setEnabled(self.usable() and bool(self.canvas._samples))
+        self.play_button.setEnabled(self.viewable() and bool(self.canvas._samples))
         self.play_button.setText('暂停播放' if self.canvas.timer.isActive() else
             '重播路线' if self.canvas._samples and self.canvas._play_index>=len(self.canvas._samples) else '播放路线')
 
@@ -1405,7 +1458,10 @@ class PlanningPage(QWidget):
         return '<br>'.join(lines)
 
     def primary_action(self):
-        if self.busy:return
+        if self.busy:
+            # Only the step back to the save page; it starts no task.
+            if self.finishing_save is not None and self._stage==1 and self.viewable():self.set_stage(2)
+            return
         if self._stage==0:self.commit_region()
         elif self._stage==1:
             if self.fixed_selection and (self.selection_dirty or not self.region):self.commit_region()
@@ -1414,7 +1470,10 @@ class PlanningPage(QWidget):
         elif self.reviewed.isChecked():self.save_plan()
 
     def go_back(self):
-        if self.busy:return
+        if self.busy:
+            # Leaving for capture stays locked; only this page's earlier stage is read-only.
+            if self.finishing_save is not None and self._stage>(1 if self.fixed_selection else 0):self.set_stage(self._stage-1)
+            return
         if self.fixed_selection and self._stage<=1:self.return_capture()
         elif self._stage:self.set_stage(self._stage-1)
         else:self.return_capture()
@@ -1810,6 +1869,7 @@ class PlanningPage(QWidget):
         from femto.planning.region_project import save_project
         model=clone_model(self.model,freeze_inputs=True);region=deepcopy(self.region);plan=deepcopy(self.plan)
         work,forbidden=self.canvas.work.copy(),self.canvas.forbidden.copy()
+        token=object()
         def job(cancel,progress):
             from contextlib import nullcontext
             from femto.geometry.region_reuse import operation as geometry_operation
@@ -1827,6 +1887,10 @@ class PlanningPage(QWidget):
                 session_args={'target_session':session} if session is not None else {}
                 with record_operation('save.route_and_native'):
                     folder=surface_workspace.export(model,region,plan,check,lambda text:progress('2/4 '+text),**extra,**session_args)
+                # The route package is published: end the physician's wait here.
+                # The editable project stays in this worker, whose thread owns
+                # the validation session and the geometry scope.
+                self._native_route_saved.emit(token,folder)
                 try:
                     with record_operation('save.portable_project'):
                         save_project(model,region,folder/'planning.region.zip',plan,check,progress=lambda text:progress('3/4 '+text),catalog_root=OUTPUTS_ROOT/'saved_projects',allow_replace=False,
@@ -1835,7 +1899,8 @@ class PlanningPage(QWidget):
                     raise RuntimeError(f'三维路线已保存到 {folder}；可编辑工程保存未完成：{error}。当前方案仍保留，可重新保存。') from error
             progress('4/4 文件已保存，更新工作台记录')
             return folder
-        self._run(job,lambda path:self._saved(path,saved_model=model))
+        self._save_token=token
+        if not self._run(job,lambda path:self._saved(path,saved_model=model)):self._save_token=None
 
     def _saved(self,path, *, source_path=None,saved_model=None):
         """Commit a saved result and, for Save As, move the draft binding.
@@ -1979,7 +2044,8 @@ class PlanningPage(QWidget):
 
     def can_leave(self):
         if self.busy:
-            self._status('任务正在运行，请等待完成或点击取消任务。');return False
+            self._status('三维路线已保存，可编辑工程正在写入；写完后才能切换项目。' if self.finishing_save is not None
+                         else '任务正在运行，请等待完成或点击取消任务。');return False
         self.canvas.finish_stroke();self.canvas.timer.stop();self.checkpoint();return True
 
     def shutdown(self):

@@ -122,7 +122,8 @@ class ExecutionUiTests(unittest.TestCase):
                 self.assertFalse(window.new_task())
                 self.assertFalse(window.show_capture())
                 self.assertFalse(window.open_review('missing'))
-                self.assertFalse(window._capture_body_record(type('Dialog',(),{'status':window.subtitle})(),{},{}))
+                self.assertFalse(window.open_planning('missing'))
+                self.assertIs(window.pages.currentWidget(),window.execution)
             event=QCloseEvent()
             with patch.object(window.execution,'shutdown',return_value=False) as shutdown:
                 window.closeEvent(event)
@@ -162,8 +163,8 @@ class ExecutionUiTests(unittest.TestCase):
                 self.assertFalse(page._installation_details['scenario']['confirm_stop'])
                 self.assertIn('停止完成未确认',page.details_text.toPlainText())
                 page.mode.setCurrentIndex(1);page.freeze();self.wait(lambda:page._snapshot and page._snapshot['run_id'])
-                page.command('connect');self.wait(lambda:not page.busy)
-                page.command('check');self.wait(lambda:page._snapshot['can_start'])
+                self.assertTrue(page.command('connect'));self.wait(page.check_button.isEnabled)
+                self.assertTrue(page.command('check'));self.wait(lambda:page._snapshot['can_start'])
                 page.command('start');self.wait(lambda:page._snapshot['state']=='running')
                 run=page._snapshot['run_id'];page.shutdown()
                 self.assertFalse(page.command('start'))
@@ -178,8 +179,8 @@ class ExecutionUiTests(unittest.TestCase):
             page=ExecutionPage(outputs=root)
             try:
                 page.mode.setCurrentIndex(1);page.freeze();self.wait(lambda:page._snapshot and page._snapshot['run_id'])
-                page.command('connect');self.wait(lambda:not page.busy)
-                page.command('check');self.wait(lambda:page._snapshot['can_start'])
+                self.assertTrue(page.command('connect'));self.wait(page.check_button.isEnabled)
+                self.assertTrue(page.command('check'));self.wait(lambda:page._snapshot['can_start'])
                 page.owner._overflow.set();page.owner._wake.set()
                 self.wait(lambda:page._snapshot['state'] in ('failed','result_unknown'))
                 self.assertFalse(page.start_button.isEnabled())
@@ -233,8 +234,8 @@ class ExecutionUiTests(unittest.TestCase):
             try:
                 for _ in range(2):
                     page.mode.setCurrentIndex(1);page.freeze();self.wait(lambda:page._snapshot and page._snapshot['run_id'])
-                    page.command('connect');self.wait(lambda:not page.busy)
-                    page.command('check');self.wait(lambda:page._snapshot['can_start'])
+                    self.assertTrue(page.command('connect'));self.wait(page.check_button.isEnabled)
+                    self.assertTrue(page.command('check'));self.wait(lambda:page._snapshot['can_start'])
                     page.command('start');self.wait(lambda:page._snapshot['state']=='succeeded')
                     runs.append(page._snapshot['run_id']);page.command('reset');self.wait(lambda:page._snapshot is None and not page.busy)
                     self.assertIsNone(page._selected_run);self.assertFalse(page.export_button.isEnabled())
@@ -254,8 +255,8 @@ class ExecutionUiTests(unittest.TestCase):
             page.owner.finished.connect(lambda:finished.append(True))
             try:
                 page.mode.setCurrentIndex(1);page.freeze();self.wait(lambda:page._snapshot and page._snapshot['run_id'])
-                page.command('connect');self.wait(lambda:not page.busy)
-                page.command('check');self.wait(lambda:page._snapshot['can_start'])
+                self.assertTrue(page.command('connect'));self.wait(page.check_button.isEnabled)
+                self.assertTrue(page.command('check'));self.wait(lambda:page._snapshot['can_start'])
                 coordinator=page.owner.coordinator;run=coordinator.run_id
                 with patch.object(coordinator.by_id['simulation-arm'],'close',side_effect=OSError('scripted cleanup failure')):
                     page.shutdown();self.wait(lambda:not page.owner.alive and finished)
